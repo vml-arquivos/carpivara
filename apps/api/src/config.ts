@@ -1,32 +1,45 @@
 import 'dotenv/config';
 import { z } from 'zod';
 
-const booleanFromEnv = z.preprocess((v) => {
-  if (typeof v !== 'string') return v;
-  return ['1','true','yes','on'].includes(v.toLowerCase());
+const booleanFromEnv = z.preprocess((value) => {
+  if (typeof value !== 'string') return value;
+  return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
 }, z.boolean());
 
 const envSchema = z.object({
-  NODE_ENV: z.enum(['development','test','production']).default('development'),
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(4000),
-  APP_NAME: z.string().default('Carpivara'),
+  APP_NAME: z.string().trim().min(1).default('Carpivara'),
   APP_URL: z.string().url().optional(),
-  WEB_ORIGIN: z.string().default('http://localhost:5173'),
+  WEB_ORIGIN: z.string().url().default('http://localhost:5173'),
   TRUST_PROXY: z.coerce.number().int().min(0).max(2).default(1),
   DATABASE_URL: z.string().min(1),
   DATABASE_SSL: booleanFromEnv.default(false),
   JWT_SECRET: z.string().min(32),
   JWT_EXPIRES_IN: z.string().default('2h'),
-  DATA_PROVIDER: z.enum(['mock','real']).default('mock'),
-  VEHICLE_API_BASE_URL: z.string().optional(),
+  DATA_PROVIDER: z.enum(['mock', 'real']).default('mock'),
+  VEHICLE_API_BASE_URL: z.string().url().optional(),
   VEHICLE_API_LOGIN: z.string().optional(),
   VEHICLE_API_PASSWORD: z.string().optional(),
   VEHICLE_API_TOKEN: z.string().optional(),
-  VEHICLE_API_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
-  PAYMENT_PROVIDER: z.enum(['sandbox','asaas']).default('sandbox'),
+  VEHICLE_API_TIMEOUT_MS: z.coerce.number().int().positive().max(120000).default(15000),
+  PAYMENT_PROVIDER: z.enum(['sandbox', 'asaas']).default('sandbox'),
+  PAYMENT_API_BASE_URL: z.string().url().optional(),
+  PAYMENT_API_KEY: z.string().optional(),
   PAYMENT_WEBHOOK_SECRET: z.string().optional(),
-  SANDBOX_SEED_ENABLED: booleanFromEnv.default(true),
-  SANDBOX_CREDIT_PURCHASE_ENABLED: booleanFromEnv.default(true)
+  SANDBOX_SEED_ENABLED: booleanFromEnv.default(false),
+  SANDBOX_CREDIT_PURCHASE_ENABLED: booleanFromEnv.default(false),
+  QUERY_CACHE_ENABLED: booleanFromEnv.default(true),
+  QUERY_CACHE_TTL_SECONDS: z.coerce.number().int().positive().max(604800).default(3600),
+  QUERY_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().max(120000).default(20000),
+  RATE_LIMIT_ENABLED: booleanFromEnv.default(true),
+  RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60000),
+  RATE_LIMIT_MAX_REQUESTS: z.coerce.number().int().positive().default(120),
+  LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().positive().max(100).default(10),
+  LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+  LOG_SENSITIVE_DATA: booleanFromEnv.default(false),
+  AUDIT_LOG_ENABLED: booleanFromEnv.default(true),
+  STORE_RAW_PROVIDER_RESPONSE: booleanFromEnv.default(true)
 });
 
 export const env = envSchema.parse(process.env);

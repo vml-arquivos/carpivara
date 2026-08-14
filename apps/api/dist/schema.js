@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import { pool } from './db.js';
 import { env } from './config.js';
+import { runMigrations } from './migrations.js';
 export async function ensureSchema() {
     await pool.query(`
     CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -151,6 +152,7 @@ export async function ensureSchema() {
     CREATE INDEX IF NOT EXISTS idx_wallet_transactions_user_created ON wallet_transactions(user_id,created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_audit_logs_user_created ON audit_logs(user_id,created_at DESC);
   `);
+    await runMigrations();
     const products = [
         ['BASIC', 'Consulta Básica', 'Identificação e características principais do veículo', 5],
         ['DEBTS', 'Débitos e Restrições', 'Débitos, multas e principais restrições', 8],
@@ -176,26 +178,32 @@ export async function ensureSchema() {
     const samples = [
         vehicle('TST0A00', 'NOVA MOTORS', 'ECO X', '2022', '2023', 'PRATA', 'FLEX', 'GOIANIA', 'GO', 0, 0, false),
         vehicle('DEV1B11', 'ALFA AUTO', 'URBAN 1.6', '2019', '2020', 'BRANCO', 'GASOLINA', 'BRASILIA', 'DF', 29347, 16022, true),
-        vehicle('MOCK2C22', 'BETA VEICULOS', 'TRAIL 2.0', '2024', '2025', 'PRETO', 'DIESEL', 'PALMAS', 'TO', 0, 0, false)
+        vehicle('MOCK2C22', 'BETA VEICULOS', 'TRAIL 2.0', '2024', '2025', 'PRETO', 'DIESEL', 'PALMAS', 'TO', 0, 0, false),
+        vehicle('IPV2A22', 'GAMA AUTOMOVEIS', 'CITY 1.5', '2021', '2022', 'CINZA', 'FLEX', 'CURITIBA', 'PR', 0, 0, false, 182500),
+        vehicle('REN3J33', 'DELTA MOTORS', 'ROAD 2.0', '2020', '2021', 'AZUL', 'DIESEL', 'SAO PAULO', 'SP', 0, 0, true, 0, true),
+        vehicle('REC4L44', 'EPSILON AUTO', 'HATCH S', '2023', '2024', 'VERMELHO', 'FLEX', 'BELO HORIZONTE', 'MG', 0, 0, false, 0, false, true),
+        vehicle('FUR5T55', 'ZETA MOTORS', 'CROSS 1.0', '2018', '2019', 'PRETO', 'GASOLINA', 'RIO DE JANEIRO', 'RJ', 0, 0, false, 0, false, false, true),
+        vehicle('MUL6T66', 'OMEGA AUTO', 'SEDAN LX', '2022', '2023', 'BRANCO', 'FLEX', 'VITORIA', 'ES', 45900, 0, false),
+        vehicle('INC7P77', 'NOVA MOTORS', 'ESSENTIAL', '2017', '2018', 'PRATA', 'FLEX', 'RECIFE', 'PE', 0, 0, false, 0, false, false, false, true)
     ];
     for (const v of samples) {
         await pool.query(`INSERT INTO sandbox_vehicles(plate,raw_response) VALUES($1,$2::jsonb) ON CONFLICT(plate) DO UPDATE SET raw_response=EXCLUDED.raw_response`, [v.CONSULTA_PLACA, JSON.stringify(v.PAYLOAD)]);
     }
 }
-function vehicle(plate, brand, model, fabr, modelYear, color, fuel, city, uf, fineCents, licCents, judicial) {
+function vehicle(plate, brand, model, fabr, modelYear, color, fuel, city, uf, fineCents, licCents, judicial, ipvaCents = 0, financial = false, recall = false, stolen = false, incomplete = false) {
     const money = (c) => (c / 100).toFixed(2).replace('.', ',');
     const r = {
         CAPACIDADECARGA: '450', CAPACIDADEPASSAG: '5', CARROCERIA: 'NAO APLICAVEL', CCOMUNICACAOVENDA: 'NAO CONSTA COMUNICACAO DE VENDAS',
         CHASSI: '9ZZSANDBOX' + plate.replace(/[^A-Z0-9]/g, '').padEnd(7, '0'), CILINDRADA: '1598', CMT: '0', COMBUSTIVEL: fuel, COR: color,
-        CPF_CNPJ_PROPRIETARIO: '***.***.000-**', DATAEMISSAOCRV: '15/03/2023', DEBCETESB: '0,00', DEBDER: money(fineCents), DEBDERSA: '0,00', DEBDETRAN: '0,00', DEBIPVA: '0,00', DEBMUNICIPAIS: '0,00', DEBPOLRODFED: '0,00', DEBRENAINF: '0,00', DPVAT: '0,00',
+        CPF_CNPJ_PROPRIETARIO: '***.***.000-**', DATAEMISSAOCRV: '15/03/2023', DEBCETESB: '0,00', DEBDER: money(fineCents), DEBDERSA: '0,00', DEBDETRAN: '0,00', DEBIPVA: money(ipvaCents), DEBMUNICIPAIS: '0,00', DEBPOLRODFED: '0,00', DEBRENAINF: '0,00', DPVAT: '0,00',
         EIXOS: '2', ESPECIE: 'PASSAGEIRO', EXISTEDEBITODEDPVAT: 'NAO EXISTE DEBITO DE DPVAT', EXISTEDEBITODEIPVA: 'NAO EXISTE DEBITO DE IPVA',
         EXISTEDEBITODELICENCIAMENTO: licCents > 0 ? 'EXISTE DEBITO DE LICENCIAMENTO' : 'NAO EXISTE DEBITO DE LICENCIAMENTO', EXISTEDEBITODELICENCIAMENTOVL: money(licCents),
         EXISTEDEBITOMULTA: fineCents > 0 ? 'EXISTE DEBITO DE MULTA' : 'NAO EXISTE DEBITO DE MULTA', EXISTE_ERRO: '0', LICDATA: '10/09/2025', LICEXELIC: '2025',
         MARCA: brand, MARCAMODELOCOMPLETO: `${brand}/${model}`, MODELO: model, MOTOR: 'MOTOR-SANDBOX-001', MUNICIPIO: city, NUMERO_CAIXACAMBIO: 'CAMBIO-SANDBOX-001',
         OUTRAS_RESTRICOES_01: 'NADA CONSTA', OUTRAS_RESTRICOES_02: 'NADA CONSTA', OUTRAS_RESTRICOES_03: 'NADA CONSTA', OUTRAS_RESTRICOES_04: 'NADA CONSTA', PBT: '1650', PLACA: plate,
-        POTENCIA: '120', PRONOME: 'PROPRIETARIO FICTICIO SANDBOX', PRONOMEANTERIOR: '', RECALL: 'NAO POSSUI RECALL', REDUNDANCIA: 'ORIGINAL', RENAVAM: '00000000000',
-        RESADMINISTRATIVA: 'NADA CONSTA', RESAMBIENTAL: 'VEICULO COM INSPECAO VEICULAR OK', RESFURTO: 'NADA CONSTA', RESGUINCHO: 'NADA CONSTA',
-        RESJUDICIAL: judicial ? 'RESTRICAO JUDICIAL FICTICIA PARA TESTE' : 'NADA CONSTA', RESRENAJUD: judicial ? 'CONSTA RESTRICAO FICTICIA' : 'NADA CONSTA', RESTRIBUTARIA: 'NADA CONSTA', RESTRICAOFINAN: 'NADA CONSTA', RESTRICAORFB: 'NAO POSSUI RESTRICAO RFB',
+        POTENCIA: incomplete ? '' : '120', PRONOME: 'PROPRIETARIO FICTICIO SANDBOX', PRONOMEANTERIOR: '', RECALL: recall ? 'RECALL FICTICIO PENDENTE PARA TESTE' : 'NAO POSSUI RECALL', REDUNDANCIA: 'ORIGINAL', RENAVAM: '00000000000',
+        RESADMINISTRATIVA: 'NADA CONSTA', RESAMBIENTAL: 'VEICULO COM INSPECAO VEICULAR OK', RESFURTO: stolen ? 'REGISTRO FICTICIO DE FURTO/ROUBO PARA TESTE' : 'NADA CONSTA', RESGUINCHO: 'NADA CONSTA',
+        RESJUDICIAL: judicial ? 'RESTRICAO JUDICIAL FICTICIA PARA TESTE' : 'NADA CONSTA', RESRENAJUD: judicial ? 'CONSTA RESTRICAO FICTICIA' : 'NADA CONSTA', RESTRIBUTARIA: 'NADA CONSTA', RESTRICAOFINAN: financial ? 'GRAVAME FICTICIO PARA TESTE' : 'NADA CONSTA', RESTRICAORFB: 'NAO POSSUI RESTRICAO RFB',
         SITUACAOVEICULO: 'CIRCULACAO', TEMPOEXECUCAO: '1', TIPO: 'AUTOMOVEL', TIPODOCUMENTOPROPRIETARIO: 'FISICA', TIPOREMARCACAOCHASSI: 'NORMAL', UF: uf,
         VALORTOTALDEBITOMULTA: money(fineCents), VEIANOFABR: fabr, VEIANOMODELO: modelYear, VEICATEGORIA: 'PARTICULAR', VEIPROCEDENCIA: 'NACIONAL'
     };

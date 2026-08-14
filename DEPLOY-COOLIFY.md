@@ -1,62 +1,64 @@
-# Deploy no Coolify — Dockerfile
+# Deploy no Coolify
 
-## Aplicação
-- Build Pack: Dockerfile
-- Dockerfile Location: `/Dockerfile`
-- Base Directory: `/`
-- Porta interna: `4000`
-- Healthcheck: `/health`
-- Domínio: defina o domínio HTTPS na aplicação do Coolify
+## Configuração da aplicação
+
+Crie a aplicação usando **Dockerfile**, com base `/`, localização `/Dockerfile`, porta interna `4000` e healthcheck em `/health`. A API serve o build React e as rotas de API no mesmo processo; configure um único domínio, por exemplo `https://carpivara.casadf.com.br`.
+
+O Dockerfile é multi-stage, executa o build dos dois workspaces e roda como usuário não-root. Nenhum segredo é copiado para a imagem durante o build.
 
 ## Banco PostgreSQL
-Crie um PostgreSQL separado no mesmo projeto/servidor do Coolify. Use a connection string interna fornecida pelo Coolify em `DATABASE_URL`.
 
-## Variáveis obrigatórias para o primeiro deploy SANDBOX
-```env
+Crie um PostgreSQL separado no mesmo projeto/servidor e informe a connection string interna em `DATABASE_URL`. O startup executa o bootstrap compatível e migrations versionadas antes de abrir a aplicação.
+
+## Variáveis para a primeira demonstração sandbox
+
+Cadastre as variáveis no painel do Coolify. Não use arquivo `.env` versionado e não reutilize nenhum segredo local.
+
+```dotenv
 NODE_ENV=production
 PORT=4000
 APP_NAME=Carpivara
-APP_URL=https://SEU-DOMINIO.com.br
-WEB_ORIGIN=https://SEU-DOMINIO.com.br
+APP_URL=https://carpivara.casadf.com.br
+WEB_ORIGIN=https://carpivara.casadf.com.br
 TRUST_PROXY=1
 DATABASE_URL=postgresql://USUARIO:SENHA@HOST_INTERNO:5432/NOME_BANCO
 DATABASE_SSL=false
-JWT_SECRET=COLOQUE_UM_SEGREDO_ALEATORIO_COM_64_OU_MAIS_CARACTERES
+JWT_SECRET=GERAR_UM_SEGREDO_ALEATORIO_COM_64_OU_MAIS_CARACTERES
+JWT_EXPIRES_IN=2h
+
 DATA_PROVIDER=mock
+QUERY_REQUEST_TIMEOUT_MS=20000
 PAYMENT_PROVIDER=sandbox
 SANDBOX_SEED_ENABLED=true
 SANDBOX_CREDIT_PURCHASE_ENABLED=true
+
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_WINDOW_MS=60000
+RATE_LIMIT_MAX_REQUESTS=120
+LOGIN_RATE_LIMIT_MAX=10
+LOG_LEVEL=info
+LOG_SENSITIVE_DATA=false
+AUDIT_LOG_ENABLED=true
+STORE_RAW_PROVIDER_RESPONSE=true
 ```
 
-## Somente quando a API veicular real for contratada
-```env
-DATA_PROVIDER=real
-VEHICLE_API_BASE_URL=https://...
-VEHICLE_API_LOGIN=...
-VEHICLE_API_PASSWORD=...
-VEHICLE_API_TOKEN=...
-VEHICLE_API_TIMEOUT_MS=15000
-```
-O adaptador real deve ser implementado conforme o contrato/documentação do fornecedor antes de mudar `DATA_PROVIDER` para `real`.
+Depois do primeiro deploy, confirme `GET /health`, login sandbox, consulta `TST0A00`, abertura do histórico e cenário de estorno `TIM0E00`.
 
-## Quando o gateway de pagamento real entrar
-```env
-PAYMENT_PROVIDER=asaas
-PAYMENT_WEBHOOK_SECRET=...
-SANDBOX_CREDIT_PURCHASE_ENABLED=false
-```
-Não habilite `asaas` até o adaptador/webhook de produção estar implementado e validado.
+## Antes de expor ao público
 
-## Primeiro acesso do sandbox
-- Cliente: `cliente@demo.local` / `Demo@123456`
-- Admin: `admin@demo.local` / `Admin@123456`
+Desative `SANDBOX_SEED_ENABLED` e `SANDBOX_CREDIT_PURCHASE_ENABLED`, remova contas fictícias criadas na demonstração e defina uma política de acesso, retenção e suporte. O provider mock pode permanecer apenas quando isso estiver claramente identificado como sandbox.
 
-Troque/remova usuários de demonstração antes de abrir o domínio ao público.
+## Provider e pagamentos reais
 
-## Placas fictícias
-- `TST0A00`
-- `DEV1B11`
-- `MOCK2C22`
+Não use `DATA_PROVIDER=real` até a implementação do adapter ser baseada na documentação oficial. Da mesma forma, não ative gateway de pagamento real até haver webhook autenticado e idempotente; crédito nunca deve ser liberado somente por retorno de navegador.
 
-## Segurança
-Nunca versione `.env`, tokens, senha do PostgreSQL, segredo JWT ou credenciais do provedor. No Coolify, cadastre-os como Environment Variables.
+## Diagnóstico de deploy
+
+| Sintoma | Verificação |
+| --- | --- |
+| Healthcheck falha | Confirme `DATABASE_URL`, acesso de rede ao PostgreSQL e logs de migration. |
+| Login falha | Confirme segredo JWT, usuários provisionados e limite de login. |
+| Frontend abre sem API | Confirme o domínio único e proxy para a porta `4000`. |
+| Consulta falha em sandbox | Confirme `DATA_PROVIDER=mock` e `SANDBOX_SEED_ENABLED=true` somente em ambiente de demonstração. |
+
+> Credenciais de banco, JWT, provider e pagamentos devem existir somente como variáveis de runtime do Coolify. Nunca as coloque no Git, Dockerfile, logs ou argumentos de build.

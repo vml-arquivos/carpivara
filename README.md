@@ -1,35 +1,78 @@
-# Carpivara Platform v0.3.0
+# CARPIVARA
 
-Plataforma de consulta veicular preparada para operar primeiro em SANDBOX com dados fictícios e, posteriormente, trocar somente o adaptador do provedor pela API veicular contratada.
+A **CARPIVARA** é uma plataforma de consulta veicular com relatório claro, carteira baseada em créditos, histórico persistido e arquitetura preparada para integrar um provedor real sem reconstruir a aplicação. A versão atual opera integralmente em **sandbox**, exclusivamente com dados fictícios.
 
-## Incluído nesta versão
-- Login e autenticação JWT.
-- Carteira de créditos com ledger de movimentações.
-- Reserva de créditos antes da consulta e estorno automático em falha.
-- Produtos de consulta configuráveis no banco.
-- Consulta por placa e normalização do formato BDRP informado.
-- Persistência do resultado normalizado e do payload original.
-- Histórico de consultas.
-- PostgreSQL com criação de schema e seed sandbox controlado por variável.
-- Interface responsiva mais clean em navy + dourado.
-- Dockerfile multi-stage para produção.
-- Frontend e API no mesmo container, evitando URLs `localhost` em produção.
-- `/health` validando também a conexão com PostgreSQL.
-- Documentação específica para deploy no Coolify.
+> **Princípio do produto:** puxe a história do veículo antes de tomar uma decisão. Os dados apresentados refletem exclusivamente o retorno do provedor configurado no momento da consulta.
 
-## Desenvolvimento local
-1. Copie `.env.example` para `.env`.
-2. Suba PostgreSQL com `docker compose up -d`.
-3. Instale dependências com `npm install`.
-4. Execute `npm run dev`.
+## O que está funcional
 
-Frontend local: `http://localhost:5173`  
-API local: `http://localhost:4000`
+| Área | Implementação atual |
+| --- | --- |
+| Acesso | Cadastro, login, logout, expiração JWT, troca de senha, auditoria e bloqueio temporário após falhas consecutivas. |
+| Autorização | RBAC extensível por permissões, com os papéis `CLIENTE`, `OPERADOR`, `ADMIN` e `SUPER_ADMIN`. |
+| Consulta | Validação de placa brasileira, idempotência, reserva/debito transacional, provider mock, timeout controlado, normalização e estorno automático em falha. |
+| Carteira | Saldo protegido por `FOR UPDATE`, ledger de movimentações e compra sandbox explicitamente controlada por variável. |
+| Histórico | Persistência da consulta, abertura sem nova cobrança, filtro por placa e exportação JSON autenticada. |
+| Interface | Landing comercial, fluxo de autenticação, dashboard responsivo, relatório premium, modos claro/escuro/sistema persistidos e área administrativa condicional. |
+| Operação | Migrations versionadas, healthcheck com banco, logs estruturados sem dados sensíveis e imagem Docker multi-stage. |
 
-## Produção
-Consulte `DEPLOY-COOLIFY.md`.
+## Início rápido em desenvolvimento
 
-## Sandbox
-Usuários fictícios e placas de teste só devem permanecer habilitados enquanto `SANDBOX_SEED_ENABLED=true`.
+Copie o arquivo de exemplo e **nunca** use o segredo de exemplo em produção.
 
-Placas: `TST0A00`, `DEV1B11`, `MOCK2C22`.
+```bash
+cp .env.example .env
+npm install
+docker compose up -d
+npm run dev
+```
+
+A interface de desenvolvimento fica em `http://localhost:5173`; a API fica em `http://localhost:4000`. Em produção, a própria API serve o build do frontend no mesmo domínio.
+
+Para a demonstração local, mantenha `DATA_PROVIDER=mock`, `SANDBOX_SEED_ENABLED=true` e `SANDBOX_CREDIT_PURCHASE_ENABLED=true`. O bootstrap cria somente dados fictícios.
+
+| Conta sandbox | Senha | Saldo inicial |
+| --- | --- | --- |
+| `cliente@demo.local` | `Demo@123456` | 100 créditos |
+| `admin@demo.local` | `Admin@123456` | 250 créditos |
+
+As credenciais acima são exclusivamente de sandbox. Desative o seed para qualquer ambiente exposto ao público.
+
+## Placas sandbox
+
+| Placa | Cenário fictício |
+| --- | --- |
+| `TST0A00` | Veículo sem alertas relevantes. |
+| `DEV1B11` | Multas, licenciamento e restrição judicial/RENAJUD. |
+| `IPV2A22` | Débito de IPVA. |
+| `REN3J33` | Restrição judicial e gravame. |
+| `REC4L44` | Recall pendente. |
+| `FUR5T55` | Ocorrência fictícia de furto/roubo. |
+| `MUL6T66` | Multas. |
+| `INC7P77` | Resposta com campos incompletos. |
+| `TIM0E00` | Timeout simulado; a consulta é estornada automaticamente. |
+
+## Comandos de qualidade
+
+```bash
+npm run build
+npm test
+```
+
+`npm test` compila os dois workspaces e executa os testes unitários. Para uma validação funcional completa, consulte [TESTING.md](TESTING.md). Para deploy no Coolify, consulte [DEPLOY-COOLIFY.md](DEPLOY-COOLIFY.md).
+
+## Limite intencional da versão
+
+O `MockVehicleProvider` está pronto para demonstração e testes. A integração em `DATA_PROVIDER=real` **não deve ser ativada** antes de haver documentação e credenciais oficiais do fornecedor. Consulte [API-INTEGRATION.md](API-INTEGRATION.md).
+
+## Documentos técnicos
+
+| Documento | Conteúdo |
+| --- | --- |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Fluxo, fronteiras e decisões de arquitetura. |
+| [DATABASE.md](DATABASE.md) | Modelo de dados, migrations e integridade. |
+| [SECURITY.md](SECURITY.md) | Controles de segurança e privacidade. |
+| [DEPLOY-COOLIFY.md](DEPLOY-COOLIFY.md) | Deploy, variáveis e healthcheck. |
+| [TESTING.md](TESTING.md) | Bateria de testes e roteiro integrado. |
+| [API-INTEGRATION.md](API-INTEGRATION.md) | Contrato para futuro provider real. |
+| [CHANGELOG.md](CHANGELOG.md) | Alterações desta entrega. |
