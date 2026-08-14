@@ -578,6 +578,21 @@ api.patch('/admin/users/:id', auth, requirePermission('MANAGE_USERS'), asyncRout
   res.json(updated.rows[0]);
 }));
 
+api.delete('/admin/users/:id', auth, requirePermission('ADMIN_SYSTEM'), asyncRoute(async (req, res) => {
+  if (String(req.params.id) === req.user!.id) {
+    throw appError('ADMIN_SELF_DELETION_FORBIDDEN', { code: 'ADMIN_SELF_DELETION_FORBIDDEN', http: 409, expose: true });
+  }
+  const removed = await tx(async (client) => {
+    const target = await client.query('SELECT id,name,email,role FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE', [req.params.id]);
+    if (!target.rowCount) throw appError('USER_NOT_FOUND', { code: 'USER_NOT_FOUND', http: 404, expose: true });
+    await client.query('UPDATE users SET active=false,deleted_at=now() WHERE id=$1', [req.params.id]);
+    await client.query('UPDATE user_sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL', [req.params.id]);
+    return target.rows[0] as { id: string; email: string; role: string };
+  });
+  await audit(req.user!.id, 'ADMIN_SOFT_DELETE_USER', 'USER', removed.id, { targetEmail: removed.email, targetRole: removed.role, requestId: requestId(req) });
+  res.status(204).end();
+}));
+
 api.post('/admin/users/:id/wallet-adjustments', auth, requirePermission('MANAGE_BILLING'), asyncRoute(async (req, res) => {
   const parsed = adminWalletAdjustmentSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
