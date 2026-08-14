@@ -40,7 +40,7 @@ const mask = (value?: string) => !value ? '—' : value.length <= 5 ? value : `$
 
 function Brand({ compact = false }: { compact?: boolean }) {
   return <div className={`brand ${compact ? 'brandCompact' : ''}`} aria-label="CARPIVARA, consulta veicular inteligente">
-    <span className="brandMark" aria-hidden="true"><i></i><b>C</b></span>
+    <span className="brandMark" aria-hidden="true"><img src="/brand/carpivara-mark.svg" alt="" /></span>
     <span className="brandWord"><strong>CAR<span>PIVARA</span></strong><small>consulta veicular inteligente</small></span>
   </div>;
 }
