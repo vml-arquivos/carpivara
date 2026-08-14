@@ -51,6 +51,10 @@ const envSchema = z.object({
   AUDIT_LOG_ENABLED: booleanFromEnv.default(true),
   STORE_RAW_PROVIDER_RESPONSE: booleanFromEnv.default(true),
 
+  // Bootstrap administrativo: uso pontual, explicitamente habilitado e removido após a promoção auditada.
+  SUPER_ADMIN_BOOTSTRAP_ENABLED: booleanFromEnv.default(false),
+  SUPER_ADMIN_BOOTSTRAP_EMAIL: optionalString,
+
   // OIDC/OAuth: client secrets are runtime-only values and must never be committed or enabled at build time.
   OAUTH_STATE_TTL_SECONDS: z.coerce.number().int().min(60).max(1800).default(600),
   OAUTH_LOGIN_TICKET_TTL_SECONDS: z.coerce.number().int().min(30).max(600).default(120),

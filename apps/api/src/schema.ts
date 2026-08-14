@@ -157,6 +157,17 @@ export async function ensureSchema() {
 
   await runMigrations();
 
+  if (env.SUPER_ADMIN_BOOTSTRAP_ENABLED) {
+    if (!env.SUPER_ADMIN_BOOTSTRAP_EMAIL) throw new Error('SUPER_ADMIN_BOOTSTRAP_EMAIL_REQUIRED');
+    const promoted = await pool.query(`UPDATE users
+      SET role='SUPER_ADMIN', active=true
+      WHERE lower(email)=lower($1) AND deleted_at IS NULL
+      RETURNING id,email,name,role`, [env.SUPER_ADMIN_BOOTSTRAP_EMAIL]);
+    if (!promoted.rowCount) throw new Error('SUPER_ADMIN_BOOTSTRAP_USER_NOT_FOUND');
+    await pool.query(`INSERT INTO audit_logs(user_id,action,entity,entity_id,metadata)
+      VALUES($1,'BOOTSTRAP_SUPER_ADMIN','USER',$1,$2::jsonb)`, [promoted.rows[0].id, JSON.stringify({ email: promoted.rows[0].email, source: 'production_bootstrap' })]);
+  }
+
   const products = [
     ['BASIC','Consulta Básica','Identificação e características principais do veículo',5],
     ['DEBTS','Débitos e Restrições','Débitos, multas e principais restrições',8],
