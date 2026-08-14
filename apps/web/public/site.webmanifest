@@ -1,0 +1,18 @@
+{
+  "name": "CARPIVARA | Consulta veicular inteligente",
+  "short_name": "CARPIVARA",
+  "description": "Plataforma de consulta veicular com dashboard, carteira de créditos e histórico protegido.",
+  "lang": "pt-BR",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#071a33",
+  "theme_color": "#071a33",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
