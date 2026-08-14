@@ -498,12 +498,41 @@ api.post('/payments/asaas/webhook', asyncRoute(async (req, res) => {
 api.get('/admin/overview', auth, requirePermission('VIEW_AUDIT'), asyncRoute(async (_req, res) => {
   const summary = await pool.query(`SELECT
     (SELECT count(*) FROM users WHERE active=true) AS active_users,
+    (SELECT count(*) FROM users WHERE created_at >= now() - interval '30 days') AS new_users_30d,
     (SELECT count(*) FROM vehicle_queries WHERE created_at >= date_trunc('day', now())) AS queries_today,
     (SELECT count(*) FROM vehicle_queries WHERE status='SUCCESS') AS successful_queries,
+    (SELECT count(*) FROM vehicle_queries WHERE status='FAILED') AS failed_queries,
     (SELECT count(*) FROM vehicle_queries WHERE status='REFUNDED') AS refunds,
     (SELECT coalesce(sum(credits),0) FROM payments WHERE status='PAID') AS credits_sold,
-    (SELECT coalesce(sum(abs(amount)),0) FROM wallet_transactions WHERE kind='QUERY') AS credits_consumed`);
+    (SELECT coalesce(sum(abs(amount)),0) FROM wallet_transactions WHERE kind='QUERY') AS credits_consumed,
+    (SELECT coalesce(sum(amount_cents),0) FROM payments WHERE status='PAID') AS confirmed_revenue_cents,
+    (SELECT count(*) FROM payments WHERE status='PAID') AS confirmed_sales,
+    (SELECT coalesce(round(avg(amount_cents)),0) FROM payments WHERE status='PAID') AS average_ticket_cents,
+    (SELECT coalesce(sum(amount_cents),0) FROM payment_orders WHERE status IN ('CREATED','CHECKOUT_ACTIVE')) AS open_checkout_cents,
+    (SELECT coalesce(sum(amount_cents),0) FROM payment_orders WHERE status='REFUNDED') AS refunded_revenue_cents,
+    (SELECT coalesce(sum(balance),0) FROM wallets) AS credits_in_wallets`);
   res.json(summary.rows[0]);
+}));
+
+api.get('/admin/queries', auth, requirePermission('VIEW_AUDIT'), asyncRoute(async (_req, res) => {
+  const queries = await pool.query(`SELECT q.id,q.plate,q.status,q.credits_cost,q.provider,q.created_at,q.completed_at,q.error_code,
+      p.name AS product_name,u.name AS customer_name,u.email AS customer_email
+    FROM vehicle_queries q
+    JOIN users u ON u.id=q.user_id
+    JOIN query_products p ON p.id=q.product_id
+    ORDER BY q.created_at DESC LIMIT 200`);
+  res.json(queries.rows.map((row) => ({
+    id: row.id,
+    plate: row.plate,
+    status: row.status,
+    creditsCost: Number(row.credits_cost),
+    provider: row.provider,
+    productName: row.product_name,
+    createdAt: row.created_at,
+    completedAt: row.completed_at,
+    errorCode: row.error_code,
+    customer: { name: row.customer_name, email: row.customer_email }
+  })));
 }));
 
 api.patch('/admin/products/:id', auth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
