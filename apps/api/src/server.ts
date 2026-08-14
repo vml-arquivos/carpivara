@@ -7,7 +7,8 @@ import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
-import { auth, signToken, type AuthUser } from './auth.js';
+import { auth, issueSession, revokeSession, type AuthUser } from './auth.js';
+import { completeAuthorization, consumeLoginTicket, createAuthorizationRequest, oauthErrorUrl, oauthSuccessUrl, socialProviderStatus, type OAuthProvider } from './oauth.js';
 import { env } from './config.js';
 import { pool, tx } from './db.js';
 import { normalizeBdrp } from './normalizer.js';
@@ -24,8 +25,12 @@ const plateSchema = z.string().trim().min(7).max(16).transform((value) => value.
 const registerSchema = z.object({
   name: z.string().trim().min(2).max(120),
   email: z.string().trim().email().max(254),
-  password: z.string().min(10).max(128)
+  password: z.string().min(10).max(128),
+  acceptTerms: z.literal(true),
+  acceptPrivacy: z.literal(true),
+  marketingOptIn: z.boolean().optional().default(false)
 });
+const oauthTicketSchema = z.object({ ticket: z.string().regex(/^[A-Za-z0-9_-]{30,160}$/) });
 const loginSchema = z.object({ email: z.string().trim().email().max(254), password: z.string().min(1).max(128) });
 const requestQuerySchema = z.object({ plate: plateSchema, productId: z.string().trim().min(1).max(80) });
 const sandboxCreditSchema = z.object({ credits: z.number().int().min(10).max(10000) });
@@ -135,6 +140,7 @@ app.use((req, res, next) => {
 app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: 'same-origin' } }));
 app.use(cors({ origin: env.NODE_ENV === 'production' ? false : env.WEB_ORIGIN, credentials: false }));
 app.use(express.json({ limit: '256kb', type: 'application/json' }));
+app.use(express.urlencoded({ extended: false, limit: '32kb' }));
 if (env.RATE_LIMIT_ENABLED) {
   app.use(rateLimit({ windowMs: env.RATE_LIMIT_WINDOW_MS, limit: env.RATE_LIMIT_MAX_REQUESTS, standardHeaders: true, legacyHeaders: false, skip: (req) => req.path === '/health' }));
 }
@@ -152,6 +158,44 @@ const loginRateLimit = rateLimit({
   message: { error: 'TOO_MANY_ATTEMPTS', message: 'Muitas tentativas. Aguarde alguns minutos para tentar novamente.' }
 });
 
+api.get('/auth/providers', (_req, res) => {
+  res.json({ providers: socialProviderStatus() });
+});
+
+api.get('/auth/oauth/:provider/start', asyncRoute(async (req, res) => {
+  const provider = parseOAuthProvider(String(req.params.provider));
+  const { authorizationUrl } = await createAuthorizationRequest(provider);
+  res.redirect(302, authorizationUrl);
+}));
+
+const oauthCallback: RequestHandler = asyncRoute(async (req, res) => {
+  const provider = parseOAuthProvider(String(req.params.provider));
+  try {
+    const result = await completeAuthorization(provider, {
+      code: typeof req.body?.code === 'string' ? req.body.code : typeof req.query.code === 'string' ? req.query.code : undefined,
+      state: typeof req.body?.state === 'string' ? req.body.state : typeof req.query.state === 'string' ? req.query.state : undefined,
+      error: typeof req.body?.error === 'string' ? req.body.error : typeof req.query.error === 'string' ? req.query.error : undefined,
+      errorDescription: typeof req.body?.error_description === 'string' ? req.body.error_description : typeof req.query.error_description === 'string' ? req.query.error_description : undefined,
+      appleUser: typeof req.body?.user === 'string' ? req.body.user : undefined
+    });
+    res.redirect(302, oauthSuccessUrl(result.ticket));
+  } catch (error) {
+    const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'OAUTH_CALLBACK_FAILED';
+    res.redirect(302, oauthErrorUrl(code));
+  }
+});
+api.get('/auth/oauth/:provider/callback', oauthCallback);
+api.post('/auth/oauth/:provider/callback', oauthCallback);
+
+api.post('/auth/oauth/consume', loginRateLimit, asyncRoute(async (req, res) => {
+  const parsed = oauthTicketSchema.safeParse(req.body);
+  if (!parsed.success) throw appError('OAUTH_TICKET_INVALID', { code: 'OAUTH_TICKET_INVALID', http: 401, expose: true });
+  const user = await consumeLoginTicket(parsed.data.ticket);
+  const issued = await issueSession(user, { flow: 'social', requestId: requestId(req) });
+  await audit(user.id, 'OAUTH_LOGIN', 'USER', user.id, { requestId: requestId(req) });
+  res.json({ token: issued.token, user });
+}));
+
 api.post('/auth/register', asyncRoute(async (req, res) => {
   const parsed = registerSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
@@ -161,10 +205,16 @@ api.post('/auth/register', asyncRoute(async (req, res) => {
     const created = await tx(async (client) => {
       const user = await client.query('INSERT INTO users(email,password_hash,name,role) VALUES($1,$2,$3,$4) RETURNING id,email,name,role', [email, passwordHash, parsed.data.name, 'CLIENTE']);
       await client.query('INSERT INTO wallets(user_id,balance) VALUES($1,0)', [user.rows[0].id]);
+      await client.query('INSERT INTO user_profiles(user_id,marketing_opt_in) VALUES($1,$2)', [user.rows[0].id, parsed.data.marketingOptIn]);
+      await client.query(`INSERT INTO user_consents(user_id,consent_type,granted,policy_version,source,ip_hash)
+        VALUES($1,'TERMS_OF_SERVICE',true,'2026-08','registration',$2),
+              ($1,'PRIVACY_POLICY',true,'2026-08','registration',$2),
+              ($1,'MARKETING_EMAIL',$3,'2026-08','registration',$2)`, [user.rows[0].id, hashIp(req.ip), parsed.data.marketingOptIn]);
       return user.rows[0] as AuthUser;
     });
+    const issued = await issueSession(created, { flow: 'password_registration', requestId: requestId(req) });
     await audit(created.id, 'REGISTER', 'USER', created.id, { requestId: requestId(req) });
-    res.status(201).json({ token: signToken(created), user: created });
+    res.status(201).json({ token: issued.token, user: created });
   } catch (error: unknown) {
     if (typeof error === 'object' && error !== null && 'code' in error && error.code === '23505') throw appError('EMAIL_ALREADY_EXISTS', { code: 'EMAIL_ALREADY_EXISTS', http: 409, expose: true });
     throw error;
@@ -175,12 +225,12 @@ api.post('/auth/login', loginRateLimit, asyncRoute(async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_CREDENTIALS', { code: 'INVALID_CREDENTIALS', http: 401, expose: true });
   const email = parsed.data.email.toLowerCase();
-  const result = await pool.query('SELECT id,email,password_hash,name,role,active,failed_login_attempts,locked_until FROM users WHERE lower(email)=lower($1)', [email]);
+  const result = await pool.query('SELECT id,email,password_hash,name,role,active,password_enabled,failed_login_attempts,locked_until FROM users WHERE lower(email)=lower($1)', [email]);
   const account = result.rows[0] as (Record<string, unknown> | undefined);
   const lockedUntil = account?.locked_until ? new Date(String(account.locked_until)) : undefined;
   const isLocked = lockedUntil && lockedUntil.getTime() > Date.now();
   const passwordMatches = account ? await bcrypt.compare(parsed.data.password, String(account.password_hash)) : false;
-  if (!account || !account.active || isLocked || !passwordMatches) {
+  if (!account || !account.active || account.password_enabled !== true || isLocked || !passwordMatches) {
     if (account?.id) {
       const failures = Number(account.failed_login_attempts ?? 0) + 1;
       const lock = failures >= 5 ? new Date(Date.now() + 15 * 60 * 1000) : null;
@@ -191,11 +241,13 @@ api.post('/auth/login', loginRateLimit, asyncRoute(async (req, res) => {
   }
   const user = publicUser({ id: String(account.id), email: String(account.email), name: String(account.name), role: String(account.role) });
   await pool.query('UPDATE users SET failed_login_attempts=0, locked_until=NULL, last_login_at=now() WHERE id=$1', [user.id]);
+  const issued = await issueSession(user, { flow: 'password', requestId: requestId(req) });
   await audit(user.id, 'LOGIN', 'USER', user.id, { requestId: requestId(req) });
-  res.json({ token: signToken(user), user });
+  res.json({ token: issued.token, user });
 }));
 
 api.post('/auth/logout', auth, asyncRoute(async (req, res) => {
+  await revokeSession(req.sessionId);
   await audit(req.user!.id, 'LOGOUT', 'USER', req.user!.id, { requestId: requestId(req) });
   res.status(204).end();
 }));
@@ -207,14 +259,18 @@ api.post('/auth/change-password', auth, asyncRoute(async (req, res) => {
   if (!result.rowCount || !(await bcrypt.compare(parsed.data.currentPassword, result.rows[0].password_hash))) {
     throw appError('INVALID_CREDENTIALS', { code: 'INVALID_CREDENTIALS', http: 401, expose: true });
   }
-  await pool.query('UPDATE users SET password_hash=$2 WHERE id=$1', [req.user!.id, await bcrypt.hash(parsed.data.newPassword, 12)]);
+  await pool.query('UPDATE users SET password_hash=$2,password_enabled=true WHERE id=$1', [req.user!.id, await bcrypt.hash(parsed.data.newPassword, 12)]);
+  await pool.query('UPDATE user_sessions SET revoked_at=now() WHERE user_id=$1 AND id <> $2 AND revoked_at IS NULL', [req.user!.id, req.sessionId ?? '']);
   await audit(req.user!.id, 'PASSWORD_CHANGED', 'USER', req.user!.id, { requestId: requestId(req) });
   res.status(204).end();
 }));
 
 api.get('/me', auth, asyncRoute(async (req, res) => {
-  const wallet = await pool.query('SELECT balance FROM wallets WHERE user_id=$1', [req.user!.id]);
-  res.json({ user: req.user, balance: wallet.rows[0]?.balance ?? 0, permissions: permissionsFor(req.user!.role), sandbox: env.DATA_PROVIDER === 'mock' });
+  const [wallet, identities] = await Promise.all([
+    pool.query('SELECT balance FROM wallets WHERE user_id=$1', [req.user!.id]),
+    pool.query('SELECT provider FROM user_identities WHERE user_id=$1 ORDER BY provider', [req.user!.id])
+  ]);
+  res.json({ user: req.user, balance: wallet.rows[0]?.balance ?? 0, permissions: permissionsFor(req.user!.role), sandbox: env.DATA_PROVIDER === 'mock', identities: identities.rows.map((row) => row.provider) });
 }));
 
 api.get('/query-products', auth, asyncRoute(async (_req, res) => {
@@ -385,6 +441,16 @@ app.use((error: unknown, req: Request, res: Response, _next: NextFunction) => {
   res.status(status).json({ error: code, message: known.expose ? humanMessage(code) : 'Não foi possível concluir esta operação agora. Tente novamente.' });
 });
 
+function parseOAuthProvider(value: string): OAuthProvider {
+  if (value === 'google' || value === 'microsoft' || value === 'apple') return value;
+  throw appError('OAUTH_PROVIDER_UNSUPPORTED', { code: 'OAUTH_PROVIDER_UNSUPPORTED', http: 404, expose: true });
+}
+
+function hashIp(ip: string | undefined): string | null {
+  if (!ip) return null;
+  return crypto.createHash('sha256').update(`${env.JWT_SECRET}:${ip}`).digest('hex');
+}
+
 function humanMessage(code: string): string {
   const messages: Record<string, string> = {
     INVALID_INPUT: 'Revise os dados informados e tente novamente.',
@@ -397,7 +463,10 @@ function humanMessage(code: string): string {
     PRODUCT_NOT_FOUND: 'Este produto de consulta não está disponível.',
     QUERY_NOT_FOUND: 'A consulta solicitada não foi encontrada.',
     QUERY_IN_PROGRESS: 'Já existe uma consulta em processamento para esta solicitação.',
-    SANDBOX_DISABLED: 'A compra de créditos de teste não está disponível neste ambiente.'
+    SANDBOX_DISABLED: 'A compra de créditos de teste não está disponível neste ambiente.',
+    OAUTH_PROVIDER_UNSUPPORTED: 'Este provedor de acesso não é suportado.',
+    OAUTH_PROVIDER_NOT_CONFIGURED: 'Este provedor de acesso ainda não foi configurado pela plataforma.',
+    OAUTH_TICKET_INVALID: 'Esta solicitação de acesso expirou. Tente entrar novamente.'
   };
   return messages[code] ?? 'Não foi possível concluir esta operação agora. Tente novamente.';
 }

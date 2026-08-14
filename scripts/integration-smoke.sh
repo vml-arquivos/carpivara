@@ -76,4 +76,24 @@ curl -fsS "$BASE_URL/api/admin/overview" -H "Authorization: Bearer $ADMIN_TOKEN"
 assert_contains "$TMP_DIR/admin.json" '"queries_today"'
 echo '✓ rota administrativa protegida por permissão'
 
+REGISTER_EMAIL="novo.usuario.$(date +%s)@example.test"
+curl -fsS -X POST "$BASE_URL/api/auth/register" \
+  -H 'Content-Type: application/json' \
+  --data "{\"name\":\"Novo Usuario\",\"email\":\"$REGISTER_EMAIL\",\"password\":\"SenhaSegura@2026\",\"acceptTerms\":true,\"acceptPrivacy\":true,\"marketingOptIn\":false}" >"$TMP_DIR/register.json"
+REGISTER_TOKEN="$(cat "$TMP_DIR/register.json" | json_field token)"
+[ -n "$REGISTER_TOKEN" ] || fail 'token de cadastro não retornado'
+REGISTER_AUTH=(-H "Authorization: Bearer $REGISTER_TOKEN")
+curl -fsS "$BASE_URL/api/me" "${REGISTER_AUTH[@]}" >"$TMP_DIR/registered-me.json"
+assert_contains "$TMP_DIR/registered-me.json" '"balance":0'
+LOGOUT_STATUS="$(curl -sS -o "$TMP_DIR/logout.json" -w '%{http_code}' -X POST "$BASE_URL/api/auth/logout" "${REGISTER_AUTH[@]}")"
+[ "$LOGOUT_STATUS" = '204' ] || fail "logout retornou HTTP $LOGOUT_STATUS"
+REVOKED_STATUS="$(curl -sS -o "$TMP_DIR/revoked.json" -w '%{http_code}' "$BASE_URL/api/me" "${REGISTER_AUTH[@]}")"
+[ "$REVOKED_STATUS" = '401' ] || fail "sessão revogada retornou HTTP $REVOKED_STATUS"
+echo '✓ cadastro com consentimentos e sessão revogável'
+
+curl -fsS "$BASE_URL/api/auth/providers" >"$TMP_DIR/providers.json"
+assert_contains "$TMP_DIR/providers.json" '"google"'
+assert_contains "$TMP_DIR/providers.json" '"enabled":false'
+echo '✓ provedores sociais expostos com ativação controlada por runtime'
+
 echo 'VALIDAÇÃO INTEGRADA: APROVADA'

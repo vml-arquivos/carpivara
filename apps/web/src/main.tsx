@@ -21,7 +21,8 @@ type Report = {
 };
 type Query = { id: string; plate: string; productId: string; productName: string; status: string; creditsCost: number; provider: string; createdAt: string; completedAt?: string; result: Report | null };
 type Transaction = { id: string; kind: string; amount: number; balanceBefore: number; balanceAfter: number; description: string; createdAt: string };
-type Me = { user: User; balance: number; permissions: string[]; sandbox: boolean };
+type Me = { user: User; balance: number; permissions: string[]; sandbox: boolean; identities?: string[] };
+type OAuthProviderStatus = { id: 'google' | 'microsoft' | 'apple'; label: string; enabled: boolean };
 type AdminSummary = { active_users: string; queries_today: string; successful_queries: string; refunds: string; credits_sold: string; credits_consumed: string };
 type ApiError = { error?: string; message?: string };
 
@@ -40,8 +41,8 @@ const mask = (value?: string) => !value ? '—' : value.length <= 5 ? value : `$
 
 function Brand({ compact = false }: { compact?: boolean }) {
   return <div className={`brand ${compact ? 'brandCompact' : ''}`} aria-label="CARPIVARA, consulta veicular inteligente">
-    <span className="brandMark" aria-hidden="true"><img src="/brand/carpivara-mark.svg" alt="" /></span>
-    <span className="brandWord"><strong>CAR<span>PIVARA</span></strong><small>consulta veicular inteligente</small></span>
+    <span className="brandMark" aria-hidden="true"><img src="/brand/carpivara-premium-mark.png" alt="" /></span>
+    <span className="brandWord"><strong><span>CAR</span>PIVARA</strong><small>consulta veicular inteligente</small></span>
   </div>;
 }
 
@@ -65,8 +66,8 @@ function Landing({ theme, setTheme, onAccess }: { theme: Theme; setTheme: (value
       <section className="hero">
         <div className="heroContent">
           <p className="kicker">Inteligência para decisões automotivas</p>
-          <h1>Puxe os fatos.<br /><em>Descubra o que importa.</em></h1>
-          <p className="heroLead">Consulte informações relevantes do veículo em poucos segundos e tome decisões com mais segurança, clareza e histórico organizado.</p>
+          <h1>Puxe os fatos.<br /><em>Descubra a verdade.</em></h1>
+          <p className="heroLead">Consulte, analise e decida com segurança. Informações veiculares organizadas em um relatório claro, rápido e confiável.</p>
           <div className="heroActions"><button className="primaryButton" onClick={onAccess}>Consultar um veículo <span>→</span></button><a className="secondaryButton" href="#como-funciona">Entenda como funciona</a></div>
           <div className="heroTrust"><span><b>Dados organizados</b> em um relatório objetivo</span><span><b>Histórico salvo</b> para retornar quando quiser</span></div>
         </div>
@@ -83,18 +84,23 @@ function Landing({ theme, setTheme, onAccess }: { theme: Theme; setTheme: (value
   </div>;
 }
 
-function AuthScreen({ onAuthenticated, onBack }: { onAuthenticated: (token: string) => void; onBack: () => void }) {
+function AuthScreen({ onAuthenticated, onBack, externalError = '' }: { onAuthenticated: (token: string) => void; onBack: () => void; externalError?: string }) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
+  const [providers, setProviders] = useState<OAuthProviderStatus[]>([]);
+
+  useEffect(() => { void fetch(`${API}/auth/providers`).then((response) => response.ok ? response.json() : { providers: [] }).then((body: { providers?: OAuthProviderStatus[] }) => setProviders(body.providers ?? [])).catch(() => setProviders([])); }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(''); setPending(true);
     const form = new FormData(event.currentTarget);
+    const password = String(form.get('password') ?? '');
+    if (mode === 'register' && password !== String(form.get('passwordConfirmation') ?? '')) { setError('As senhas precisam ser iguais.'); setPending(false); return; }
     const payload = mode === 'login'
-      ? { email: String(form.get('email') ?? ''), password: String(form.get('password') ?? '') }
-      : { name: String(form.get('name') ?? ''), email: String(form.get('email') ?? ''), password: String(form.get('password') ?? '') };
+      ? { email: String(form.get('email') ?? ''), password }
+      : { name: String(form.get('name') ?? ''), email: String(form.get('email') ?? ''), password, acceptTerms: form.get('acceptTerms') === 'on', acceptPrivacy: form.get('acceptPrivacy') === 'on', marketingOptIn: form.get('marketingOptIn') === 'on' };
     try {
       const response = await fetch(`${API}/auth/${mode === 'login' ? 'login' : 'register'}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const body = await response.json() as ApiError & { token?: string };
@@ -105,7 +111,13 @@ function AuthScreen({ onAuthenticated, onBack }: { onAuthenticated: (token: stri
     finally { setPending(false); }
   }
 
-  return <div className="authShell"><div className="authVisual"><button className="backButton" onClick={onBack}>← Voltar ao início</button><Brand /><div className="authPitch"><p className="kicker">Sua decisão começa aqui</p><h1>Informação clara para cada próxima escolha.</h1><p>Entre para consultar veículos, acompanhar o uso de créditos e manter seus relatórios organizados.</p></div><div className="authDecor"><span>Dados organizados</span><span>Ambiente seguro</span><span>Histórico disponível</span></div></div><div className="authPanel"><div className="authCard"><div className="authTabs"><button className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Entrar</button><button className={mode === 'register' ? 'active' : ''} onClick={() => setMode('register')}>Criar conta</button></div><h2>{mode === 'login' ? 'Que bom ter você de volta.' : 'Comece com uma conta segura.'}</h2><p className="muted">{mode === 'login' ? 'Acesse sua carteira e suas consultas salvas.' : 'Crie sua conta para centralizar suas consultas.'}</p><form onSubmit={submit}>{mode === 'register' && <label>Nome completo<input name="name" autoComplete="name" minLength={2} required placeholder="Como podemos chamar você?" /></label>}<label>E-mail<input name="email" type="email" autoComplete="email" required placeholder="voce@empresa.com" /></label><label>Senha<input name="password" type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={mode === 'register' ? 10 : 1} required placeholder="Sua senha" /></label>{error && <div className="notice noticeError" role="alert">{error}</div>}<button className="primaryButton full" disabled={pending}>{pending ? 'Aguarde...' : mode === 'login' ? 'Entrar na plataforma' : 'Criar minha conta'} <span>→</span></button></form><p className="authFine">Ao continuar, você utiliza um ambiente de consulta com informações fornecidas conforme o produto contratado.</p></div></div></div>;
+  function selectMode(next: 'login' | 'register') { setMode(next); setError(''); }
+  function startSocialLogin(provider: OAuthProviderStatus) { if (provider.enabled) window.location.assign(`${API}/auth/oauth/${provider.id}/start`); }
+  const providerLabel: Record<OAuthProviderStatus['id'], string> = { google: 'Continuar com Google', microsoft: 'Continuar com Microsoft', apple: 'Continuar com Apple' };
+  const providerIcon: Record<OAuthProviderStatus['id'], string> = { google: 'G', microsoft: '⊞', apple: '●' };
+  const configuredProviders = (['google', 'microsoft', 'apple'] as OAuthProviderStatus['id'][]).map((id) => providers.find((provider) => provider.id === id) ?? { id, label: id, enabled: false });
+
+  return <div className="authShell"><div className="authVisual"><button className="backButton" onClick={onBack}>← Voltar ao início</button><Brand /><div className="authPitch"><p className="kicker">Sua decisão começa aqui</p><h1>Informação clara para cada próxima escolha.</h1><p>Entre para consultar veículos, acompanhar o uso de créditos e manter seus relatórios organizados.</p></div><div className="authDecor"><span>Dados organizados</span><span>Proteção de acesso</span><span>Histórico disponível</span></div></div><div className="authPanel"><div className="authCard authCardPremium"><div className="authTabs"><button className={mode === 'login' ? 'active' : ''} onClick={() => selectMode('login')}>Entrar</button><button className={mode === 'register' ? 'active' : ''} onClick={() => selectMode('register')}>Criar conta</button></div><h2>{mode === 'login' ? 'Que bom ter você de volta.' : 'Crie sua central de decisões.'}</h2><p className="muted">{mode === 'login' ? 'Acesse sua carteira, consultas e relatórios salvos.' : 'Comece com uma conta protegida e tenha tudo organizado em um único lugar.'}</p><div className="socialAuth" aria-label="Acesso sem senha">{configuredProviders.map((provider) => <button className="socialButton" type="button" key={provider.id} onClick={() => startSocialLogin(provider)} disabled={!provider.enabled} title={provider.enabled ? providerLabel[provider.id] : 'A ativação deste provedor depende da configuração segura no ambiente de produção.'}><span aria-hidden="true">{providerIcon[provider.id]}</span>{providerLabel[provider.id]}</button>)}</div><div className="authDivider"><span>ou use seu e-mail</span></div><form onSubmit={submit}>{mode === 'register' && <label>Nome completo<input name="name" autoComplete="name" minLength={2} required placeholder="Como podemos chamar você?" /></label>}<label>E-mail<input name="email" type="email" autoComplete="email" required placeholder="voce@empresa.com" /></label><label>Senha<input name="password" type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={mode === 'register' ? 10 : 1} required placeholder={mode === 'register' ? 'Mínimo de 10 caracteres' : 'Sua senha'} /></label>{mode === 'register' && <><label>Confirmar senha<input name="passwordConfirmation" type="password" autoComplete="new-password" minLength={10} required placeholder="Repita sua senha" /></label><div className="consentFields"><label className="checkField"><input name="acceptTerms" type="checkbox" required /> <span>Li e aceito os <a href="#termos">Termos de Uso</a>.</span></label><label className="checkField"><input name="acceptPrivacy" type="checkbox" required /> <span>Li a <a href="#privacidade">Política de Privacidade</a>.</span></label><label className="checkField"><input name="marketingOptIn" type="checkbox" /> <span>Quero receber conteúdos e novidades por e-mail.</span></label></div></>}{(error || externalError) && <div className="notice noticeError" role="alert">{error || externalError}</div>}<button className="primaryButton full" disabled={pending}>{pending ? 'Aguarde...' : mode === 'login' ? 'Entrar na plataforma' : 'Criar minha conta'} <span>→</span></button></form><p className="authFine">Dados de autenticação são processados de forma segura. Você pode usar e-mail e senha ou, quando configurado, acesso direto por um provedor confiável.</p></div></div></div>;
 }
 
 function App() {
@@ -126,6 +138,25 @@ function App() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [queryStage, setQueryStage] = useState(0);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const ticket = url.searchParams.get('oauth_ticket');
+    const oauthError = url.searchParams.get('oauth_error');
+    if (!ticket && !oauthError) return;
+    url.searchParams.delete('oauth_ticket');
+    url.searchParams.delete('oauth_error');
+    window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+    if (oauthError) { setError('Não foi possível concluir o acesso pelo provedor escolhido. Tente novamente ou use seu e-mail.'); setPublicPage('auth'); return; }
+    void fetch(`${API}/auth/oauth/consume`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticket }) })
+      .then(async (response) => {
+        const body = await response.json() as ApiError & { token?: string };
+        if (!response.ok || !body.token) throw new Error(body.message ?? 'Não foi possível concluir o acesso social.');
+        sessionStorage.setItem('carpivara_token', body.token);
+        setToken(body.token);
+      })
+      .catch((reason) => { setError(reason instanceof Error ? reason.message : 'Não foi possível concluir o acesso social.'); setPublicPage('auth'); });
+  }, []);
 
   const appliedTheme = theme === 'system' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme;
   useEffect(() => { document.documentElement.dataset.theme = appliedTheme; localStorage.setItem('carpivara_theme', theme); }, [appliedTheme, theme]);
@@ -193,7 +224,7 @@ function App() {
   function logout() { void api('/auth/logout', { method: 'POST' }).catch(() => undefined); sessionStorage.removeItem('carpivara_token'); setToken(''); setMe(null); setReport(null); setPublicPage('landing'); }
   function navigate(next: View) { setView(next); setError(''); if (next === 'admin') void refresh(true); }
 
-  if (!token) return publicPage === 'landing' ? <Landing theme={theme} setTheme={setTheme} onAccess={() => setPublicPage('auth')} /> : <AuthScreen onAuthenticated={setToken} onBack={() => setPublicPage('landing')} />;
+  if (!token) return publicPage === 'landing' ? <Landing theme={theme} setTheme={setTheme} onAccess={() => setPublicPage('auth')} /> : <AuthScreen onAuthenticated={setToken} onBack={() => setPublicPage('landing')} externalError={error} />;
 
   return <div className="appShell"><aside className="sidebar"><Brand /><div className="workspaceLabel"><span>Área do cliente</span><b>{me?.sandbox ? 'Ambiente sandbox' : 'Conta ativa'}</b></div><nav className="sideNav" aria-label="Navegação da plataforma"><button className={view === 'consult' ? 'active' : ''} onClick={() => navigate('consult')}><i>⌁</i> Nova consulta</button><button className={view === 'history' ? 'active' : ''} onClick={() => navigate('history')}><i>◫</i> Histórico</button><button className={view === 'wallet' ? 'active' : ''} onClick={() => navigate('wallet')}><i>◇</i> Carteira</button><button className={view === 'settings' ? 'active' : ''} onClick={() => navigate('settings')}><i>◌</i> Preferências</button>{canAdmin && <button className={view === 'admin' ? 'active' : ''} onClick={() => navigate('admin')}><i>◈</i> Administração</button>}</nav><div className="sideBottom"><div className="sideCredit"><span>Saldo disponível</span><strong>{formatCredits(me?.balance ?? 0)} <small>créditos</small></strong></div><button className="logoutButton" onClick={logout}>Sair da conta</button></div></aside><main className="workspace"><header className="appHeader"><div><p className="kicker">{view === 'consult' ? 'Consulta veicular' : view === 'history' ? 'Histórico de consultas' : view === 'wallet' ? 'Carteira de créditos' : view === 'admin' ? 'Controle operacional' : 'Preferências'}</p><h1>{view === 'consult' ? 'Bom ter você por aqui, ' : ''}{view === 'consult' ? (me?.user.name?.split(' ')[0] ?? 'cliente') : view === 'history' ? 'Suas consultas, organizadas.' : view === 'wallet' ? 'Clareza em cada crédito.' : view === 'admin' ? 'Visão administrativa.' : 'Do seu jeito.'}</h1></div><div className="headerActions"><ThemeControl theme={theme} setTheme={setTheme} /><div className="profileBadge"><span>{me?.user.name?.slice(0, 1).toUpperCase()}</span><div><strong>{me?.user.name}</strong><small>{me?.user.role.replace('_', ' ')}</small></div></div></div></header>{toast && <div className="toast" role="status">{toast}<button onClick={() => setToast('')} aria-label="Fechar aviso">×</button></div>}{error && <div className="notice noticeError" role="alert">{error}<button onClick={() => setError('')} aria-label="Fechar erro">×</button></div>}{view === 'consult' && <ConsultView plate={plate} setPlate={setPlate} products={products} productId={productId} setProductId={setProductId} selectedProduct={selectedProduct} balance={me?.balance ?? 0} sandbox={Boolean(me?.sandbox)} loading={loading} queryStage={queryStage} runQuery={runQuery} setSandboxPlate={setPlate} report={report} exportReport={exportReport} />}{view === 'history' && <HistoryView history={filteredHistory} filter={historyFilter} setFilter={setHistoryFilter} loading={loading} openSavedQuery={openSavedQuery} onRepeat={(item) => { setPlate(item.plate); setProductId(item.productId); setReport(null); navigate('consult'); setToast('Placa e produto preenchidos. Uma nova consulta consumirá créditos.'); }} />}{view === 'wallet' && <WalletView balance={me?.balance ?? 0} transactions={transactions} sandbox={Boolean(me?.sandbox)} loading={loading} buy={buySandboxCredits} />}{view === 'settings' && <SettingsView theme={theme} setTheme={setTheme} user={me?.user} />}{view === 'admin' && canAdmin && <AdminView summary={admin} products={products} />}</main><nav className="mobileNav" aria-label="Navegação móvel"><button className={view === 'consult' ? 'active' : ''} onClick={() => navigate('consult')}>Consultar</button><button className={view === 'history' ? 'active' : ''} onClick={() => navigate('history')}>Histórico</button><button className={view === 'wallet' ? 'active' : ''} onClick={() => navigate('wallet')}>Carteira</button><button onClick={logout}>Sair</button></nav></div>;
 }

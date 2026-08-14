@@ -40,6 +40,24 @@ const envSchema = z.object({
     LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
     LOG_SENSITIVE_DATA: booleanFromEnv.default(false),
     AUDIT_LOG_ENABLED: booleanFromEnv.default(true),
-    STORE_RAW_PROVIDER_RESPONSE: booleanFromEnv.default(true)
+    STORE_RAW_PROVIDER_RESPONSE: booleanFromEnv.default(true),
+    // OIDC/OAuth: client secrets are runtime-only values and must never be committed or enabled at build time.
+    OAUTH_STATE_TTL_SECONDS: z.coerce.number().int().min(60).max(1800).default(600),
+    OAUTH_LOGIN_TICKET_TTL_SECONDS: z.coerce.number().int().min(30).max(600).default(120),
+    OAUTH_GOOGLE_CLIENT_ID: optionalString,
+    OAUTH_GOOGLE_CLIENT_SECRET: optionalString,
+    OAUTH_MICROSOFT_CLIENT_ID: optionalString,
+    OAUTH_MICROSOFT_CLIENT_SECRET: optionalString,
+    OAUTH_MICROSOFT_TENANT: z.string().trim().min(1).max(200).default('common'),
+    OAUTH_APPLE_CLIENT_ID: optionalString,
+    OAUTH_APPLE_TEAM_ID: optionalString,
+    OAUTH_APPLE_KEY_ID: optionalString,
+    OAUTH_APPLE_PRIVATE_KEY: optionalString
 });
 export const env = envSchema.parse(process.env);
+export function publicAppUrl() {
+    return (env.APP_URL ?? env.WEB_ORIGIN).replace(/\/$/, '');
+}
+export function oauthCallbackUrl(provider) {
+    return `${publicAppUrl()}/api/auth/oauth/${provider}/callback`;
+}

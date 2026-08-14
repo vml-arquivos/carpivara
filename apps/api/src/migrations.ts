@@ -90,6 +90,80 @@ const migrations: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_audit_logs_action_created ON audit_logs(action, created_at DESC);
       `);
     }
+  },
+  {
+    id: '003_identity_and_social_auth',
+    name: 'User identities, revocable sessions, consent records and OAuth transaction security',
+    async up(client) {
+      await client.query(`
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS password_enabled boolean NOT NULL DEFAULT true;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at timestamptz;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
+        ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS onboarding_completed_at timestamptz;
+        ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+
+        CREATE TABLE IF NOT EXISTS user_identities (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          provider text NOT NULL CHECK (provider IN ('google','microsoft','apple')),
+          provider_account_id text NOT NULL,
+          issuer text NOT NULL,
+          email_at_provider text,
+          email_verified_at timestamptz,
+          profile jsonb NOT NULL DEFAULT '{}'::jsonb,
+          last_used_at timestamptz,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          updated_at timestamptz NOT NULL DEFAULT now(),
+          UNIQUE(provider, provider_account_id),
+          UNIQUE(user_id, provider)
+        );
+
+        CREATE TABLE IF NOT EXISTS user_sessions (
+          id uuid PRIMARY KEY,
+          user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          expires_at timestamptz NOT NULL,
+          revoked_at timestamptz,
+          metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          last_seen_at timestamptz NOT NULL DEFAULT now()
+        );
+
+        CREATE TABLE IF NOT EXISTS user_consents (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          consent_type text NOT NULL CHECK (consent_type IN ('TERMS_OF_SERVICE','PRIVACY_POLICY','MARKETING_EMAIL')),
+          granted boolean NOT NULL,
+          policy_version text NOT NULL,
+          source text NOT NULL DEFAULT 'registration',
+          ip_hash text,
+          created_at timestamptz NOT NULL DEFAULT now()
+        );
+
+        CREATE TABLE IF NOT EXISTS oauth_authorization_states (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          provider text NOT NULL CHECK (provider IN ('google','microsoft','apple')),
+          state_hash text NOT NULL UNIQUE,
+          nonce text NOT NULL,
+          code_verifier text NOT NULL,
+          expires_at timestamptz NOT NULL,
+          created_at timestamptz NOT NULL DEFAULT now()
+        );
+
+        CREATE TABLE IF NOT EXISTS oauth_login_tickets (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          ticket_hash text NOT NULL UNIQUE,
+          expires_at timestamptz NOT NULL,
+          created_at timestamptz NOT NULL DEFAULT now()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_user_identities_user ON user_identities(user_id);
+        CREATE INDEX IF NOT EXISTS idx_user_sessions_active ON user_sessions(user_id, expires_at DESC) WHERE revoked_at IS NULL;
+        CREATE INDEX IF NOT EXISTS idx_user_consents_user_type ON user_consents(user_id, consent_type, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_oauth_states_expiry ON oauth_authorization_states(expires_at);
+        CREATE INDEX IF NOT EXISTS idx_oauth_tickets_expiry ON oauth_login_tickets(expires_at);
+      `);
+    }
   }
 ];
 
