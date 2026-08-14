@@ -165,7 +165,7 @@ export async function ensureSchema() {
       RETURNING id,email,name,role`, [env.SUPER_ADMIN_BOOTSTRAP_EMAIL]);
     if (!promoted.rowCount) throw new Error('SUPER_ADMIN_BOOTSTRAP_USER_NOT_FOUND');
     await pool.query(`INSERT INTO audit_logs(user_id,action,entity,entity_id,metadata)
-      VALUES($1,'BOOTSTRAP_SUPER_ADMIN','USER',$1,$2::jsonb)`, [promoted.rows[0].id, JSON.stringify({ email: promoted.rows[0].email, source: 'production_bootstrap' })]);
+      VALUES($1::uuid,'BOOTSTRAP_SUPER_ADMIN','USER',$2::text,$3::jsonb)`, [promoted.rows[0].id, promoted.rows[0].id, JSON.stringify({ email: promoted.rows[0].email, source: 'production_bootstrap' })]);
   }
 
   const products = [
