@@ -96,4 +96,15 @@ assert_contains "$TMP_DIR/providers.json" '"google"'
 assert_contains "$TMP_DIR/providers.json" '"enabled":false'
 echo '✓ provedores sociais expostos com ativação controlada por runtime'
 
+curl -fsS "$BASE_URL/api/credit-packages" "${AUTH[@]}" >"$TMP_DIR/packages.json"
+assert_contains "$TMP_DIR/packages.json" '"slug":"essencial"'
+assert_contains "$TMP_DIR/packages.json" '"credits":10'
+echo '✓ migrations de pacotes de crédito aplicadas'
+
+CHECKOUT_STATUS="$(curl -sS -o "$TMP_DIR/checkout.json" -w '%{http_code}' -X POST "$BASE_URL/api/payments/checkout" "${AUTH[@]}" \
+  -H 'Content-Type: application/json' --data '{"packageSlug":"essencial"}')"
+[ "$CHECKOUT_STATUS" = '503' ] || fail "checkout não configurado retornou HTTP $CHECKOUT_STATUS"
+assert_contains "$TMP_DIR/checkout.json" 'PAYMENT_PROVIDER_NOT_CONFIGURED'
+echo '✓ checkout bloqueado com segurança enquanto faltam credenciais externas'
+
 echo 'VALIDAÇÃO INTEGRADA: APROVADA'

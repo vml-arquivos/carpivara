@@ -14,6 +14,7 @@ import { pool, tx } from './db.js';
 import { normalizeBdrp } from './normalizer.js';
 import { hasPermission, permissionsFor, requirePermission } from './permissions.js';
 import { getProvider } from './providers/index.js';
+import { createAsaasCheckout, eventReference, externalPaymentId, hasValidAsaasWebhookToken, isAsaasConfigured } from './payments/asaas.js';
 import { ensureSchema } from './schema.js';
 await ensureSchema();
 const app = express();
@@ -38,6 +39,15 @@ const productUpdateSchema = z.object({
     creditCost: z.number().int().min(0).max(100000).optional(),
     active: z.boolean().optional()
 }).refine((input) => Object.keys(input).length > 0, 'EMPTY_UPDATE');
+const adminUserUpdateSchema = z.object({
+    active: z.boolean().optional(),
+    role: z.enum(['OPERADOR', 'ADMIN', 'CLIENTE']).optional()
+}).refine((input) => Object.keys(input).length > 0, 'EMPTY_UPDATE');
+const adminWalletAdjustmentSchema = z.object({
+    amount: z.number().int().min(-100000).max(100000).refine((value) => value !== 0, 'ZERO_ADJUSTMENT'),
+    description: z.string().trim().min(8).max(280)
+});
+const checkoutSchema = z.object({ packageSlug: z.string().trim().min(2).max(80) });
 function appError(message, options = {}) {
     const error = new Error(message);
     Object.assign(error, options);
@@ -77,6 +87,10 @@ function toSafeQueryError(error) {
         return { status: 400, code, message: 'Informe uma placa válida no padrão brasileiro.' };
     if (code === 'INSUFFICIENT_CREDITS')
         return { status: 402, code, message: 'Seu saldo não é suficiente para esta consulta.' };
+    if (code === 'DATA_PROVIDER_NOT_CONFIGURED')
+        return { status: 503, code, message: 'A consulta oficial está em ativação. Tente novamente quando a fonte de dados estiver disponível.' };
+    if (code === 'DATA_PROVIDER_AUTH_FAILED' || code === 'DATA_PROVIDER_UNAVAILABLE' || code === 'DATA_PROVIDER_INVALID_RESPONSE')
+        return { status: 502, code: 'QUERY_REFUNDED', message: 'A fonte oficial não respondeu de forma válida. Seus créditos foram devolvidos.' };
     if (code === 'PRODUCT_NOT_FOUND')
         return { status: 404, code, message: 'Este produto de consulta não está disponível.' };
     return { status: 502, code: 'QUERY_REFUNDED', message: 'Não foi possível concluir a consulta agora. Seus créditos foram devolvidos.' };
@@ -390,6 +404,98 @@ api.post('/payments/sandbox', auth, requirePermission('BUY_CREDITS'), asyncRoute
     await audit(req.user.id, 'SANDBOX_CREDIT_PURCHASE', 'PAYMENT', result.paymentId, { credits: parsed.data.credits, requestId: requestId(req) });
     res.status(201).json({ status: 'PAID', credits: parsed.data.credits, ...result });
 }));
+api.get('/credit-packages', auth, requirePermission('BUY_CREDITS'), asyncRoute(async (_req, res) => {
+    const packages = await pool.query('SELECT slug,name,description,credits,price_cents FROM credit_packages WHERE active=true ORDER BY display_order,price_cents');
+    res.json(packages.rows.map((item) => ({ slug: item.slug, name: item.name, description: item.description, credits: Number(item.credits), priceCents: Number(item.price_cents) })));
+}));
+api.get('/payments/orders', auth, requirePermission('BUY_CREDITS'), asyncRoute(async (req, res) => {
+    const orders = await pool.query(`SELECT id,status,amount_cents,credits,provider,checkout_url,created_at,paid_at
+    FROM payment_orders WHERE user_id=$1 ORDER BY created_at DESC LIMIT 100`, [req.user.id]);
+    res.json(orders.rows.map((item) => ({ id: item.id, status: item.status, amountCents: Number(item.amount_cents), credits: Number(item.credits), provider: item.provider, checkoutUrl: item.checkout_url, createdAt: item.created_at, paidAt: item.paid_at })));
+}));
+api.post('/payments/checkout', auth, requirePermission('BUY_CREDITS'), asyncRoute(async (req, res) => {
+    const parsed = checkoutSchema.safeParse(req.body);
+    if (!parsed.success)
+        throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+    if (!isAsaasConfigured())
+        throw appError('PAYMENT_PROVIDER_NOT_CONFIGURED', { code: 'PAYMENT_PROVIDER_NOT_CONFIGURED', http: 503, expose: true });
+    const draft = await tx(async (client) => {
+        const pack = await client.query('SELECT id,slug,name,description,credits,price_cents FROM credit_packages WHERE slug=$1 AND active=true', [parsed.data.packageSlug]);
+        if (!pack.rowCount)
+            throw appError('CREDIT_PACKAGE_NOT_FOUND', { code: 'CREDIT_PACKAGE_NOT_FOUND', http: 404, expose: true });
+        const profile = await client.query(`SELECT u.name,u.email,p.cpf_cnpj,p.phone FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id WHERE u.id=$1 AND u.active=true`, [req.user.id]);
+        if (!profile.rowCount)
+            throw appError('AUTH_REQUIRED', { code: 'AUTH_REQUIRED', http: 401, expose: true });
+        const externalReference = `carpivara_${crypto.randomUUID()}`;
+        const order = await client.query(`INSERT INTO payment_orders(user_id,package_id,status,amount_cents,credits,provider,external_reference)
+      VALUES($1,$2,'CREATED',$3,$4,'asaas',$5) RETURNING id`, [req.user.id, pack.rows[0].id, pack.rows[0].price_cents, pack.rows[0].credits, externalReference]);
+        return { orderId: order.rows[0].id, externalReference, pack: pack.rows[0], customer: profile.rows[0] };
+    });
+    try {
+        const checkout = await createAsaasCheckout({
+            orderId: draft.externalReference,
+            itemName: String(draft.pack.name),
+            itemDescription: String(draft.pack.description),
+            amountCents: Number(draft.pack.price_cents),
+            customer: { name: String(draft.customer.name), email: String(draft.customer.email), cpfCnpj: draft.customer.cpf_cnpj ? String(draft.customer.cpf_cnpj) : undefined, phone: draft.customer.phone ? String(draft.customer.phone) : undefined }
+        });
+        await pool.query(`UPDATE payment_orders SET status='CHECKOUT_ACTIVE',provider_checkout_id=$2,checkout_url=$3,updated_at=now() WHERE id=$1`, [draft.orderId, checkout.id, checkout.link]);
+        await audit(req.user.id, 'CREATE_PAYMENT_CHECKOUT', 'PAYMENT_ORDER', draft.orderId, { packageSlug: parsed.data.packageSlug, requestId: requestId(req) });
+        res.status(201).json({ orderId: draft.orderId, checkoutUrl: checkout.link, provider: 'asaas' });
+    }
+    catch (error) {
+        await pool.query(`UPDATE payment_orders SET status='FAILED',updated_at=now() WHERE id=$1`, [draft.orderId]);
+        throw error;
+    }
+}));
+api.post('/payments/asaas/webhook', asyncRoute(async (req, res) => {
+    const header = typeof req.headers['asaas-access-token'] === 'string' ? req.headers['asaas-access-token'] : undefined;
+    if (!hasValidAsaasWebhookToken(header))
+        throw appError('PAYMENT_WEBHOOK_UNAUTHORIZED', { code: 'PAYMENT_WEBHOOK_UNAUTHORIZED', http: 401, expose: false });
+    const event = req.body;
+    const eventId = typeof event?.id === 'string' ? event.id : '';
+    const eventType = typeof event?.event === 'string' ? event.event : '';
+    if (!eventId || !eventType)
+        throw appError('PAYMENT_WEBHOOK_INVALID', { code: 'PAYMENT_WEBHOOK_INVALID', http: 400, expose: false });
+    const reference = eventReference(event);
+    const paymentExternalId = externalPaymentId(event);
+    let duplicate = false;
+    await tx(async (client) => {
+        const inserted = await client.query(`INSERT INTO payment_webhook_events(provider,provider_event_id,event_type,payload)
+      VALUES('asaas',$1,$2,$3::jsonb) ON CONFLICT(provider,provider_event_id) DO NOTHING RETURNING id`, [eventId, eventType, JSON.stringify({ id: eventId, event: eventType, reference, externalId: paymentExternalId })]);
+        if (!inserted.rowCount) {
+            duplicate = true;
+            return;
+        }
+        const order = reference ? await client.query('SELECT * FROM payment_orders WHERE external_reference=$1 FOR UPDATE', [reference]) : await client.query('SELECT * FROM payment_orders WHERE provider_checkout_id=$1 FOR UPDATE', [paymentExternalId]);
+        if (!order.rowCount) {
+            await client.query('UPDATE payment_webhook_events SET processing_error=$2,processed_at=now() WHERE id=$1', [inserted.rows[0].id, 'ORDER_NOT_FOUND']);
+            return;
+        }
+        const current = order.rows[0];
+        const orderId = String(current.id);
+        await client.query('UPDATE payment_webhook_events SET order_id=$2 WHERE id=$1', [inserted.rows[0].id, orderId]);
+        const paid = eventType === 'CHECKOUT_PAID' || eventType === 'PAYMENT_RECEIVED';
+        if (paid && current.status !== 'PAID') {
+            const wallet = await client.query('SELECT balance FROM wallets WHERE user_id=$1 FOR UPDATE', [current.user_id]);
+            const before = Number(wallet.rows[0]?.balance ?? 0);
+            const credits = Number(current.credits);
+            const after = before + credits;
+            const payment = await client.query(`INSERT INTO payments(user_id,provider,status,amount_cents,credits,external_id,order_id,paid_at,provider_status,metadata)
+        VALUES($1,'asaas','PAID',$2,$3,$4,$5,now(),$6,$7::jsonb) RETURNING id`, [current.user_id, current.amount_cents, credits, paymentExternalId, orderId, eventType, JSON.stringify({ eventId })]);
+            await client.query('INSERT INTO wallets(user_id,balance) VALUES($1,$2) ON CONFLICT(user_id) DO UPDATE SET balance=EXCLUDED.balance,updated_at=now()', [current.user_id, after]);
+            await client.query(`INSERT INTO wallet_transactions(user_id,kind,amount,balance_before,balance_after,payment_id,description,metadata)
+        VALUES($1,'PURCHASE',$2,$3,$4,$5,$6,$7::jsonb)`, [current.user_id, credits, before, after, payment.rows[0].id, `Créditos adquiridos via Asaas`, JSON.stringify({ orderId, eventId })]);
+            await client.query(`UPDATE payment_orders SET status='PAID',paid_at=now(),updated_at=now() WHERE id=$1`, [orderId]);
+        }
+        else if (!paid && current.status !== 'PAID') {
+            const mapped = eventType.includes('EXPIRED') ? 'EXPIRED' : eventType.includes('CANCEL') ? 'CANCELLED' : eventType.includes('REFUND') ? 'REFUNDED' : 'CHECKOUT_ACTIVE';
+            await client.query('UPDATE payment_orders SET status=$2,updated_at=now() WHERE id=$1', [orderId, mapped]);
+        }
+        await client.query('UPDATE payment_webhook_events SET processed_at=now() WHERE id=$1', [inserted.rows[0].id]);
+    });
+    res.status(200).json({ received: true, duplicate });
+}));
 api.get('/admin/overview', auth, requirePermission('VIEW_AUDIT'), asyncRoute(async (_req, res) => {
     const summary = await pool.query(`SELECT
     (SELECT count(*) FROM users WHERE active=true) AS active_users,
@@ -430,6 +536,73 @@ api.patch('/admin/products/:id', auth, requirePermission('MANAGE_PRICING'), asyn
     await audit(req.user.id, 'UPDATE_QUERY_PRODUCT', 'QUERY_PRODUCT', String(req.params.id), { fields: Object.keys(parsed.data), requestId: requestId(req) });
     res.json(product.rows[0]);
 }));
+api.get('/admin/users', auth, requirePermission('MANAGE_USERS'), asyncRoute(async (_req, res) => {
+    const users = await pool.query(`SELECT u.id,u.name,u.email,u.role,u.active,u.created_at,u.last_login_at,
+    coalesce(w.balance,0) AS balance,
+    (SELECT count(*) FROM vehicle_queries q WHERE q.user_id=u.id) AS queries_count
+    FROM users u LEFT JOIN wallets w ON w.user_id=u.id
+    WHERE u.deleted_at IS NULL ORDER BY u.created_at DESC LIMIT 200`);
+    res.json(users.rows.map((row) => ({ id: row.id, name: row.name, email: row.email, role: row.role, active: row.active, createdAt: row.created_at, lastLoginAt: row.last_login_at, balance: Number(row.balance), queriesCount: Number(row.queries_count) })));
+}));
+api.patch('/admin/users/:id', auth, requirePermission('MANAGE_USERS'), asyncRoute(async (req, res) => {
+    const parsed = adminUserUpdateSchema.safeParse(req.body);
+    if (!parsed.success)
+        throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+    if (String(req.params.id) === req.user.id)
+        throw appError('ADMIN_SELF_CHANGE_FORBIDDEN', { code: 'ADMIN_SELF_CHANGE_FORBIDDEN', http: 409, expose: true });
+    if (parsed.data.role === 'ADMIN' && !hasPermission(req.user.role, 'ADMIN_SYSTEM'))
+        throw appError('FORBIDDEN', { code: 'FORBIDDEN', http: 403, expose: true });
+    const target = await pool.query('SELECT id,role FROM users WHERE id=$1 AND deleted_at IS NULL', [req.params.id]);
+    if (!target.rowCount)
+        throw appError('USER_NOT_FOUND', { code: 'USER_NOT_FOUND', http: 404, expose: true });
+    if (target.rows[0].role === 'SUPER_ADMIN' && !hasPermission(req.user.role, 'ADMIN_SYSTEM'))
+        throw appError('FORBIDDEN', { code: 'FORBIDDEN', http: 403, expose: true });
+    const assignments = [];
+    const values = [];
+    if (parsed.data.active !== undefined) {
+        values.push(parsed.data.active);
+        assignments.push(`active=$${values.length}`);
+    }
+    if (parsed.data.role !== undefined) {
+        values.push(parsed.data.role);
+        assignments.push(`role=$${values.length}`);
+    }
+    values.push(req.params.id);
+    const updated = await pool.query(`UPDATE users SET ${assignments.join(', ')} WHERE id=$${values.length} RETURNING id,name,email,role,active`, values);
+    await audit(req.user.id, 'ADMIN_UPDATE_USER', 'USER', String(req.params.id), { fields: Object.keys(parsed.data), requestId: requestId(req) });
+    res.json(updated.rows[0]);
+}));
+api.post('/admin/users/:id/wallet-adjustments', auth, requirePermission('MANAGE_BILLING'), asyncRoute(async (req, res) => {
+    const parsed = adminWalletAdjustmentSchema.safeParse(req.body);
+    if (!parsed.success)
+        throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+    const result = await tx(async (client) => {
+        const user = await client.query('SELECT id FROM users WHERE id=$1 AND active=true AND deleted_at IS NULL', [req.params.id]);
+        if (!user.rowCount)
+            throw appError('USER_NOT_FOUND', { code: 'USER_NOT_FOUND', http: 404, expose: true });
+        const wallet = await client.query('SELECT balance FROM wallets WHERE user_id=$1 FOR UPDATE', [req.params.id]);
+        const before = Number(wallet.rows[0]?.balance ?? 0);
+        const after = before + parsed.data.amount;
+        if (after < 0)
+            throw appError('WALLET_BALANCE_INVALID', { code: 'WALLET_BALANCE_INVALID', http: 409, expose: true });
+        await client.query('INSERT INTO wallets(user_id,balance) VALUES($1,$2) ON CONFLICT(user_id) DO UPDATE SET balance=EXCLUDED.balance,updated_at=now()', [req.params.id, after]);
+        const transaction = await client.query(`INSERT INTO wallet_transactions(user_id,kind,amount,balance_before,balance_after,description,metadata)
+      VALUES($1,'ADMIN_ADJUSTMENT',$2,$3,$4,$5,$6::jsonb) RETURNING id`, [req.params.id, parsed.data.amount, before, after, parsed.data.description, JSON.stringify({ adminId: req.user.id, requestId: requestId(req) })]);
+        return { transactionId: transaction.rows[0].id, balance: after };
+    });
+    await audit(req.user.id, 'ADMIN_WALLET_ADJUSTMENT', 'WALLET', String(req.params.id), { amount: parsed.data.amount, requestId: requestId(req) });
+    res.status(201).json(result);
+}));
+api.get('/admin/payments', auth, requirePermission('MANAGE_BILLING'), asyncRoute(async (_req, res) => {
+    const payments = await pool.query(`SELECT p.id,p.status,p.amount_cents,p.credits,p.provider,p.external_id,p.created_at,p.paid_at,u.name,u.email
+    FROM payments p JOIN users u ON u.id=p.user_id ORDER BY p.created_at DESC LIMIT 200`);
+    res.json(payments.rows.map((row) => ({ id: row.id, status: row.status, amountCents: Number(row.amount_cents), credits: Number(row.credits), provider: row.provider, externalId: row.external_id, createdAt: row.created_at, paidAt: row.paid_at, customer: { name: row.name, email: row.email } })));
+}));
+api.get('/admin/audit', auth, requirePermission('VIEW_AUDIT'), asyncRoute(async (_req, res) => {
+    const entries = await pool.query(`SELECT a.id,a.action,a.entity,a.entity_id,a.created_at,u.name AS actor_name,u.email AS actor_email
+    FROM audit_logs a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.created_at DESC LIMIT 200`);
+    res.json(entries.rows.map((row) => ({ id: row.id, action: row.action, entity: row.entity, entityId: row.entity_id, createdAt: row.created_at, actor: row.actor_name ? { name: row.actor_name, email: row.actor_email } : null })));
+}));
 api.get('/admin/permissions', auth, requirePermission('ADMIN_SYSTEM'), (req, res) => {
     res.json({ role: req.user.role, permissions: permissionsFor(req.user.role), canManagePricing: hasPermission(req.user.role, 'MANAGE_PRICING') });
 });
@@ -466,7 +639,13 @@ function humanMessage(code) {
         SANDBOX_DISABLED: 'A compra de créditos de teste não está disponível neste ambiente.',
         OAUTH_PROVIDER_UNSUPPORTED: 'Este provedor de acesso não é suportado.',
         OAUTH_PROVIDER_NOT_CONFIGURED: 'Este provedor de acesso ainda não foi configurado pela plataforma.',
-        OAUTH_TICKET_INVALID: 'Esta solicitação de acesso expirou. Tente entrar novamente.'
+        OAUTH_TICKET_INVALID: 'Esta solicitação de acesso expirou. Tente entrar novamente.',
+        USER_NOT_FOUND: 'O usuário solicitado não foi encontrado.',
+        ADMIN_SELF_CHANGE_FORBIDDEN: 'Para segurança, use outro administrador para alterar o próprio acesso.',
+        WALLET_BALANCE_INVALID: 'Este ajuste deixaria a carteira com saldo negativo.',
+        CREDIT_PACKAGE_NOT_FOUND: 'O pacote de créditos solicitado não está disponível.',
+        PAYMENT_PROVIDER_NOT_CONFIGURED: 'O checkout de pagamento ainda não foi configurado para este ambiente.',
+        PAYMENT_PROVIDER_REQUEST_FAILED: 'Não foi possível abrir o checkout agora. Tente novamente em alguns instantes.'
     };
     return messages[code] ?? 'Não foi possível concluir esta operação agora. Tente novamente.';
 }

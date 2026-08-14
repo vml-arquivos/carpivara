@@ -9,9 +9,9 @@ export type Migration = {
 
 const rolePermissions: Record<string, string[]> = {
   CLIENTE: ['QUERY_VEHICLE', 'VIEW_HISTORY', 'BUY_CREDITS'],
-  OPERADOR: ['QUERY_VEHICLE', 'VIEW_HISTORY', 'BUY_CREDITS', 'VIEW_SENSITIVE_DATA'],
-  ADMIN: ['QUERY_VEHICLE', 'VIEW_HISTORY', 'BUY_CREDITS', 'VIEW_SENSITIVE_DATA', 'MANAGE_USERS', 'MANAGE_PRICING', 'MANAGE_PROVIDERS', 'VIEW_AUDIT'],
-  SUPER_ADMIN: ['QUERY_VEHICLE', 'VIEW_HISTORY', 'BUY_CREDITS', 'VIEW_SENSITIVE_DATA', 'MANAGE_USERS', 'MANAGE_PRICING', 'MANAGE_PROVIDERS', 'VIEW_AUDIT', 'ADMIN_SYSTEM']
+  OPERADOR: ['QUERY_VEHICLE', 'VIEW_HISTORY', 'BUY_CREDITS', 'VIEW_SENSITIVE_DATA', 'MANAGE_SUPPORT'],
+  ADMIN: ['QUERY_VEHICLE', 'VIEW_HISTORY', 'BUY_CREDITS', 'VIEW_SENSITIVE_DATA', 'MANAGE_USERS', 'MANAGE_PRICING', 'MANAGE_PROVIDERS', 'MANAGE_BILLING', 'MANAGE_SUPPORT', 'VIEW_AUDIT'],
+  SUPER_ADMIN: ['QUERY_VEHICLE', 'VIEW_HISTORY', 'BUY_CREDITS', 'VIEW_SENSITIVE_DATA', 'MANAGE_USERS', 'MANAGE_PRICING', 'MANAGE_PROVIDERS', 'MANAGE_BILLING', 'MANAGE_SUPPORT', 'VIEW_AUDIT', 'ADMIN_SYSTEM']
 };
 
 const migrations: Migration[] = [
@@ -163,6 +163,69 @@ const migrations: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_oauth_states_expiry ON oauth_authorization_states(expires_at);
         CREATE INDEX IF NOT EXISTS idx_oauth_tickets_expiry ON oauth_login_tickets(expires_at);
       `);
+    }
+  },
+  {
+    id: '004_commerce_and_operational_controls',
+    name: 'Credit packages, checkout orders, payment events and production provider controls',
+    async up(client) {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS credit_packages (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          slug text NOT NULL UNIQUE,
+          name text NOT NULL,
+          description text NOT NULL,
+          credits integer NOT NULL CHECK (credits > 0),
+          price_cents integer NOT NULL CHECK (price_cents > 0),
+          active boolean NOT NULL DEFAULT true,
+          display_order integer NOT NULL DEFAULT 100,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          updated_at timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE TABLE IF NOT EXISTS payment_orders (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id uuid NOT NULL REFERENCES users(id),
+          package_id uuid NOT NULL REFERENCES credit_packages(id),
+          status text NOT NULL CHECK (status IN ('CREATED','CHECKOUT_ACTIVE','PAID','CANCELLED','EXPIRED','FAILED','REFUNDED')),
+          amount_cents integer NOT NULL CHECK (amount_cents > 0),
+          credits integer NOT NULL CHECK (credits > 0),
+          provider text NOT NULL,
+          external_reference text NOT NULL UNIQUE,
+          provider_checkout_id text UNIQUE,
+          checkout_url text,
+          paid_at timestamptz,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          updated_at timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE TABLE IF NOT EXISTS payment_webhook_events (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          provider text NOT NULL,
+          provider_event_id text NOT NULL,
+          event_type text NOT NULL,
+          order_id uuid REFERENCES payment_orders(id),
+          payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+          received_at timestamptz NOT NULL DEFAULT now(),
+          processed_at timestamptz,
+          processing_error text,
+          UNIQUE(provider, provider_event_id)
+        );
+        ALTER TABLE payments ADD COLUMN IF NOT EXISTS order_id uuid REFERENCES payment_orders(id);
+        ALTER TABLE payments ADD COLUMN IF NOT EXISTS checkout_url text;
+        ALTER TABLE payments ADD COLUMN IF NOT EXISTS provider_status text;
+        CREATE INDEX IF NOT EXISTS idx_credit_packages_active_order ON credit_packages(active,display_order);
+        CREATE INDEX IF NOT EXISTS idx_payment_orders_user_created ON payment_orders(user_id,created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_payment_orders_status_created ON payment_orders(status,created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_payment_webhook_events_order ON payment_webhook_events(order_id,received_at DESC);
+      `);
+      const packages = [
+        ['essencial','Pacote Essencial','Créditos para consultas pontuais.',10,1990,10],
+        ['completo','Pacote Completo','Créditos para uma decisão de compra mais informada.',30,4990,20],
+        ['profissional','Pacote Profissional','Créditos para uso recorrente e operações.',100,13990,30]
+      ];
+      for (const [slug, name, description, credits, priceCents, displayOrder] of packages) {
+        await client.query(`INSERT INTO credit_packages(slug,name,description,credits,price_cents,display_order)
+          VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(slug) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,credits=EXCLUDED.credits,price_cents=EXCLUDED.price_cents,display_order=EXCLUDED.display_order,updated_at=now()`, [slug,name,description,credits,priceCents,displayOrder]);
+      }
     }
   }
 ];

@@ -6,3 +6,6 @@ apps/web/dist/
 .env.local
 coverage/
 .DS_Store
+
+# Ativos temporários de análise
+.assets/

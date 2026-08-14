@@ -18,12 +18,16 @@ const envSchema = z.object({
     DATABASE_SSL: booleanFromEnv.default(false),
     JWT_SECRET: z.string().min(32),
     JWT_EXPIRES_IN: z.string().default('2h'),
+    // Dados veiculares: o modo real só pode operar com contrato e credenciais válidos.
     DATA_PROVIDER: z.enum(['mock', 'real']).default('mock'),
     VEHICLE_API_BASE_URL: optionalUrl,
+    VEHICLE_API_QUERY_PATH: optionalString,
+    VEHICLE_API_AUTH_SCHEME: z.enum(['bearer', 'basic']).default('bearer'),
     VEHICLE_API_LOGIN: optionalString,
     VEHICLE_API_PASSWORD: optionalString,
     VEHICLE_API_TOKEN: optionalString,
     VEHICLE_API_TIMEOUT_MS: z.coerce.number().int().positive().max(120000).default(15000),
+    // Asaas: runtime-only. A API key e o token do webhook jamais devem ser disponibilizados no build ou frontend.
     PAYMENT_PROVIDER: z.enum(['sandbox', 'asaas']).default('sandbox'),
     PAYMENT_API_BASE_URL: optionalUrl,
     PAYMENT_API_KEY: optionalString,
