@@ -497,8 +497,8 @@ api.post('/payments/asaas/webhook', asyncRoute(async (req, res) => {
 
 api.get('/admin/overview', auth, requirePermission('VIEW_AUDIT'), asyncRoute(async (_req, res) => {
   const summary = await pool.query(`SELECT
-    (SELECT count(*) FROM users WHERE active=true) AS active_users,
-    (SELECT count(*) FROM users WHERE created_at >= now() - interval '30 days') AS new_users_30d,
+    (SELECT count(*) FROM users WHERE active=true AND deleted_at IS NULL) AS active_users,
+    (SELECT count(*) FROM users WHERE active=true AND deleted_at IS NULL AND created_at >= now() - interval '30 days') AS new_users_30d,
     (SELECT count(*) FROM vehicle_queries WHERE created_at >= date_trunc('day', now())) AS queries_today,
     (SELECT count(*) FROM vehicle_queries WHERE status='SUCCESS') AS successful_queries,
     (SELECT count(*) FROM vehicle_queries WHERE status='FAILED') AS failed_queries,
@@ -510,7 +510,7 @@ api.get('/admin/overview', auth, requirePermission('VIEW_AUDIT'), asyncRoute(asy
     (SELECT coalesce(round(avg(amount_cents)),0) FROM payments WHERE status='PAID') AS average_ticket_cents,
     (SELECT coalesce(sum(amount_cents),0) FROM payment_orders WHERE status IN ('CREATED','CHECKOUT_ACTIVE')) AS open_checkout_cents,
     (SELECT coalesce(sum(amount_cents),0) FROM payment_orders WHERE status='REFUNDED') AS refunded_revenue_cents,
-    (SELECT coalesce(sum(balance),0) FROM wallets) AS credits_in_wallets`);
+    (SELECT coalesce(sum(w.balance),0) FROM wallets w JOIN users u ON u.id=w.user_id WHERE u.active=true AND u.deleted_at IS NULL) AS credits_in_wallets`);
   res.json(summary.rows[0]);
 }));
 
