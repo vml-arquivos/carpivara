@@ -36,7 +36,7 @@ const mask = (value?: string) => !value ? '—' : value.length <= 5 ? value : `$
 
 function Brand({ compact = false }: { compact?: boolean }) {
   return <div className={`brand ${compact ? 'brandCompact' : ''}`} aria-label="CARPIVARA, consulta veicular inteligente">
-    <span className="brandMark brandMarkOfficial" aria-hidden="true"><img src="/brand/carpivara-official.png" alt="" /></span>
+    <span className="brandMark brandMarkOfficial" aria-hidden="true"><img src="/brand/carpivara-crest-final.png" alt="" /></span>
     <span className="brandWord"><strong><span>CAR</span>PIVARA</strong><small>consulta veicular inteligente</small></span>
   </div>;
 }
@@ -66,10 +66,12 @@ function Landing({ theme, setTheme, onAccess }: { theme: Theme; setTheme: (value
           <div className="heroActions"><button className="primaryButton" onClick={onAccess}>Consultar um veículo <span>→</span></button><a className="secondaryButton" href="#planos">Ver planos e créditos</a></div>
           <div className="heroTrust"><span><b>Relatórios organizados</b> para decisões objetivas</span><span><b>Histórico protegido</b> na sua conta</span><span><b>Pagamento seguro</b> por checkout parceiro</span></div>
         </div>
-        <div className="vehicleCard" aria-label="Prévia de relatório da CARPIVARA">
-          <div className="vehicleTop"><span className="miniBrand">CARPIVARA · RELATÓRIO</span><span className="secureTag">Proteção e transparência</span></div>
-          <div className="vehicleVisual"><div className="roadLine"></div><div className="carShape"><i></i><b></b><em></em></div><span className="plateVisual">ABC1D23</span></div>
-          <div className="reportPreview"><div><small>Identificação</small><strong>Dados por categoria</strong></div><div><small>Ocorrências</small><strong>Leitura de atenção</strong></div><div><small>Histórico</small><strong>Disponível na conta</strong></div></div>
+        <div className="vehicleCard" aria-label="Experiência CARPIVARA com imagem de veículo premium">
+          <img className="vehiclePhoto" src="/images/hero-luxury-night.jpeg" alt="Automóvel premium em movimento durante a noite" />
+          <div className="vehicleOverlay"></div>
+          <div className="vehicleTop"><span className="miniBrand">CARPIVARA · INTELIGÊNCIA VEICULAR</span><span className="secureTag">Dados para decidir</span></div>
+          <div className="vehicleContent"><p>Decisão respaldada</p><h2>Leitura objetiva para cada negociação.</h2><span className="plateVisual">CONSULTA PROTEGIDA</span></div>
+          <div className="reportPreview"><div><small>Identificação</small><strong>Origem e dados-chave</strong></div><div><small>Ocorrências</small><strong>Sinais de atenção</strong></div><div><small>Histórico</small><strong>Na sua conta</strong></div></div>
         </div>
       </section>
       <section className="featureStrip" id="beneficios"><div><span>01</span><strong>Informação para decidir</strong><p>Entenda os dados retornados sem navegar por telas confusas.</p></div><div><span>02</span><strong>Créditos sob controle</strong><p>Veja o custo antes de cada consulta e acompanhe a carteira.</p></div><div><span>03</span><strong>Conta e histórico</strong><p>Retome relatórios salvos sempre que precisar.</p></div></section>
