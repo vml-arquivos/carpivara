@@ -43,3 +43,29 @@ A tela capturada pelo usuário exibe `O limite diário de consultas FIPE foi ati
 A filtragem de variáveis no Coolify não encontrou `FIPE_GUEST_DAILY_LIMIT`, confirmando que o processo estava usando o default de 3 consultas por IP/dia. O formulário para inclusão de `FIPE_GUEST_DAILY_LIMIT=10` foi aberto e preenchido na interface; a confirmação visual do salvamento ainda depende da conclusão do formulário.
 
 A variável `FIPE_GUEST_DAILY_LIMIT` foi criada no Coolify com valor `10`; após a submissão, o modal fechou e a lista de variáveis voltou a aparecer. Nenhum valor secreto foi aberto ou registrado.
+
+O Git Source do Coolify foi atualizado com sucesso para o commit `1ccd334`; a interface confirmou `Application source updated`. O redeploy ainda será iniciado separadamente.
+
+O redeploy do commit `1ccd334` foi iniciado no Coolify com o identificador `rpmle9g6mxgtvwgh9dx5clw9`; o deployment aparece como `In progress`. A variável de limite diário já estava salva antes da execução.
+
+O redeploy `rpmle9g6mxgtvwgh9dx5clw9` falhou antes do build porque o Git Source recebeu o SHA abreviado `1ccd334`, que o clone raso do Coolify não conseguiu resolver. A aplicação anterior permaneceu em execução; nenhuma troca parcial de container foi observada. A correção é atualizar o pin para o SHA completo e repetir o redeploy.
+
+Após a falha por SHA abreviado, o Git Source foi corrigido para `1ccd334cf53c66c54e9e1843c987c7e5cb3bafdc`; o Coolify confirmou novamente `Application source updated`.
+
+O segundo redeploy foi iniciado com o SHA completo; o Coolify criou o deployment `iojf399gtgnokxi2q7rjsroe`, inicialmente em `In progress`. O deployment anterior com SHA abreviado permanece `Failed` e não alterou o container ativo.
+
+O deployment `iojf399gtgnokxi2q7rjsroe` avançou para o build e não repetiu a falha de resolução do commit; permanece `In progress` durante a instalação e compilação.
+
+Na verificação aos 55 segundos, o deployment `iojf399gtgnokxi2q7rjsroe` ainda estava `In progress`, com build em execução e sem erro de checkout; o container anterior continuava preservado enquanto o healthcheck não concluía.
+
+A imagem Docker do deployment `iojf399gtgnokxi2q7rjsroe` foi concluída; a interface mostra a etapa de criação das variáveis de runtime e remoção dos containers antigos. O estado ainda aparece `In progress`, portanto o smoke test público ainda não foi executado.
+
+O deployment `iojf399gtgnokxi2q7rjsroe` concluiu com `Success`, duração aproximada de 1m48s, usando o commit `1ccd334` com a correção de devolução de cota. O container foi trocado e a aplicação voltou a `Running`.
+
+## Reprodução após o redeploy da correção de cota
+
+A variável de limite diário foi persistida no Coolify e o deployment `iojf399gtgnokxi2q7rjsroe` concluiu com sucesso usando o commit `1ccd334`. A requisição pública `POST /api/fipe/quote` com a placa `JIW6972` deixou de retornar o bloqueio `FIPE_DAILY_LIMIT`, mas o domínio público respondeu `502` com `Content-Type: text/plain; charset=UTF-8` e corpo sanitizado `error code: 502`. Isso confirma que a correção da cota foi publicada, enquanto o proxy/CDN continua gerando uma resposta não-JSON para a falha de upstream; o frontend deve tratar esse formato, e a causa de origem permanece a configuração ausente do caminho do provedor veicular (`VEHICLE_API_QUERY_PATH`). Nenhum token, login, senha ou URL completa do provedor foi registrado.
+
+## Correção adicional do limite compartilhado
+
+A implementação foi ajustada para usar `CF-Connecting-IP` quando o endereço é válido, com fallback para `req.ip`, e passou a usar o escopo versionado `v2:ip`. Isso evita reutilizar contadores criados com a chave anterior e reduz o risco de compartilhar a cota entre visitantes quando a aplicação recebe tráfego por proxy reverso. Falhas de provedor continuam devolvendo a cota reservada, sem consumir a consulta gratuita. O build e os cinco testes existentes passaram localmente após a alteração. Nenhum segredo foi registrado.

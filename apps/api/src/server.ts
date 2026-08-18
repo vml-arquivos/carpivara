@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 
 import path from 'node:path';
+import { isIP } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import cors from 'cors';
 import express, { type NextFunction, type Request, type RequestHandler, type Response } from 'express';
@@ -333,9 +334,15 @@ async function releaseFipeQuota(scopeKey: string): Promise<void> {
   }
 }
 
+function requestSourceIp(req: Request): string | undefined {
+  const cloudflareIp = req.get('cf-connecting-ip')?.trim();
+  if (cloudflareIp && isIP(cloudflareIp)) return cloudflareIp;
+  return req.ip;
+}
+
 async function recordFunnelEvent(userId: string | null, req: Request, eventType: string, metadata: Record<string, unknown> = {}): Promise<void> {
   try {
-    await pool.query('INSERT INTO funnel_events(user_id,session_key,event_type,metadata) VALUES($1,$2,$3,$4::jsonb)', [userId, hashIp(req.ip), eventType, JSON.stringify(metadata)]);
+    await pool.query('INSERT INTO funnel_events(user_id,session_key,event_type,metadata) VALUES($1,$2,$3,$4::jsonb)', [userId, hashIp(requestSourceIp(req)), eventType, JSON.stringify(metadata)]);
   } catch {
     // Métricas são auxiliares: uma falha de telemetria não pode alterar a resposta do produto.
   }
@@ -572,7 +579,9 @@ api.post('/fipe/quote', asyncRoute(async (req, res) => {
   const normalizedPlate = parsed.data.plate ? plateSchema.safeParse(parsed.data.plate) : null;
   if (parsed.data.plate && !normalizedPlate?.success) throw appError('INVALID_PLATE', { code: 'INVALID_PLATE', http: 400, expose: true });
   const plate = normalizedPlate?.success ? normalizedPlate.data : undefined;
-  const scopeKey = `ip:${hashIp(req.ip) ?? 'unknown'}`;
+  // O prefixo v2 isola contadores criados antes da correção de proxy e evita
+  // que um IP compartilhado do Cloudflare consuma a cota de todos os visitantes.
+  const scopeKey = `v2:ip:${hashIp(requestSourceIp(req)) ?? 'unknown'}`;
   await reserveFipeQuota(scopeKey, env.FIPE_GUEST_DAILY_LIMIT);
   let quotaReserved = true;
   let input: { vehicleType: FipeVehicleType; brand: FipeSelectionItem; model: FipeSelectionItem; year: FipeSelectionItem };
