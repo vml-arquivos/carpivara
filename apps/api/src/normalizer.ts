@@ -1,34 +1,128 @@
 import type { NormalizedVehicle } from './types.js';
 
-const cents=(v:unknown)=>{
+const cents = (v: unknown) => {
   if (typeof v !== 'string' && typeof v !== 'number') return 0;
-  const s=String(v).trim();
+  const s = String(v).trim();
   if (!s) return 0;
-  const normalized=s.includes(',')?s.replace(/\./g,'').replace(',','.') : s;
-  const n=Number(normalized);
-  return Number.isFinite(n)?Math.round(n*100):0;
+  const normalized = s.includes(',') ? s.replace(/\./g, '').replace(',', '.') : s;
+  const n = Number(normalized);
+  return Number.isFinite(n) ? Math.round(n * 100) : 0;
 };
-const text=(v:unknown)=>Array.isArray(v)?(v[0]??undefined):(v==null?'':String(v).trim()) || undefined;
-const ok=(v:unknown)=>!text(v) || /NADA CONSTA|NAO POSSUI|NÃO POSSUI|OK|NAO EXISTE/i.test(text(v)!);
+const text = (v: unknown) => Array.isArray(v) ? (v[0] ?? undefined) : (v == null ? '' : String(v).trim()) || undefined;
+const ok = (v: unknown) => !text(v) || /NADA CONSTA|NAO POSSUI|NÃO POSSUI|OK|NAO EXISTE/i.test(text(v)!);
+const key = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
-export function normalizeBdrp(raw:any): NormalizedVehicle {
-  const r=raw?.RESPOSTA?.VEICULOSBDRP?.RETORNO;
-  if (!r || raw?.RESPOSTA?.CODIGO !== '1') throw new Error('Resposta do provedor inválida');
-  return {
-    identification:{plate:text(r.PLACA)!,renavam:text(r.RENAVAM),chassis:text(r.CHASSI),engine:text(r.MOTOR),gearbox:text(r.NUMERO_CAIXACAMBIO),brand:text(r.MARCA),model:text(r.MODELO),fullModel:text(r.MARCAMODELOCOMPLETO)},
-    characteristics:{manufactureYear:text(r.VEIANOFABR),modelYear:text(r.VEIANOMODELO),color:text(r.COR),fuel:text(r.COMBUSTIVEL),power:text(r.POTENCIA),displacement:text(r.CILINDRADA),type:text(r.TIPO),species:text(r.ESPECIE),category:text(r.VEICATEGORIA),body:text(r.CARROCERIA),axles:text(r.EIXOS),passengers:text(r.CAPACIDADEPASSAG),loadCapacity:text(r.CAPACIDADECARGA),origin:text(r.VEIPROCEDENCIA)},
-    registration:{city:text(r.MUNICIPIO),state:text(r.UF),licensingDate:text(r.LICDATA),licensingYear:text(r.LICEXELIC),status:text(r.SITUACAOVEICULO)},
-    owner:{name:text(r.PRONOME),document:text(r.CPF_CNPJ_PROPRIETARIO),documentType:text(r.TIPODOCUMENTOPROPRIETARIO)},
-    debts:[
-      ['MULTAS','Multas',r.VALORTOTALDEBITOMULTA],['LICENCIAMENTO','Licenciamento',r.EXISTEDEBITODELICENCIAMENTOVL],['IPVA','IPVA',r.DEBIPVA],['DETRAN','DETRAN',r.DEBDETRAN],['DER','DER',r.DEBDER],['PRF','Polícia Rodoviária Federal',r.DEBPOLRODFED],['RENAINF','RENAINF',r.DEBRENAINF],['MUNICIPAIS','Débitos municipais',r.DEBMUNICIPAIS]
-    ].map(([key,label,value])=>({key:String(key),label:String(label),amountCents:cents(value),hasDebt:cents(value)>0})),
-    restrictions:[
-      ['FURTO','Furto/Roubo',r.RESFURTO],['JUDICIAL','Judicial',r.RESJUDICIAL],['RENAJUD','RENAJUD',r.RESRENAJUD],['ADMIN','Administrativa',r.RESADMINISTRATIVA],['TRIBUTARIA','Tributária',r.RESTRIBUTARIA],['FINANCEIRA','Financeira',r.RESTRICAOFINAN],['RFB','Receita Federal',r.RESTRICAORFB],['AMBIENTAL','Ambiental',r.RESAMBIENTAL]
-    ].map(([key,label,status])=>({key:String(key),label:String(label),status:text(status)??'SEM INFORMACAO',alert:!ok(status)})),
-    recall:text(r.RECALL)
-  };
+type AnyRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is AnyRecord {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function recordsFrom(raw: unknown): AnyRecord[] {
+  const result: AnyRecord[] = [];
+  const seen = new Set<unknown>();
+  const visit = (value: unknown, depth: number) => {
+    if (depth > 5 || seen.has(value)) return;
+    if (isRecord(value)) {
+      seen.add(value);
+      result.push(value);
+      Object.entries(value).forEach(([entryKey, entryValue]) => {
+        if (depth < 5 && (isRecord(entryValue) || Array.isArray(entryValue)) && /resposta|retorno|veiculo|veiculos|vehicle|data|result|resultado|dados|response|content|body/i.test(entryKey)) visit(entryValue, depth + 1);
+      });
+    } else if (Array.isArray(value)) {
+      value.slice(0, 5).forEach((item) => visit(item, depth + 1));
+    }
+  };
+  visit(raw, 0);
+  return result;
+}
+
+function valueOf(raw: unknown, aliases: string[]): unknown {
+  const wanted = new Set(aliases.map(key));
+  for (const record of recordsFrom(raw)) {
+    for (const [field, value] of Object.entries(record)) {
+      if (wanted.has(key(field)) && value != null && value !== '') return value;
+    }
+  }
+  return undefined;
+}
+
+function successfulResponse(raw: unknown): boolean {
+  const responseCode = valueOf(raw, ['CODIGO', 'codigoResposta', 'statusCode', 'httpStatus']);
+  if (responseCode == null || responseCode === '') return true;
+  const normalized = key(String(responseCode));
+  return normalized === '1' || normalized === '200' || normalized === 'OK' || normalized === 'SUCCESS' || normalized === 'SUCESSO';
+}
+
+export function normalizeBdrp(raw: any): NormalizedVehicle {
+  if (!successfulResponse(raw)) throw new Error('Resposta do provedor inválida');
+  const plate = text(valueOf(raw, ['PLACA', 'plate', 'licensePlate', 'placaVeiculo']));
+  const brand = text(valueOf(raw, ['MARCA', 'brand', 'make', 'marcaVeiculo']));
+  const model = text(valueOf(raw, ['MODELO', 'model', 'modeloVeiculo']));
+  const fullModel = text(valueOf(raw, ['MARCAMODELOCOMPLETO', 'marcaModeloCompleto', 'fullModel', 'fullVehicleModel']));
+  if (!plate || (!brand && !model && !fullModel)) throw new Error('Resposta do provedor inválida');
+  return {
+    identification: {
+      plate,
+      renavam: text(valueOf(raw, ['RENAVAM', 'renavam'])),
+      chassis: text(valueOf(raw, ['CHASSI', 'chassis', 'chassi'])),
+      engine: text(valueOf(raw, ['MOTOR', 'engine', 'numeroMotor'])),
+      gearbox: text(valueOf(raw, ['NUMEROCAIXACAMBIO', 'gearbox', 'cambio', 'numeroCambio'])),
+      brand,
+      model,
+      fullModel
+    },
+    characteristics: {
+      manufactureYear: text(valueOf(raw, ['VEIANOFAB', 'anoFabricacao', 'manufactureYear', 'fabricationYear'])),
+      modelYear: text(valueOf(raw, ['VEIANOMODELO', 'anoModelo', 'modelYear'])),
+      color: text(valueOf(raw, ['COR', 'color'])),
+      fuel: text(valueOf(raw, ['COMBUSTIVEL', 'fuel', 'combustivel'])),
+      power: text(valueOf(raw, ['POTENCIA', 'power'])),
+      displacement: text(valueOf(raw, ['CILINDRADA', 'displacement'])),
+      type: text(valueOf(raw, ['TIPO', 'type', 'vehicleType'])),
+      species: text(valueOf(raw, ['ESPECIE', 'species'])),
+      category: text(valueOf(raw, ['VEICATEGORIA', 'categoria', 'category'])),
+      body: text(valueOf(raw, ['CARROCERIA', 'body', 'bodyType'])),
+      axles: text(valueOf(raw, ['EIXOS', 'axles'])),
+      passengers: text(valueOf(raw, ['CAPACIDADEPASSAG', 'passageiros', 'passengers'])),
+      loadCapacity: text(valueOf(raw, ['CAPACIDADECARGA', 'capacidadeCarga', 'loadCapacity'])),
+      origin: text(valueOf(raw, ['VEIPROCEDENCIA', 'procedencia', 'origin']))
+    },
+    registration: {
+      city: text(valueOf(raw, ['MUNICIPIO', 'municipio', 'city', 'cidade'])),
+      state: text(valueOf(raw, ['UF', 'estado', 'state'])),
+      licensingDate: text(valueOf(raw, ['LICDATA', 'dataLicenciamento', 'licensingDate'])),
+      licensingYear: text(valueOf(raw, ['LICEXELIC', 'anoLicenciamento', 'licensingYear'])),
+      status: text(valueOf(raw, ['SITUACAOVEICULO', 'situacaoVeiculo', 'status', 'vehicleStatus']))
+    },
+    owner: {
+      name: text(valueOf(raw, ['PRONOME', 'nomeProprietario', 'ownerName'])),
+      document: text(valueOf(raw, ['CPF_CNPJ_PROPRIETARIO', 'cpfCnpjProprietario', 'ownerDocument'])),
+      documentType: text(valueOf(raw, ['TIPODOCUMENTOPROPRIETARIO', 'tipoDocumentoProprietario', 'ownerDocumentType']))
+    },
+    debts: [
+      ['MULTAS', 'Multas', valueOf(raw, ['VALORTOTALDEBITOMULTA', 'valorTotalDebitoMulta', 'finesAmount'])],
+      ['LICENCIAMENTO', 'Licenciamento', valueOf(raw, ['EXISTEDEBITODELICENCIAMENTOVL', 'debitoLicenciamento', 'licensingDebt'])],
+      ['IPVA', 'IPVA', valueOf(raw, ['DEBIPVA', 'debitoIpva', 'ipvaDebt'])],
+      ['DETRAN', 'DETRAN', valueOf(raw, ['DEBDETRAN', 'debitoDetran'])],
+      ['DER', 'DER', valueOf(raw, ['DEBDER', 'debitoDer'])],
+      ['PRF', 'Polícia Rodoviária Federal', valueOf(raw, ['DEBPOLRODFED', 'debitoPrf'])],
+      ['RENAINF', 'RENAINF', valueOf(raw, ['DEBRENAINF', 'debitoRenainf'])],
+      ['MUNICIPAIS', 'Débitos municipais', valueOf(raw, ['DEBMUNICIPAIS', 'debitoMunicipal'])]
+    ].map(([debtKey, label, value]) => ({ key: String(debtKey), label: String(label), amountCents: cents(value), hasDebt: cents(value) > 0 })),
+    restrictions: [
+      ['FURTO', 'Furto/Roubo', valueOf(raw, ['RESFURTO', 'furtoRoubo', 'theftRestriction'])],
+      ['JUDICIAL', 'Judicial', valueOf(raw, ['RESJUDICIAL', 'restricaoJudicial', 'judicialRestriction'])],
+      ['RENAJUD', 'RENAJUD', valueOf(raw, ['RESRENAJUD', 'renajud'])],
+      ['ADMIN', 'Administrativa', valueOf(raw, ['RESADMINISTRATIVA', 'restricaoAdministrativa'])],
+      ['TRIBUTARIA', 'Tributária', valueOf(raw, ['RESTRIBUTARIA', 'restricaoTributaria'])],
+      ['FINANCEIRA', 'Financeira', valueOf(raw, ['RESTRICAOFINAN', 'restricaoFinanceira'])],
+      ['RFB', 'Receita Federal', valueOf(raw, ['RESTRICAORFB', 'restricaoReceitaFederal'])],
+      ['AMBIENTAL', 'Ambiental', valueOf(raw, ['RESAMBIENTAL', 'restricaoAmbiental'])]
+    ].map(([restrictionKey, label, status]) => ({ key: String(restrictionKey), label: String(label), status: text(status) ?? 'SEM INFORMACAO', alert: !ok(status) })),
+    recall: text(valueOf(raw, ['RECALL', 'recall']))
+  };
+}
 
 export function normalizeFipe(raw: any): Omit<import('./types.js').FipeProviderResult, 'cacheKey'> {
   const price = typeof raw?.price === 'string' ? raw.price : typeof raw?.valor === 'string' ? raw.valor : raw?.price;
@@ -36,10 +130,10 @@ export function normalizeFipe(raw: any): Omit<import('./types.js').FipeProviderR
   const value = Number(normalizedPrice);
   if (!raw || !Number.isFinite(value) || value <= 0) throw new Error('FIPE_INVALID_RESPONSE');
   const vehicleType = raw.vehicleType === 2 || raw.tipoVeiculo === 2 || raw.tipoVeiculo === '2' ? 'motorcycles' : raw.vehicleType === 3 || raw.tipoVeiculo === 3 || raw.tipoVeiculo === '3' ? 'trucks' : 'cars';
-  const brand = { code: String(raw.brandCode ?? raw.codigoMarca ?? raw.marcaCodigo ?? ''), name: String(raw.brand ?? raw.marca ?? '').trim() };
-  const model = { code: String(raw.modelCode ?? raw.codigoModelo ?? raw.modeloCodigo ?? ''), name: String(raw.model ?? raw.modelo ?? '').trim() };
-  const year = { code: String(raw.yearCode ?? raw.codigoAno ?? raw.anoCodigo ?? ''), name: String(raw.year ?? raw.ano ?? raw.modelYear ?? raw.anoModelo ?? '').trim() };
-  if (!brand.name || !model.name || !year.name || !String(raw.codeFipe ?? raw.codigoFipe ?? raw.codigoFipe).trim()) throw new Error('FIPE_INVALID_RESPONSE');
+  const brand = { code: String(raw.brandCode ?? raw.codigoMarca ?? raw.marcaCodigo ?? '').trim(), name: String(raw.brand ?? raw.marca ?? '').trim() };
+  const model = { code: String(raw.modelCode ?? raw.codigoModelo ?? raw.modeloCodigo ?? '').trim(), name: String(raw.model ?? raw.modelo ?? '').trim() };
+  const year = { code: String(raw.yearCode ?? raw.codigoAno ?? raw.anoCodigo ?? '').trim(), name: String(raw.year ?? raw.ano ?? raw.modelYear ?? raw.anoModelo ?? '').trim() };
+  if (!brand.name || !model.name || !year.name || !String(raw.codeFipe ?? raw.codigoFipe).trim()) throw new Error('FIPE_INVALID_RESPONSE');
   const referenceMonth = String(raw.referenceMonth ?? raw.mesReferencia ?? raw.referencia ?? '').trim();
   if (!referenceMonth) throw new Error('FIPE_REFERENCE_MISSING');
   return {

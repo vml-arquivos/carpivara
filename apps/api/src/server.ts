@@ -19,7 +19,7 @@ import { getFipeProvider, quoteWithFallback, type FipeCatalogProvider } from './
 import { fipePdf, fipePrintHtml, makeFipeQuote, reportSnapshot } from './fipeReport.js';
 import { createAsaasCheckout, eventReference, externalPaymentId, hasValidAsaasWebhookToken, isAsaasConfigured, type AsaasWebhookEvent } from './payments/asaas.js';
 import { ensureSchema } from './schema.js';
-import type { FipeQuote, FipeSelectionItem, FipeVehicleType, NormalizedVehicle } from './types.js';
+import type { FipeQuote, FipeSelectionItem, FipeVehicleDetails, FipeVehicleType, NormalizedVehicle } from './types.js';
 
 await ensureSchema();
 
@@ -378,6 +378,19 @@ function publicFipeQuote(quote: FipeQuote): Omit<FipeQuote, 'provider' | 'source
   return publicQuote;
 }
 
+const publicOfferDescriptions: Record<string, string> = {
+  FIPE_FREE: 'Veja o valor médio FIPE e a referência vigente para orientar sua negociação.',
+  CADASTRAL: 'Confirme as características principais do veículo e compare com o anúncio.',
+  RESTRICTIONS: 'Verifique impedimentos que podem afetar a negociação ou a transferência.',
+  DEBTS: 'Consulte débitos e pendências relevantes antes de avançar na compra.',
+  COMPLETE: 'Reúna identificação, características, débitos, restrições e situação em uma única análise.',
+  PREMIUM: 'Acesse a análise mais completa disponível para tomar uma decisão com mais segurança.'
+};
+
+function publicOfferDescription(id: string, fallback: string): string {
+  return publicOfferDescriptions[id] ?? fallback.replace(/\b(provedor|provider|fonte|source|API)\b/gi, 'consulta');
+}
+
 function normalizeMatchText(value: string): string {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
@@ -395,11 +408,63 @@ function matchScore(candidate: string, target: string): number {
 }
 
 function bestFipeItem(items: FipeSelectionItem[], target: string, kind: 'brand' | 'model' | 'year'): FipeSelectionItem {
+  const targetText = normalizeMatchText(target);
+  const exact = items.filter((item) => normalizeMatchText(item.name) === targetText);
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) throw appError('FIPE_PLATE_VEHICLE_NOT_IDENTIFIED', { code: 'FIPE_PLATE_VEHICLE_NOT_IDENTIFIED', http: 422, expose: true });
   const ranked = items.map((item) => ({ item, score: matchScore(item.name, target) })).sort((a, b) => b.score - a.score);
   const best = ranked[0];
-  const threshold = kind === 'brand' ? 60 : kind === 'model' ? 42 : 50;
-  if (!best || best.score < threshold) throw appError('FIPE_PLATE_VEHICLE_NOT_IDENTIFIED', { code: 'FIPE_PLATE_VEHICLE_NOT_IDENTIFIED', http: 422, expose: true });
+  const second = ranked[1];
+  const threshold = kind === 'brand' ? 60 : kind === 'model' ? 55 : 50;
+  const minimumGap = kind === 'model' ? 10 : 6;
+  if (!best || best.score < threshold || (second && best.score - second.score < minimumGap)) {
+    throw appError('FIPE_PLATE_VEHICLE_NOT_IDENTIFIED', { code: 'FIPE_PLATE_VEHICLE_NOT_IDENTIFIED', http: 422, expose: true });
+  }
+  if (kind === 'year') {
+    const targetYear = target.match(/\b(?:19|20)\d{2}\b/)?.[0];
+    if (targetYear && !normalizeMatchText(best.item.name).includes(targetYear)) {
+      throw appError('FIPE_PLATE_VEHICLE_NOT_IDENTIFIED', { code: 'FIPE_PLATE_VEHICLE_NOT_IDENTIFIED', http: 422, expose: true });
+    }
+  }
   return best.item;
+}
+
+function fipeVehicleDetails(vehicle: NormalizedVehicle): FipeVehicleDetails {
+  return {
+    plate: vehicle.identification.plate,
+    brand: vehicle.identification.brand,
+    model: vehicle.identification.model,
+    fullModel: vehicle.identification.fullModel,
+    manufactureYear: vehicle.characteristics.manufactureYear,
+    modelYear: vehicle.characteristics.modelYear,
+    color: vehicle.characteristics.color,
+    fuel: vehicle.characteristics.fuel,
+    power: vehicle.characteristics.power,
+    displacement: vehicle.characteristics.displacement,
+    type: vehicle.characteristics.type,
+    species: vehicle.characteristics.species,
+    category: vehicle.characteristics.category,
+    body: vehicle.characteristics.body,
+    passengers: vehicle.characteristics.passengers,
+    loadCapacity: vehicle.characteristics.loadCapacity,
+    origin: vehicle.characteristics.origin,
+    city: vehicle.registration.city,
+    state: vehicle.registration.state,
+    licensingYear: vehicle.registration.licensingYear,
+    status: vehicle.registration.status
+  };
+}
+
+function fipeModelTarget(vehicle: NormalizedVehicle): string {
+  const model = vehicle.identification.model ?? vehicle.identification.fullModel ?? '';
+  const brand = normalizeMatchText(vehicle.identification.brand ?? '');
+  if (!brand) return model;
+  const modelParts = normalizeMatchText(model).split(' ');
+  const brandParts = brand.split(' ');
+  if (brandParts.every((part) => modelParts.includes(part))) {
+    return modelParts.filter((part) => !brandParts.includes(part)).join(' ') || model;
+  }
+  return model;
 }
 
 function inferFipeVehicleType(vehicle: NormalizedVehicle): FipeVehicleType {
@@ -409,7 +474,7 @@ function inferFipeVehicleType(vehicle: NormalizedVehicle): FipeVehicleType {
   return 'cars';
 }
 
-async function resolveFipeSelectionFromPlate(plate: string): Promise<{ provider: 'parallelum' | 'brasilapi'; vehicleType: FipeVehicleType; brand: FipeSelectionItem; model: FipeSelectionItem; year: FipeSelectionItem }> {
+async function resolveFipeSelectionFromPlate(plate: string): Promise<{ provider: 'parallelum' | 'brasilapi'; vehicleType: FipeVehicleType; brand: FipeSelectionItem; model: FipeSelectionItem; year: FipeSelectionItem; vehicleDetails: FipeVehicleDetails }> {
   let normalized: NormalizedVehicle;
   try {
     const vehicleProvider = getProvider();
@@ -418,12 +483,12 @@ async function resolveFipeSelectionFromPlate(plate: string): Promise<{ provider:
   } catch (error) {
     const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : '';
     if (code === 'NOT_FOUND') throw appError('FIPE_PLATE_NOT_FOUND', { code: 'FIPE_PLATE_NOT_FOUND', http: 404, expose: true });
-    if (code === 'PROVIDER_TIMEOUT') throw appError('FIPE_PLATE_UNAVAILABLE', { code: 'FIPE_PLATE_UNAVAILABLE', http: 502, expose: true });
+    if (code === 'PROVIDER_TIMEOUT' || code.startsWith('DATA_PROVIDER_')) throw appError('FIPE_PLATE_UNAVAILABLE', { code: 'FIPE_PLATE_UNAVAILABLE', http: 502, expose: true });
     throw appError('FIPE_PLATE_DATA_INVALID', { code: 'FIPE_PLATE_DATA_INVALID', http: 422, expose: true });
   }
   const brandTarget = normalized.identification.brand ?? normalized.identification.fullModel?.split(/\s+/)[0] ?? '';
-  const modelTarget = normalized.identification.model ?? normalized.identification.fullModel ?? '';
-  const yearTarget = normalized.characteristics.modelYear ?? normalized.characteristics.manufactureYear ?? '';
+  const modelTarget = fipeModelTarget(normalized);
+  const yearTarget = `${normalized.characteristics.modelYear ?? normalized.characteristics.manufactureYear ?? ''} ${normalized.characteristics.fuel ?? ''}`.trim();
   if (!brandTarget || !modelTarget || !yearTarget) throw appError('FIPE_PLATE_DATA_INVALID', { code: 'FIPE_PLATE_DATA_INVALID', http: 422, expose: true });
   const vehicleType = inferFipeVehicleType(normalized);
   let lastError: unknown;
@@ -435,12 +500,17 @@ async function resolveFipeSelectionFromPlate(plate: string): Promise<{ provider:
       const brand = bestFipeItem(await catalog.brands(vehicleType, reference.code), brandTarget, 'brand');
       const model = bestFipeItem(await catalog.models(vehicleType, brand, reference.code), modelTarget, 'model');
       const year = bestFipeItem(await catalog.years(vehicleType, brand, model, reference.code), yearTarget, 'year');
-      return { provider: providerName, vehicleType, brand, model, year };
+      return { provider: providerName, vehicleType, brand, model, year, vehicleDetails: fipeVehicleDetails(normalized) };
     } catch (error) {
       lastError = error;
     }
   }
-  if (lastError instanceof Error && 'code' in lastError && typeof lastError.code === 'string' && lastError.code === 'FIPE_PLATE_VEHICLE_NOT_IDENTIFIED') throw lastError;
+  if (lastError instanceof Error && 'code' in lastError && typeof lastError.code === 'string') {
+    if (lastError.code === 'FIPE_PLATE_VEHICLE_NOT_IDENTIFIED') throw lastError;
+    if (lastError.code.startsWith('FIPE_PROVIDER_') || lastError.code === 'FIPE_INVALID_RESPONSE' || lastError.code === 'FIPE_RATE_LIMITED') {
+      throw appError('FIPE_PLATE_UNAVAILABLE', { code: 'FIPE_PLATE_UNAVAILABLE', http: 502, expose: true });
+    }
+  }
   throw appError('FIPE_PLATE_VEHICLE_NOT_IDENTIFIED', { code: 'FIPE_PLATE_VEHICLE_NOT_IDENTIFIED', http: 422, expose: true });
 }
 
@@ -496,6 +566,7 @@ api.post('/fipe/quote', asyncRoute(async (req, res) => {
   const scopeKey = `ip:${hashIp(req.ip) ?? 'unknown'}`;
   await reserveFipeQuota(scopeKey, env.FIPE_GUEST_DAILY_LIMIT);
   let input: { vehicleType: FipeVehicleType; brand: FipeSelectionItem; model: FipeSelectionItem; year: FipeSelectionItem };
+  let vehicleDetails: FipeVehicleDetails | undefined;
   let preferredProvider: 'parallelum' | 'brasilapi' = 'parallelum';
   try {
     if (parsed.data.vehicleType && parsed.data.brand && parsed.data.model && parsed.data.year) {
@@ -503,6 +574,7 @@ api.post('/fipe/quote', asyncRoute(async (req, res) => {
     } else if (plate) {
       const resolved = await resolveFipeSelectionFromPlate(plate);
       input = { vehicleType: resolved.vehicleType, brand: resolved.brand, model: resolved.model, year: resolved.year };
+      vehicleDetails = resolved.vehicleDetails;
       preferredProvider = resolved.provider;
     } else {
       throw appError('FIPE_SELECTION_REQUIRED', { code: 'FIPE_SELECTION_REQUIRED', http: 400, expose: true });
@@ -512,7 +584,7 @@ api.post('/fipe/quote', asyncRoute(async (req, res) => {
     const cached = preferredProvider === 'parallelum' ? await findCachedFipeResult(input) : null;
     const result = cached ?? await quoteWithFallback({ ...input, provider: preferredProvider });
     if (!cached) await cacheFipeResult(result);
-    const quote = makeFipeQuote(result, plate);
+    const quote = makeFipeQuote(result, plate, vehicleDetails);
     await recordProviderHealth(quote.provider, 'SUCCESS', Date.now() - providerStartedAt);
     await saveFipeDocument(quote);
     await recordFunnelEvent(null, req, 'FREE_QUERY_COMPLETED', { provider: quote.provider, documentCode: quote.documentCode, cached: Boolean(cached), plateLookup: Boolean(plate) });
@@ -532,7 +604,7 @@ api.post('/fipe/quotes/:code/save', auth, requirePermission('VIEW_HISTORY'), asy
   const quote = snapshotQuote(row);
   const saved = await tx(async (client) => {
     const query = await client.query(`INSERT INTO vehicle_queries(user_id,plate,product_id,status,credits_cost,provider,request_metadata,completed_at)
-      VALUES($1,'SEM-PLACA','FIPE_FREE','SUCCESS',0,$2,$3::jsonb,now()) RETURNING id`, [req.user!.id, quote.provider, JSON.stringify({ documentCode: quote.documentCode, source: quote.source })]);
+      VALUES($1,$2,'FIPE_FREE','SUCCESS',0,$3,$4::jsonb,now()) RETURNING id`, [req.user!.id, quote.plate ?? 'SEM-PLACA', quote.provider, JSON.stringify({ documentCode: quote.documentCode, source: quote.source })]);
     const queryId = query.rows[0].id as string;
     await client.query('INSERT INTO vehicle_query_results(query_id,normalized,raw_response) VALUES($1,$2::jsonb,$3::jsonb)', [queryId, JSON.stringify({ __type: 'FIPE_QUOTE', quote }), JSON.stringify({ stored: false })]);
     await client.query('UPDATE report_documents SET user_id=$2,query_id=$3 WHERE document_code=$1', [quote.documentCode, req.user!.id, queryId]);
@@ -581,7 +653,7 @@ api.get('/fipe/offers', asyncRoute(async (_req, res) => {
   const products = await pool.query(`SELECT p.id,p.name,p.description,p.credit_cost,p.features,
       CASE WHEN p.is_free OR EXISTS (SELECT 1 FROM query_source_rules rule WHERE rule.product_id=p.id AND rule.active=true) THEN p.commercial_status ELSE 'SOON' END AS commercial_status,p.featured
     FROM query_products p WHERE p.id IN ('FIPE_FREE','CADASTRAL','RESTRICTIONS','DEBTS','COMPLETE','PREMIUM') ORDER BY p.display_order,p.credit_cost`);
-  res.json({ offers: products.rows.map((product) => ({ id: product.id, name: product.name, description: product.description, creditCost: Number(product.credit_cost), features: product.features, commercialStatus: product.commercial_status, featured: Boolean(product.featured) })) });
+  res.json({ offers: products.rows.map((product) => ({ id: product.id, name: product.name, description: publicOfferDescription(product.id, product.description), creditCost: Number(product.credit_cost), features: product.features, commercialStatus: product.commercial_status, featured: Boolean(product.featured) })) });
 }));
 
 api.post('/queries', auth, requirePermission('QUERY_VEHICLE'), asyncRoute(async (req, res) => {

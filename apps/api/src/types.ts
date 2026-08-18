@@ -13,6 +13,30 @@ export type InformationState = 'FOUND' | 'CLEAR' | 'NOT_QUERIED' | 'NOT_AVAILABL
 
 export type FipeSelectionItem = { code: string; name: string };
 
+export type FipeVehicleDetails = {
+  plate: string;
+  brand?: string;
+  model?: string;
+  fullModel?: string;
+  manufactureYear?: string;
+  modelYear?: string;
+  color?: string;
+  fuel?: string;
+  power?: string;
+  displacement?: string;
+  type?: string;
+  species?: string;
+  category?: string;
+  body?: string;
+  passengers?: string;
+  loadCapacity?: string;
+  origin?: string;
+  city?: string;
+  state?: string;
+  licensingYear?: string;
+  status?: string;
+};
+
 export type FipeQuote = {
   documentCode: string;
   reportHash: string;
@@ -33,6 +57,7 @@ export type FipeQuote = {
   estimatedNegotiation?: { minCents: number; maxCents: number; disclaimer: string };
   blocks: Array<{ key: string; label: string; state: InformationState; message: string }>;
   plate?: string;
+  vehicleDetails?: FipeVehicleDetails;
 };
 
 export type FipeProviderResult = Omit<FipeQuote, 'documentCode' | 'reportHash' | 'blocks' | 'estimatedNegotiation' | 'plate'> & {
