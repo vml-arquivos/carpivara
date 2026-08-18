@@ -101,3 +101,70 @@ GET /api/fipe/reports/CPF-4L7SFHAWSP17/pdf -> 200
   "printContentType": "text/html; charset=utf-8",
   "pdfContentType": "application/pdf"
 }
+
+--- Smoke final v2 ---
+GET /health -> 200
+GET /api/fipe/status -> 200
+GET /api/fipe/references -> 200
+GET /api/fipe/brands?vehicleType=cars&reference=336 -> 200
+GET /api/fipe/models?vehicleType=cars&brandCode=1&reference=336 -> 200
+GET /api/fipe/years?vehicleType=cars&brandCode=1&modelCode=1&reference=336 -> 200
+POST /api/fipe/quote -> 201
+GET /api/fipe/offers -> 200
+GET /api/validar-relatorio/CPF-9RYAYHECLRT7 -> 200
+GET /api/fipe/reports/CPF-9RYAYHECLRT7/print -> 200
+GET /api/fipe/reports/CPF-9RYAYHECLRT7/pdf -> 200
+{
+  "health": {
+    "ok": true,
+    "app": "Carpivara",
+    "provider": "real",
+    "database": "ok"
+  },
+  "provider": {
+    "enabled": true,
+    "pdfEnabled": true,
+    "providers": [
+      "parallelum",
+      "brasilapi"
+    ]
+  },
+  "reference": {
+    "code": "336",
+    "name": "agosto/2026"
+  },
+  "brand": {
+    "code": "1",
+    "name": "Acura"
+  },
+  "model": {
+    "code": "1",
+    "name": "Integra GS 1.8"
+  },
+  "year": {
+    "code": "1992-1",
+    "name": "1992 Gasolina"
+  },
+  "quote": {
+    "documentCode": "CPF-9RYAYHECLRT7",
+    "provider": "parallelum",
+    "referenceMonth": "agosto de 2026",
+    "valueCents": 1077300,
+    "valueLabel": "R$ 10.773,00"
+  },
+  "offerCount": 6,
+  "reportValidation": {
+    "authentic": true,
+    "reportKind": "FIPE_FREE",
+    "reportVersion": 1,
+    "provider": "parallelum",
+    "documentCode": "CPF-9RYAYHECLRT7",
+    "createdAt": "2026-08-18T13:46:48.089Z",
+    "status": "VALID",
+    "hash": "3413b53e814c6229c2a316ef13f6b6a8bfac920f8fc939472195c28fa9f2c86f",
+    "plate": null,
+    "fipeReferenceMonth": "agosto de 2026"
+  },
+  "printContentType": "text/html; charset=utf-8",
+  "pdfContentType": "application/pdf"
+}

@@ -74,6 +74,8 @@ quote = post(
 ).json()
 assert quote.get("documentCode"), quote
 assert quote.get("reportHash"), quote
+assert quote.get("valueCents") is not None, quote
+assert quote.get("valueLabel"), quote
 
 offers = get("/api/fipe/offers").json()
 assert offers.get("offers"), offers
@@ -101,7 +103,8 @@ print(json.dumps({
         "documentCode": quote.get("documentCode"),
         "provider": quote.get("provider"),
         "referenceMonth": quote.get("referenceMonth"),
-        "value": quote.get("value"),
+        "valueCents": quote.get("valueCents"),
+        "valueLabel": quote.get("valueLabel"),
     },
     "offerCount": len(offers["offers"]),
     "reportValidation": validated,
