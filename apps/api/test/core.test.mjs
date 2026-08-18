@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { normalizeBdrp } from '../dist/normalizer.js';
+import { normalizeBdrp, normalizeFipe } from '../dist/normalizer.js';
 
 function payload(overrides = {}) {
   return {
@@ -40,4 +40,21 @@ test('sinaliza restrição material sem depender apenas da apresentação', () =
 
 test('rejeita resposta de provedor incompatível', () => {
   assert.throws(() => normalizeBdrp({ RESPOSTA: { CODIGO: '0' } }), /Resposta do provedor inválida/);
+});
+
+test('normaliza valor FIPE brasileiro e mantém a referência mensal', () => {
+  const quote = normalizeFipe({
+    provider: 'parallelum', source: 'Tabela FIPE vigente', brandCode: '59', brand: 'VW',
+    modelCode: '123', model: 'Gol 1.0', yearCode: '2024-1', year: '2024 Gasolina',
+    codeFipe: '005001-1', price: 'R$ 45.678,90', referenceMonth: 'agosto de 2026', fuel: 'Gasolina', tipoVeiculo: 1
+  });
+  assert.equal(quote.vehicleType, 'cars');
+  assert.equal(quote.valueCents, 4567890);
+  assert.equal(quote.fipeCode, '005001-1');
+  assert.equal(quote.referenceMonth, 'agosto de 2026');
+});
+
+test('não mascara resposta FIPE sem valor ou referência', () => {
+  assert.throws(() => normalizeFipe({ brand: 'VW', model: 'Gol', year: '2024', codeFipe: '005001-1', price: '0', referenceMonth: 'agosto de 2026' }), /FIPE_INVALID_RESPONSE/);
+  assert.throws(() => normalizeFipe({ brand: 'VW', model: 'Gol', year: '2024', codeFipe: '005001-1', price: 'R$ 45.678,90' }), /FIPE_REFERENCE_MISSING/);
 });

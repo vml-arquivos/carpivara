@@ -216,6 +216,117 @@ const migrations = [
           VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(slug) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,credits=EXCLUDED.credits,price_cents=EXCLUDED.price_cents,display_order=EXCLUDED.display_order,updated_at=now()`, [slug, name, description, credits, priceCents, displayOrder]);
             }
         }
+    },
+    {
+        id: '005_fipe_funnel_reports',
+        name: 'Free FIPE funnel, persistent cache, report documents and source metadata',
+        async up(client) {
+            await client.query(`
+        ALTER TABLE query_products ADD COLUMN IF NOT EXISTS supplier_cost_cents integer NOT NULL DEFAULT 0;
+        ALTER TABLE query_products ADD COLUMN IF NOT EXISTS min_margin_cents integer NOT NULL DEFAULT 0;
+        ALTER TABLE query_products ADD COLUMN IF NOT EXISTS source text;
+        ALTER TABLE query_products ADD COLUMN IF NOT EXISTS coverage text;
+        ALTER TABLE query_products ADD COLUMN IF NOT EXISTS commercial_status text NOT NULL DEFAULT 'ACTIVE';
+        ALTER TABLE query_products ADD COLUMN IF NOT EXISTS featured boolean NOT NULL DEFAULT false;
+        ALTER TABLE query_products ADD COLUMN IF NOT EXISTS is_free boolean NOT NULL DEFAULT false;
+
+        CREATE TABLE IF NOT EXISTS fipe_cache (
+          cache_key text PRIMARY KEY,
+          provider text NOT NULL,
+          vehicle_type text NOT NULL CHECK (vehicle_type IN ('cars','motorcycles','trucks')),
+          brand_id text NOT NULL,
+          model_id text NOT NULL,
+          year_id text NOT NULL,
+          reference_code text,
+          reference_month text NOT NULL,
+          payload jsonb NOT NULL,
+          expires_at timestamptz NOT NULL,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          updated_at timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_fipe_cache_expiry ON fipe_cache(expires_at);
+
+        CREATE TABLE IF NOT EXISTS fipe_usage (
+          scope_key text NOT NULL,
+          bucket_date date NOT NULL,
+          count integer NOT NULL DEFAULT 0 CHECK (count >= 0),
+          updated_at timestamptz NOT NULL DEFAULT now(),
+          PRIMARY KEY (scope_key, bucket_date)
+        );
+
+        CREATE TABLE IF NOT EXISTS report_documents (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          document_code text NOT NULL UNIQUE,
+          query_id uuid REFERENCES vehicle_queries(id) ON DELETE SET NULL,
+          user_id uuid REFERENCES users(id) ON DELETE SET NULL,
+          report_kind text NOT NULL CHECK (report_kind IN ('FIPE_FREE','VEHICLE_QUERY')),
+          report_version integer NOT NULL DEFAULT 1 CHECK (report_version > 0),
+          provider text NOT NULL,
+          report_hash text NOT NULL,
+          snapshot jsonb NOT NULL,
+          previous_document_id uuid REFERENCES report_documents(id),
+          superseded_at timestamptz,
+          created_at timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_report_documents_user_created ON report_documents(user_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_report_documents_query_created ON report_documents(query_id, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS query_source_rules (
+          product_id text NOT NULL REFERENCES query_products(id) ON DELETE CASCADE,
+          source_type text NOT NULL,
+          provider text NOT NULL,
+          active boolean NOT NULL DEFAULT false,
+          priority integer NOT NULL DEFAULT 100,
+          coverage text NOT NULL DEFAULT '',
+          PRIMARY KEY(product_id, source_type, provider)
+        );
+
+        CREATE TABLE IF NOT EXISTS provider_health_events (
+          id bigserial PRIMARY KEY,
+          provider text NOT NULL,
+          source_type text NOT NULL,
+          status text NOT NULL,
+          latency_ms integer,
+          error_code text,
+          created_at timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_provider_health_created ON provider_health_events(provider, source_type, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS funnel_events (
+          id bigserial PRIMARY KEY,
+          user_id uuid REFERENCES users(id) ON DELETE SET NULL,
+          session_key text,
+          event_type text NOT NULL,
+          metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+          created_at timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_funnel_events_type_created ON funnel_events(event_type, created_at DESC);
+      `);
+            await client.query(`
+        INSERT INTO query_products(id,name,description,credit_cost,slug,features,display_order,source,coverage,commercial_status,featured,is_free)
+        VALUES('FIPE_FREE','Consulta FIPE Grátis','Valor médio da Tabela FIPE vigente, com relatório e impressão.',0,'fipe-free','["Valor FIPE vigente","Referência mensal","PDF e impressão","Checklist de compra segura"]'::jsonb,1,'Parallelum/FIPE API v2 com fallback BrasilAPI','Tabela FIPE mensal; não consulta situação documental.','FREE',true,true)
+        ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,credit_cost=0,slug=EXCLUDED.slug,features=EXCLUDED.features,display_order=EXCLUDED.display_order,source=EXCLUDED.source,coverage=EXCLUDED.coverage,commercial_status=EXCLUDED.commercial_status,featured=EXCLUDED.featured,is_free=true;
+
+        INSERT INTO query_products(id,name,description,credit_cost,active,slug,features,display_order,source,coverage,commercial_status,featured,is_free)
+        VALUES
+          ('CADASTRAL','Consulta Cadastral Essencial','Confirme se as características do anúncio correspondem ao veículo registrado.',5,false,'cadastral-essencial','["Placa","Marca e modelo","Ano, cor e combustível","Município e UF","Chassi e RENAVAM mascarados"]'::jsonb,10,'Aguardando provider veicular autorizado','Cobertura conforme contrato do fornecedor; produto em breve.','SOON',false,false),
+          ('RESTRICTIONS','Restrições e Gravame','Verifique impedimentos que podem afetar a negociação ou transferência.',8,false,'restricoes-gravame','["Gravame","Restrições financeiras","Restrição judicial","Roubo/furto quando coberto"]'::jsonb,20,'Aguardando fonte contratada e autorizada','Cobertura conforme contrato do fornecedor; produto em breve.','SOON',false,false)
+        ON CONFLICT(id) DO NOTHING;
+
+        UPDATE query_products SET source=COALESCE(source,'Provider veicular contratado'), coverage=COALESCE(coverage,description), commercial_status=COALESCE(commercial_status,'ACTIVE'), is_free=COALESCE(is_free,false) WHERE id <> 'FIPE_FREE';
+
+        INSERT INTO query_source_rules(product_id,source_type,provider,active,priority,coverage) VALUES
+          ('FIPE_FREE','FIPE','parallelum',true,10,'Valor médio e referência mensal da Tabela FIPE'),
+          ('FIPE_FREE','FIPE','brasilapi',true,20,'Fallback documentado de consulta FIPE'),
+          ('CADASTRAL','IDENTITY','official',false,10,'Aguardando provider veicular autorizado'),
+          ('RESTRICTIONS','RESTRICTIONS','contracted',false,10,'Aguardando fonte contratada e autorizada'),
+          ('BASIC','IDENTITY','official',false,20,'Aguardando provider veicular autorizado'),
+          ('DEBTS','DEBTS','official',false,10,'Aguardando cobertura contratada'),
+          ('COMPLETE','FIPE','parallelum',false,10,'Ativação progressiva'),
+          ('PREMIUM','PREMIUM','contracted',false,10,'Aguardando fornecedores licenciados')
+        ON CONFLICT(product_id,source_type,provider) DO NOTHING;
+      `);
+        }
     }
 ];
 export async function runMigrations() {

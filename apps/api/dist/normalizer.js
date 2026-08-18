@@ -28,3 +28,35 @@ export function normalizeBdrp(raw) {
         recall: text(r.RECALL)
     };
 }
+export function normalizeFipe(raw) {
+    const price = typeof raw?.price === 'string' ? raw.price : typeof raw?.valor === 'string' ? raw.valor : raw?.price;
+    const normalizedPrice = String(price ?? '').trim().replace(/^R\$\s*/i, '').replace(/\./g, '').replace(',', '.');
+    const value = Number(normalizedPrice);
+    if (!raw || !Number.isFinite(value) || value <= 0)
+        throw new Error('FIPE_INVALID_RESPONSE');
+    const vehicleType = raw.vehicleType === 2 || raw.tipoVeiculo === 2 || raw.tipoVeiculo === '2' ? 'motorcycles' : raw.vehicleType === 3 || raw.tipoVeiculo === 3 || raw.tipoVeiculo === '3' ? 'trucks' : 'cars';
+    const brand = { code: String(raw.brandCode ?? raw.codigoMarca ?? raw.marcaCodigo ?? ''), name: String(raw.brand ?? raw.marca ?? '').trim() };
+    const model = { code: String(raw.modelCode ?? raw.codigoModelo ?? raw.modeloCodigo ?? ''), name: String(raw.model ?? raw.modelo ?? '').trim() };
+    const year = { code: String(raw.yearCode ?? raw.codigoAno ?? raw.anoCodigo ?? ''), name: String(raw.year ?? raw.ano ?? raw.modelYear ?? raw.anoModelo ?? '').trim() };
+    if (!brand.name || !model.name || !year.name || !String(raw.codeFipe ?? raw.codigoFipe ?? raw.codigoFipe).trim())
+        throw new Error('FIPE_INVALID_RESPONSE');
+    const referenceMonth = String(raw.referenceMonth ?? raw.mesReferencia ?? raw.referencia ?? '').trim();
+    if (!referenceMonth)
+        throw new Error('FIPE_REFERENCE_MISSING');
+    return {
+        provider: String(raw.provider ?? 'fipe').trim(),
+        source: String(raw.source ?? 'Tabela FIPE').trim(),
+        consultedAt: new Date().toISOString(),
+        referenceMonth,
+        referenceCode: raw.referenceCode == null ? undefined : String(raw.referenceCode),
+        vehicleType,
+        brand,
+        model,
+        year,
+        fuel: String(raw.fuel ?? raw.combustivel ?? '').trim() || undefined,
+        modelYear: Number.isFinite(Number(raw.modelYear ?? raw.anoModelo)) ? Number(raw.modelYear ?? raw.anoModelo) : undefined,
+        fipeCode: String(raw.codeFipe ?? raw.codigoFipe).trim(),
+        valueCents: Math.round(value * 100),
+        valueLabel: `R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    };
+}

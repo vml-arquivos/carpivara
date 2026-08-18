@@ -8,7 +8,51 @@ export type NormalizedVehicle = {
   recall?:string;
 };
 
+export type FipeVehicleType = 'cars' | 'motorcycles' | 'trucks';
+export type InformationState = 'FOUND' | 'CLEAR' | 'NOT_QUERIED' | 'NOT_AVAILABLE' | 'PARTIAL' | 'PROVIDER_ERROR' | 'STALE';
+
+export type FipeSelectionItem = { code: string; name: string };
+
+export type FipeQuote = {
+  documentCode: string;
+  reportHash: string;
+  provider: string;
+  source: string;
+  consultedAt: string;
+  referenceMonth: string;
+  referenceCode?: string;
+  vehicleType: FipeVehicleType;
+  brand: FipeSelectionItem;
+  model: FipeSelectionItem;
+  year: FipeSelectionItem;
+  fuel?: string;
+  modelYear?: number;
+  fipeCode: string;
+  valueCents: number;
+  valueLabel: string;
+  estimatedNegotiation?: { minCents: number; maxCents: number; disclaimer: string };
+  blocks: Array<{ key: string; label: string; state: InformationState; message: string }>;
+  plate?: string;
+};
+
+export type FipeProviderResult = Omit<FipeQuote, 'documentCode' | 'reportHash' | 'blocks' | 'estimatedNegotiation' | 'plate'> & {
+  cacheKey: string;
+};
+
 export interface VehicleDataProvider {
   name: string;
   queryByPlate(plate: string): Promise<{ providerQueryId?: string; raw: unknown }>;
 }
+
+export interface FipeProvider {
+  readonly name: string;
+  readonly source: string;
+  quote(input: { vehicleType: FipeVehicleType; brand: FipeSelectionItem; model: FipeSelectionItem; year: FipeSelectionItem }): Promise<FipeProviderResult>;
+}
+
+export interface VehicleIdentityProvider { readonly name: string; }
+export interface RestrictionsProvider { readonly name: string; }
+export interface GravameProvider { readonly name: string; }
+export interface DebtsProvider { readonly name: string; }
+export interface RecallProvider { readonly name: string; }
+export interface HistoryProvider { readonly name: string; }

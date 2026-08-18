@@ -23,6 +23,18 @@ const envSchema = z.object({
 
   // Dados veiculares: o modo real só pode operar com contrato e credenciais válidos.
   DATA_PROVIDER: z.enum(['mock', 'real']).default('mock'),
+
+  // FIPE: feature desligada por padrão; os tokens são exclusivos do backend.
+  FEATURE_FREE_FIPE: booleanFromEnv.default(false),
+  FEATURE_REPORT_PDF: booleanFromEnv.default(true),
+  FIPE_PRIMARY_BASE_URL: optionalUrl.default('https://fipe.parallelum.com.br/api/v2'),
+  FIPE_PRIMARY_TOKEN: optionalString,
+  FIPE_SECONDARY_BASE_URL: optionalUrl.default('https://brasilapi.com.br/api'),
+  FIPE_SECONDARY_TOKEN: optionalString,
+  FIPE_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().max(120000).default(10000),
+  FIPE_GUEST_DAILY_LIMIT: z.coerce.number().int().positive().max(100).default(3),
+  FIPE_AUTH_DAILY_LIMIT: z.coerce.number().int().positive().max(500).default(10),
+  FIPE_CACHE_TTL_DAYS: z.coerce.number().int().positive().max(31).default(31),
   VEHICLE_API_BASE_URL: optionalUrl,
   VEHICLE_API_QUERY_PATH: optionalString,
   VEHICLE_API_AUTH_SCHEME: z.enum(['bearer', 'basic']).default('bearer'),
