@@ -48,3 +48,21 @@ Fonte operacional: Coolify — https://coolifycar.casadf.com.br/project/e5fnmvit
 Após o smoke test parcial, os logs de runtime registraram `GET /fipe/brands` com status `200` e duração de `93ms`, indicando que a rota concluiu no servidor. O timeout observado no cliente ficou restrito à sessão externa do smoke test e será revalidado com chamadas isoladas.
 
 O domínio público voltou a responder no navegador após o período de timeout. A aplicação carregou corretamente, porém a sessão persistida de `SUPER_ADMIN` abriu o dashboard autenticado (`/`), com os menus de Administração e Preferências visíveis. A validação da tela pública FIPE deve ser feita após sair dessa sessão, sem alterar dados da conta.
+
+## 2026-08-18 — publicação do patch aad5ca8
+
+Após o push do commit `aad5ca8` (`fix: tratar respostas não JSON no funil FIPE por placa`), foi iniciado o deployment manual `rk2yentcfy2ihpflpffjnboe` no Coolify. O painel o exibiu inicialmente como `In progress`; durante a substituição do container apareceu uma mensagem transitória do Docker sobre um container antigo inexistente. O resultado final deve ser acompanhado antes de considerar a publicação concluída. Nenhuma variável secreta foi copiada ou registrada.
+
+No acompanhamento seguinte, o deployment `rk2yentcfy2ihpflpffjnboe` permanecia `In progress` após aproximadamente 26 segundos; o log visível já mostrava o build Docker concluído e a etapa de remoção dos containers antigos. O recurso continuava sinalizado como `Running` no cabeçalho do Coolify.
+
+O deployment `rk2yentcfy2ihpflpffjnboe` terminou com status `Success` após aproximadamente 48 segundos e o novo container iniciou. Entretanto, a lista do Coolify ainda o rotulou como commit `a83be20`, embora o push mais recente seja `aad5ca8`; a referência efetivamente empacotada será verificada pelos artefatos e pelo comportamento público antes de considerar este redeploy como publicação do patch.
+
+A causa do rótulo antigo foi confirmada: o Git Source estava explicitamente fixado em `a83be207175be6af0b6b8c18111e28001820d13f`, apesar da branch `main`. O campo foi atualizado para `aad5ca89882001bcbbf9054055b8c72fd5260b6f` e o Coolify exibiu `Application source updated!`. O deployment anterior, portanto, foi concluído com a versão antiga; será feito novo redeploy após o pin correto.
+
+Com o pin corrigido, foi iniciado o deployment efetivo `zhgcperuc7zlcnjicf8jt8dl`; a lista do Coolify passou a exibir `In progress — Manual — aad5ca8`, confirmando que a versão correta está sendo empacotada. O status final e os smoke tests ainda estão pendentes.
+
+O deployment `zhgcperuc7zlcnjicf8jt8dl` seguia `In progress` aos 26 segundos, identificado como `aad5ca8`. Os logs visíveis mostravam a execução dos builds do backend e frontend, sem erro de compilação até aquele ponto.
+
+Aos 52 segundos, o deployment `zhgcperuc7zlcnjicf8jt8dl` permanecia `In progress` e o log mostrava a imagem Docker de `aad5ca8` concluída, entrando na criação e inicialização do container. Nenhum erro de build foi observado.
+
+Smoke test pós-deploy executado em 2026-08-18: `/health`, status FIPE, referências, marcas, modelos, anos, cotação manual, ofertas e validação pública retornaram os status esperados; impressão e PDF anônimos permaneceram bloqueados com HTTP 401. A consulta por placa não foi executada porque nenhuma placa real foi fornecida e `VEHICLE_API_QUERY_PATH` continua ausente no ambiente de produção.
