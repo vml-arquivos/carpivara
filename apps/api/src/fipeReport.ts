@@ -40,7 +40,7 @@ export function makeFipeQuote(result: FipeProviderResult, plate?: string): FipeQ
       { key: 'RESTRICTIONS', label: 'Restrições e gravame', state: 'NOT_QUERIED', message: 'Não consultado nesta modalidade.' },
       { key: 'DEBTS', label: 'Débitos', state: 'NOT_QUERIED', message: 'Não consultado nesta modalidade.' },
       { key: 'RECALL', label: 'Recall', state: 'NOT_QUERIED', message: 'Não consultado nesta modalidade.' },
-      { key: 'HISTORY', label: 'Leilão e sinistro', state: 'NOT_AVAILABLE', message: 'Disponibilidade conforme consulta e fonte contratada.' }
+      { key: 'HISTORY', label: 'Leilão e sinistro', state: 'NOT_AVAILABLE', message: 'Não incluído nesta modalidade.' }
     ]
   };
 }
@@ -63,7 +63,6 @@ export function fipePdf(quote: FipeQuote): Buffer {
     `Codigo FIPE: ${quote.fipeCode}`,
     `Valor FIPE vigente: ${quote.valueLabel}`,
     `Referencia: ${quote.referenceMonth}`,
-    `Fonte: ${quote.source}`,
     `Consultado em: ${new Date(quote.consultedAt).toLocaleString('pt-BR')}`,
     '',
     'ESTIMATIVA INFORMATIVA',
@@ -105,7 +104,7 @@ export function fipePrintHtml(quote: FipeQuote): string {
   const blocks = quote.blocks.map((block) => `<li><strong>${escapeHtml(block.label)}</strong>: ${escapeHtml(block.state)} — ${escapeHtml(block.message)}</li>`).join('');
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Relatório FIPE ${escapeHtml(quote.documentCode)}</title><style>
   @page{size:A4;margin:18mm}body{font-family:Arial,sans-serif;color:#1f2937;line-height:1.45;max-width:760px;margin:0 auto}header{border-bottom:3px solid #0f766e;padding-bottom:12px;margin-bottom:22px}h1{font-size:22px;margin:0;color:#0f766e}h2{font-size:15px;margin-top:24px;color:#0f766e}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.card{border:1px solid #d1d5db;border-radius:8px;padding:12px}.muted{color:#6b7280;font-size:12px}ul{padding-left:18px}.notice{background:#f0fdfa;border-left:4px solid #0f766e;padding:12px}.print{margin:20px 0;padding:10px 16px;border:0;background:#0f766e;color:white;border-radius:6px}@media print{.print{display:none}.card{break-inside:avoid}}
-  </style></head><body><header><h1>Carpivara — Relatório FIPE gratuito</h1><div class="muted">Documento ${escapeHtml(quote.documentCode)} · Hash ${escapeHtml(quote.reportHash)}</div></header><div class="grid"><div class="card"><strong>Veículo</strong><br>${escapeHtml(quote.brand.name)} / ${escapeHtml(quote.model.name)}<br>Ano: ${escapeHtml(quote.year.name)}<br>Combustível: ${escapeHtml(quote.fuel || 'Não informado')}</div><div class="card"><strong>Valor FIPE vigente</strong><br><span style="font-size:24px">${escapeHtml(quote.valueLabel)}</span><br>Referência: ${escapeHtml(quote.referenceMonth)}<br>Código: ${escapeHtml(quote.fipeCode)}</div></div><p class="muted">Fonte: ${escapeHtml(quote.source)} · Consulta realizada em ${escapeHtml(new Date(quote.consultedAt).toLocaleString('pt-BR'))}</p><h2>Estimativa informativa</h2><p>${escapeHtml(formatCents(quote.estimatedNegotiation?.minCents ?? 0))} a ${escapeHtml(formatCents(quote.estimatedNegotiation?.maxCents ?? 0))}. ${escapeHtml(quote.estimatedNegotiation?.disclaimer)}</p><h2>O que a FIPE não verifica</h2><div class="notice">A Tabela FIPE informa o valor médio, mas não verifica gravame, restrições, débitos, roubo/furto, leilão ou sinistro. Consulte a situação documental antes de concluir uma negociação.</div><h2>Estados do relatório</h2><ul>${blocks}</ul><p class="muted">Validação pública: /validar-relatorio/${escapeHtml(quote.documentCode)}</p><button class="print" onclick="window.print()">Imprimir</button></body></html>`;
+  </style></head><body><header><h1>Carpivara — Relatório FIPE gratuito</h1><div class="muted">Documento ${escapeHtml(quote.documentCode)} · Hash ${escapeHtml(quote.reportHash)}</div></header><div class="grid"><div class="card"><strong>Veículo</strong><br>${escapeHtml(quote.brand.name)} / ${escapeHtml(quote.model.name)}<br>Ano: ${escapeHtml(quote.year.name)}<br>Combustível: ${escapeHtml(quote.fuel || 'Não informado')}</div><div class="card"><strong>Valor FIPE vigente</strong><br><span style="font-size:24px">${escapeHtml(quote.valueLabel)}</span><br>Referência: ${escapeHtml(quote.referenceMonth)}<br>Código: ${escapeHtml(quote.fipeCode)}</div></div><p class="muted">Consulta realizada em ${escapeHtml(new Date(quote.consultedAt).toLocaleString('pt-BR'))}</p><h2>Estimativa informativa</h2><p>${escapeHtml(formatCents(quote.estimatedNegotiation?.minCents ?? 0))} a ${escapeHtml(formatCents(quote.estimatedNegotiation?.maxCents ?? 0))}. ${escapeHtml(quote.estimatedNegotiation?.disclaimer)}</p><h2>O que a FIPE não verifica</h2><div class="notice">A Tabela FIPE informa o valor médio, mas não verifica gravame, restrições, débitos, roubo/furto, leilão ou sinistro. Consulte a situação documental antes de concluir uma negociação.</div><h2>Estados do relatório</h2><ul>${blocks}</ul><p class="muted">Validação pública: /validar-relatorio/${escapeHtml(quote.documentCode)}</p><button class="print" onclick="window.print()">Imprimir</button></body></html>`;
 }
 
 function formatCents(cents: number): string {

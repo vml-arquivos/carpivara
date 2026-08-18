@@ -1,19 +1,17 @@
 from __future__ import annotations
 
 import json
-import sys
 from urllib.parse import urlencode
 
 import requests
 
 BASE = "https://carpivara.casadf.com.br"
 s = requests.Session()
-s.headers.update({"User-Agent": "carpivara-post-deploy-smoke/1.0"})
+s.headers.update({"User-Agent": "carpivara-post-deploy-smoke/1.1"})
 
 
 def get(path: str, **kwargs):
-    url = BASE + path
-    response = s.get(url, timeout=30, **kwargs)
+    response = s.get(BASE + path, timeout=30, **kwargs)
     print(f"GET {path} -> {response.status_code}")
     if response.status_code >= 400:
         print(response.text[:1000])
@@ -22,8 +20,7 @@ def get(path: str, **kwargs):
 
 
 def post(path: str, payload: dict):
-    url = BASE + path
-    response = s.post(url, json=payload, timeout=45)
+    response = s.post(BASE + path, json=payload, timeout=45)
     print(f"POST {path} -> {response.status_code}")
     if response.status_code >= 400:
         print(response.text[:1000])
@@ -31,10 +28,8 @@ def post(path: str, payload: dict):
     return response
 
 
-health = get("/health")
-health_json = health.json()
+health_json = get("/health").json()
 assert health_json.get("ok") is True, health_json
-
 status = get("/api/fipe/status").json()
 assert status.get("enabled") is True, status
 assert status.get("pdfEnabled") is True, status
@@ -76,38 +71,37 @@ assert quote.get("documentCode"), quote
 assert quote.get("reportHash"), quote
 assert quote.get("valueCents") is not None, quote
 assert quote.get("valueLabel"), quote
+assert "provider" not in quote and "source" not in quote, quote
 
 offers = get("/api/fipe/offers").json()
 assert offers.get("offers"), offers
+for offer in offers["offers"]:
+    assert "provider" not in offer and "source" not in offer and "coverage" not in offer, offer
 
 report_code = quote["documentCode"]
 validated = get(f"/api/validar-relatorio/{report_code}").json()
 assert validated.get("authentic") is True, validated
 assert validated.get("status") == "VALID", validated
+assert "provider" not in validated, validated
 
-printed = get(f"/api/fipe/reports/{report_code}/print")
-assert "text/html" in printed.headers.get("content-type", ""), printed.headers
-
-pdf = get(f"/api/fipe/reports/{report_code}/pdf")
-assert pdf.headers.get("content-type", "").startswith("application/pdf"), pdf.headers
-assert pdf.content[:4] == b"%PDF", pdf.content[:12]
+printed = s.get(BASE + f"/api/fipe/reports/{report_code}/print", timeout=30)
+print(f"GET /api/fipe/reports/{report_code}/print -> {printed.status_code}")
+assert printed.status_code == 401, printed.text
+pdf = s.get(BASE + f"/api/fipe/reports/{report_code}/pdf", timeout=30)
+print(f"GET /api/fipe/reports/{report_code}/pdf -> {pdf.status_code}")
+assert pdf.status_code == 401, pdf.text
 
 print(json.dumps({
     "health": health_json,
-    "provider": status,
     "reference": reference,
-    "brand": brand,
-    "model": model,
-    "year": year,
     "quote": {
         "documentCode": quote.get("documentCode"),
-        "provider": quote.get("provider"),
         "referenceMonth": quote.get("referenceMonth"),
         "valueCents": quote.get("valueCents"),
         "valueLabel": quote.get("valueLabel"),
     },
     "offerCount": len(offers["offers"]),
     "reportValidation": validated,
-    "printContentType": printed.headers.get("content-type"),
-    "pdfContentType": pdf.headers.get("content-type"),
+    "anonymousPrintStatus": printed.status_code,
+    "anonymousPdfStatus": pdf.status_code,
 }, ensure_ascii=False, indent=2))
