@@ -324,6 +324,15 @@ async function reserveFipeQuota(scopeKey: string, limit: number): Promise<void> 
   });
 }
 
+async function releaseFipeQuota(scopeKey: string): Promise<void> {
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    await pool.query('UPDATE fipe_usage SET count=GREATEST(count-1,0),updated_at=now() WHERE scope_key=$1 AND bucket_date=$2 AND count>0', [scopeKey, today]);
+  } catch {
+    // A falha de telemetria da cota não pode substituir o erro original da consulta.
+  }
+}
+
 async function recordFunnelEvent(userId: string | null, req: Request, eventType: string, metadata: Record<string, unknown> = {}): Promise<void> {
   try {
     await pool.query('INSERT INTO funnel_events(user_id,session_key,event_type,metadata) VALUES($1,$2,$3,$4::jsonb)', [userId, hashIp(req.ip), eventType, JSON.stringify(metadata)]);
@@ -565,6 +574,7 @@ api.post('/fipe/quote', asyncRoute(async (req, res) => {
   const plate = normalizedPlate?.success ? normalizedPlate.data : undefined;
   const scopeKey = `ip:${hashIp(req.ip) ?? 'unknown'}`;
   await reserveFipeQuota(scopeKey, env.FIPE_GUEST_DAILY_LIMIT);
+  let quotaReserved = true;
   let input: { vehicleType: FipeVehicleType; brand: FipeSelectionItem; model: FipeSelectionItem; year: FipeSelectionItem };
   let vehicleDetails: FipeVehicleDetails | undefined;
   let preferredProvider: 'parallelum' | 'brasilapi' = 'parallelum';
@@ -590,6 +600,10 @@ api.post('/fipe/quote', asyncRoute(async (req, res) => {
     await recordFunnelEvent(null, req, 'FREE_QUERY_COMPLETED', { provider: quote.provider, documentCode: quote.documentCode, cached: Boolean(cached), plateLookup: Boolean(plate) });
     res.status(201).json(publicFipeQuote(quote));
   } catch (error) {
+    if (quotaReserved) {
+      quotaReserved = false;
+      await releaseFipeQuota(scopeKey);
+    }
     await recordFunnelEvent(null, req, 'FREE_QUERY_FAILED', { error: error instanceof Error ? error.message : 'provider_error', plateLookup: Boolean(plate) });
     throw fipeProviderError(error);
   }
