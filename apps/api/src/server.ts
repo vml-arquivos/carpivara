@@ -1045,6 +1045,11 @@ function humanMessage(code: string): string {
     FIPE_PROVIDER_UNAVAILABLE: 'A consulta não respondeu de forma válida. Tente novamente em alguns instantes.',
     FIPE_NOT_FOUND: 'A combinação de veículo informada não foi encontrada na tabela vigente.',
     FIPE_REFERENCE_MISSING: 'A referência mensal da consulta não está disponível no momento.',
+    FIPE_PLATE_DATA_INVALID: 'Não foi possível identificar os dados do veículo para esta placa.',
+    FIPE_PLATE_NOT_FOUND: 'Não identificamos um veículo para esta placa. Confira os dados e tente novamente.',
+    FIPE_PLATE_UNAVAILABLE: 'Não foi possível consultar os dados do veículo agora. Tente novamente em instantes.',
+    FIPE_PLATE_VEHICLE_NOT_IDENTIFIED: 'Não encontramos a versão FIPE correspondente a esta placa.',
+    FIPE_SELECTION_REQUIRED: 'Informe a placa ou selecione o veículo para consultar a FIPE.',
     FIPE_DAILY_LIMIT: 'O limite diário de consultas FIPE foi atingido. Tente novamente amanhã.',
     REPORT_NOT_FOUND: 'O relatório solicitado não foi encontrado ou não está disponível.',
     FIPE_INVALID_REPORT: 'O relatório FIPE não pôde ser validado.'

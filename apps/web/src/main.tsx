@@ -133,9 +133,12 @@ function FipeView({ token = '', onAccess, onBack }: { token?: string; onAccess: 
     try {
       const bodyInput = mode === 'plate' ? { plate: cleanPlate } : { vehicleType, brand, model, year, plate: cleanPlate || undefined };
       const response = await fetch(`${API}/fipe/quote`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(bodyInput) });
-      const body = await response.json() as FipeQuote & { message?: string };
-      if (!response.ok) throw new Error(body.message ?? 'Não foi possível concluir a consulta para esta placa.');
-      if (!body.brand?.name || !body.model?.name || !body.year?.name || !body.valueLabel || !body.fipeCode) throw new Error('Não foi possível confirmar todos os dados do veículo e da FIPE. Tente novamente.');
+      const contentType = response.headers.get('content-type') ?? '';
+      const body: (FipeQuote & { message?: string; error?: string }) | null = contentType.includes('application/json')
+        ? await response.json() as FipeQuote & { message?: string; error?: string }
+        : null;
+      if (!response.ok) throw new Error(body?.message ?? 'Não foi possível concluir a consulta agora. Tente novamente.');
+      if (!body || !body.brand?.name || !body.model?.name || !body.year?.name || !body.valueLabel || !body.fipeCode) throw new Error('Não foi possível confirmar todos os dados do veículo e da FIPE. Tente novamente.');
       setQuote(body);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Não foi possível concluir a consulta.'); }
     finally { setLoading(false); }
@@ -154,8 +157,11 @@ function FipeView({ token = '', onAccess, onBack }: { token?: string; onAccess: 
     setLoading(true); setError('');
     try {
       const response = await fetch(`${API}/fipe/quotes/${quote.documentCode}/save`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers } });
-      const body = await response.json() as { message?: string };
-      if (!response.ok) throw new Error(body.message ?? 'Não foi possível salvar o relatório.');
+      const contentType = response.headers.get('content-type') ?? '';
+      const body: { message?: string; error?: string } | null = contentType.includes('application/json')
+        ? await response.json() as { message?: string; error?: string }
+        : null;
+      if (!response.ok) throw new Error(body?.message ?? 'Não foi possível salvar o relatório agora. Tente novamente.');
       setSaved(true);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Não foi possível salvar o relatório.'); }
     finally { setLoading(false); }
