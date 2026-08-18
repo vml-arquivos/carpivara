@@ -38,9 +38,11 @@ const envSchema = z.object({
   VEHICLE_API_BASE_URL: optionalUrl,
   VEHICLE_API_QUERY_PATH: optionalString,
   VEHICLE_API_AUTH_SCHEME: z.enum(['bearer', 'basic']).default('bearer'),
+  VEHICLE_API_QUERY_METHOD: z.enum(['get', 'post']).default('get'),
   VEHICLE_API_LOGIN: optionalString,
   VEHICLE_API_PASSWORD: optionalString,
   VEHICLE_API_TOKEN: optionalString,
+  VEHICLE_API_DEVICE_TOKEN: optionalString,
   VEHICLE_API_TIMEOUT_MS: z.coerce.number().int().positive().max(120000).default(15000),
 
   // Asaas: runtime-only. A API key e o token do webhook jamais devem ser disponibilizados no build ou frontend.

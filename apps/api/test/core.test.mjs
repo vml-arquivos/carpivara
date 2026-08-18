@@ -31,6 +31,33 @@ test('normaliza valores monetários e mantém dados de relatório independentes 
   assert.equal(report.restrictions.every((item) => !item.alert), true);
 });
 
+test('normaliza resposta veicular da APIBrasil sem exigir campos de relatório completo', () => {
+  const report = normalizeBdrp({
+    placa: 'JIW6972',
+    data: {
+      marca: 'VOLKSWAGEN',
+      modelo: 'GOL 1.0',
+      marcaModelo: 'VOLKSWAGEN GOL 1.0',
+      ano: '2020',
+      anoModelo: '2021',
+      cor: 'PRATA',
+      combustivel: 'FLEX',
+      tipoVeiculo: 'AUTOMOVEL',
+      municipio: 'BRASILIA',
+      uf: 'DF',
+      chassi: '9BWZZZ377VT004251'
+    }
+  });
+  assert.equal(report.identification.plate, 'JIW6972');
+  assert.equal(report.identification.brand, 'VOLKSWAGEN');
+  assert.equal(report.identification.model, 'GOL 1.0');
+  assert.equal(report.characteristics.manufactureYear, '2020');
+  assert.equal(report.characteristics.modelYear, '2021');
+  assert.equal(report.characteristics.fuel, 'FLEX');
+  assert.equal(report.registration.city, 'BRASILIA');
+  assert.equal(report.registration.state, 'DF');
+});
+
 test('sinaliza restrição material sem depender apenas da apresentação', () => {
   const report = normalizeBdrp(payload({ RESJUDICIAL: 'RESTRICAO FICTICIA PARA TESTE' }));
   const judicial = report.restrictions.find((item) => item.key === 'JUDICIAL');

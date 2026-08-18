@@ -69,3 +69,47 @@ A variável de limite diário foi persistida no Coolify e o deployment `iojf399g
 ## Correção adicional do limite compartilhado
 
 A implementação foi ajustada para usar `CF-Connecting-IP` quando o endereço é válido, com fallback para `req.ip`, e passou a usar o escopo versionado `v2:ip`. Isso evita reutilizar contadores criados com a chave anterior e reduz o risco de compartilhar a cota entre visitantes quando a aplicação recebe tráfego por proxy reverso. Falhas de provedor continuam devolvendo a cota reservada, sem consumir a consulta gratuita. O build e os cinco testes existentes passaram localmente após a alteração. Nenhum segredo foi registrado.
+
+O Git Source do Coolify foi atualizado para o SHA completo `d87fc763ad1e44a6ed0243d11e532a1e9d403126` e a interface confirmou `Application source updated`. O redeploy do patch de isolamento de cota está pronto para ser iniciado.
+
+O redeploy normal do commit `d87fc76` foi iniciado no Coolify; o deployment aparece como `In progress` no histórico da aplicação. O acompanhamento seguirá apenas por status e healthcheck, sem copiar logs sensíveis.
+
+O build Docker do deployment `d87fc76` concluiu as etapas de compilação e exportação da imagem; o Coolify avançou para criação do container e remoção dos containers antigos. O estado ainda estava `In progress` no último acompanhamento, sem falha de build observada.
+
+O deployment `d87fc76` concluiu com status **Success** no Coolify, incluindo a troca dos containers. A aplicação está pronta para validação pública da cota e da resposta por placa.
+
+O smoke test com `PLATE_SMOKE=JIW6972` após o deployment passou em healthcheck, status, referências, catálogo e cotação manual. A consulta por placa não foi bloqueada pela cota; ela avançou e recebeu HTTP 502 com página HTML do Cloudflare. Isso confirma que a correção do limite funcionou, mas permanece uma indisponibilidade do upstream/proxy relacionada à configuração do endpoint veicular, ainda sem caminho de consulta documentado.
+
+## Atualização operacional — 18/08/2026
+
+- A tela pública reproduzida pelo usuário exibiu a mensagem de limite diário da FIPE por placa.
+- O backend atualmente usa a chave versionada `v2:ip:<hash>` e prioriza o cabeçalho `CF-Connecting-IP`, evitando o compartilhamento acidental da cota pelo IP do proxy.
+- O Coolify confirmou duas variáveis com o mesmo nome: uma de produção e outra de preview. A variável de produção `FIPE_GUEST_DAILY_LIMIT` foi atualizada de 10 para 100 e o painel confirmou `Environment variable updated`; a variável de preview não foi alterada.
+- A reprodução pós-deploy registrada anteriormente deixou de retornar bloqueio de cota, mas a consulta por placa ainda retornou HTTP 502 em resposta não JSON, coerente com a ausência de `VEHICLE_API_QUERY_PATH` no ambiente de produção.
+- A URL operacional de configuração permanece: https://coolifycar.casadf.com.br/project/e5fnmvitmxb24zn8ae1ygwso/environment/u3vo7bqp4kwer0oty3bxgrff/application/nypsnvexr5rnon2pfpx22zwp/environment-variables
+
+Nenhum valor de token, login, senha ou URL completa de credencial foi registrado.
+
+
+O limite de produção `FIPE_GUEST_DAILY_LIMIT` foi atualizado para 100 no Coolify, enquanto a variável de preview permaneceu inalterada. O redeploy normal foi iniciado para aplicar essa configuração; no primeiro acompanhamento, o deployment apareceu `In progress` e iniciou o processo de build sem erro de referência. Nenhum segredo foi coletado.
+
+
+No acompanhamento seguinte, o redeploy que aplica a variável de produção permaneceu `In progress` durante o build; o histórico anterior continuou verde e a aplicação permaneceu marcada como Running. Aguardar o estado terminal antes da nova reprodução pública.
+
+
+O deployment de aplicação permaneceu em `In progress` por aproximadamente um minuto, avançando para a compilação do backend e frontend. O serviço anterior continuou Running durante a atualização e nenhum valor sensível foi registrado.
+
+
+O build Docker do redeploy terminou e o Coolify iniciou a criação das variáveis do novo container e a remoção dos containers antigos. O deployment ainda estava em `In progress` no último acompanhamento, sem erro visível.
+
+
+A imagem Docker foi concluída e o Coolify registrou a criação do novo container e a remoção dos anteriores. O deployment continuava em `In progress` apenas aguardando a conclusão da troca/healthcheck; a aplicação permanecia Running.
+
+
+O deployment que aplicou `FIPE_GUEST_DAILY_LIMIT` terminou com status `Success` no Coolify. A aplicação permanece `Running` e o histórico mostra o novo deployment manual com commit `d87fc76` no topo. A etapa de configuração de ambiente foi concluída sem expor valores.
+
+
+Após o redeploy com limite ampliado, a reprodução `POST /api/fipe/quote` para `JIW6972` não foi bloqueada pela cota. A resposta pública foi `HTTP 502`, `Content-Type: text/plain; charset=UTF-8`, corpo sanitizado `error code: 502`, duração aproximada de 2,13 s e cabeçalho Cloudflare presente. Isso confirma falha de upstream/proxy na consulta por placa, não limite diário; a causa de configuração ainda precisa ser confirmada nos logs do runtime.
+
+
+Os logs do container confirmam que o request chega à aplicação: `POST /api/fipe/quote` termina em aproximadamente 11–16 ms com `status: 502` e código interno `FIPE_PLATE_UNAVAILABLE`. O servidor iniciou com `provider: real` e ambiente de produção. Portanto, não é timeout do Cloudflare nem limite diário; a falha ocorre no adaptador veicular antes de uma resposta válida do provedor.

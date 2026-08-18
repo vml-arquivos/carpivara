@@ -27,7 +27,7 @@ function recordsFrom(raw: unknown): AnyRecord[] {
       seen.add(value);
       result.push(value);
       Object.entries(value).forEach(([entryKey, entryValue]) => {
-        if (depth < 5 && (isRecord(entryValue) || Array.isArray(entryValue)) && /resposta|retorno|veiculo|veiculos|vehicle|data|result|resultado|dados|response|content|body/i.test(entryKey)) visit(entryValue, depth + 1);
+        if (depth < 5 && (isRecord(entryValue) || Array.isArray(entryValue)) && /resposta|retorno|veiculo|veiculos|vehicle|data|result|resultado|dados|response|content|body|extra/i.test(entryKey)) visit(entryValue, depth + 1);
       });
     } else if (Array.isArray(value)) {
       value.slice(0, 5).forEach((item) => visit(item, depth + 1));
@@ -59,7 +59,7 @@ export function normalizeBdrp(raw: any): NormalizedVehicle {
   const plate = text(valueOf(raw, ['PLACA', 'plate', 'licensePlate', 'placaVeiculo']));
   const brand = text(valueOf(raw, ['MARCA', 'brand', 'make', 'marcaVeiculo']));
   const model = text(valueOf(raw, ['MODELO', 'model', 'modeloVeiculo']));
-  const fullModel = text(valueOf(raw, ['MARCAMODELOCOMPLETO', 'marcaModeloCompleto', 'fullModel', 'fullVehicleModel']));
+  const fullModel = text(valueOf(raw, ['MARCAMODELOCOMPLETO', 'marcaModeloCompleto', 'marcaModelo', 'marca_modelo', 'fullModel', 'fullVehicleModel']));
   if (!plate || (!brand && !model && !fullModel)) throw new Error('Resposta do provedor inválida');
   return {
     identification: {
@@ -73,13 +73,13 @@ export function normalizeBdrp(raw: any): NormalizedVehicle {
       fullModel
     },
     characteristics: {
-      manufactureYear: text(valueOf(raw, ['VEIANOFAB', 'anoFabricacao', 'manufactureYear', 'fabricationYear'])),
-      modelYear: text(valueOf(raw, ['VEIANOMODELO', 'anoModelo', 'modelYear'])),
+      manufactureYear: text(valueOf(raw, ['VEIANOFAB', 'anoFabricacao', 'ano', 'manufactureYear', 'fabricationYear'])),
+      modelYear: text(valueOf(raw, ['VEIANOMODELO', 'anoModelo', 'ano_modelo', 'modelYear'])),
       color: text(valueOf(raw, ['COR', 'color'])),
-      fuel: text(valueOf(raw, ['COMBUSTIVEL', 'fuel', 'combustivel'])),
+      fuel: text(valueOf(raw, ['COMBUSTIVEL', 'fuel', 'combustivel', 'combustível'])),
       power: text(valueOf(raw, ['POTENCIA', 'power'])),
       displacement: text(valueOf(raw, ['CILINDRADA', 'displacement'])),
-      type: text(valueOf(raw, ['TIPO', 'type', 'vehicleType'])),
+      type: text(valueOf(raw, ['TIPO', 'type', 'vehicleType', 'tipoVeiculo', 'tipo_veiculo'])),
       species: text(valueOf(raw, ['ESPECIE', 'species'])),
       category: text(valueOf(raw, ['VEICATEGORIA', 'categoria', 'category'])),
       body: text(valueOf(raw, ['CARROCERIA', 'body', 'bodyType'])),
@@ -89,8 +89,8 @@ export function normalizeBdrp(raw: any): NormalizedVehicle {
       origin: text(valueOf(raw, ['VEIPROCEDENCIA', 'procedencia', 'origin']))
     },
     registration: {
-      city: text(valueOf(raw, ['MUNICIPIO', 'municipio', 'city', 'cidade'])),
-      state: text(valueOf(raw, ['UF', 'estado', 'state'])),
+      city: text(valueOf(raw, ['MUNICIPIO', 'municipio', 'municipality', 'city', 'cidade'])),
+      state: text(valueOf(raw, ['UF', 'ufPlaca', 'uf_placa', 'estado', 'state'])),
       licensingDate: text(valueOf(raw, ['LICDATA', 'dataLicenciamento', 'licensingDate'])),
       licensingYear: text(valueOf(raw, ['LICEXELIC', 'anoLicenciamento', 'licensingYear'])),
       status: text(valueOf(raw, ['SITUACAOVEICULO', 'situacaoVeiculo', 'status', 'vehicleStatus']))
