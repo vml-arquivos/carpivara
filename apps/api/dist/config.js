@@ -39,6 +39,8 @@ const envSchema = z.object({
     VEHICLE_API_PASSWORD: optionalString,
     VEHICLE_API_TOKEN: optionalString,
     VEHICLE_API_DEVICE_TOKEN: optionalString,
+    APIBRASIL_BEARER_TOKEN: optionalString,
+    APIBRASIL_DEVICE_TOKEN: optionalString,
     VEHICLE_API_TIMEOUT_MS: z.coerce.number().int().positive().max(120000).default(15000),
     // Asaas: runtime-only. A API key e o token do webhook jamais devem ser disponibilizados no build ou frontend.
     PAYMENT_PROVIDER: z.enum(['sandbox', 'asaas']).default('sandbox'),

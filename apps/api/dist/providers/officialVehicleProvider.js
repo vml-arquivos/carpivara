@@ -35,7 +35,8 @@ export class OfficialVehicleProvider {
     async queryByPlate(plate) {
         if (!env.VEHICLE_API_BASE_URL || !env.VEHICLE_API_QUERY_PATH)
             throw providerError('DATA_PROVIDER_NOT_CONFIGURED');
-        if (env.VEHICLE_API_AUTH_SCHEME === 'bearer' && !env.VEHICLE_API_TOKEN)
+        const bearerToken = env.VEHICLE_API_TOKEN ?? env.APIBRASIL_BEARER_TOKEN;
+        if (env.VEHICLE_API_AUTH_SCHEME === 'bearer' && !bearerToken)
             throw providerError('DATA_PROVIDER_NOT_CONFIGURED');
         if (env.VEHICLE_API_AUTH_SCHEME === 'basic' && (!env.VEHICLE_API_LOGIN || !env.VEHICLE_API_PASSWORD))
             throw providerError('DATA_PROVIDER_NOT_CONFIGURED');
@@ -43,10 +44,11 @@ export class OfficialVehicleProvider {
         const url = new URL(path.startsWith('/') ? path.slice(1) : path, `${env.VEHICLE_API_BASE_URL.replace(/\/$/, '')}/`);
         const authorization = env.VEHICLE_API_AUTH_SCHEME === 'basic'
             ? `Basic ${Buffer.from(`${env.VEHICLE_API_LOGIN}:${env.VEHICLE_API_PASSWORD}`).toString('base64')}`
-            : `Bearer ${env.VEHICLE_API_TOKEN}`;
+            : `Bearer ${bearerToken}`;
         const headers = { accept: 'application/json', authorization };
-        if (env.VEHICLE_API_DEVICE_TOKEN)
-            headers.DeviceToken = env.VEHICLE_API_DEVICE_TOKEN;
+        const deviceToken = env.VEHICLE_API_DEVICE_TOKEN ?? env.APIBRASIL_DEVICE_TOKEN;
+        if (deviceToken)
+            headers.DeviceToken = deviceToken;
         const init = { method: env.VEHICLE_API_QUERY_METHOD.toUpperCase(), headers, signal: AbortSignal.timeout(env.VEHICLE_API_TIMEOUT_MS) };
         if (env.VEHICLE_API_QUERY_METHOD === 'post') {
             headers['content-type'] = 'application/json';
