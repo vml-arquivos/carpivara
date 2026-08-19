@@ -131,3 +131,18 @@
 .profileEditButton{border:1px solid color-mix(in srgb,var(--gold) 48%,var(--line));border-radius:9px;background:var(--gold-soft);padding:8px 10px;color:var(--gold-strong);font-size:9px;font-weight:900;white-space:nowrap}.profileEditButton:hover{border-color:var(--gold);background:var(--gold);color:var(--navy)}
 @media(max-width:650px){.profileEditButton{font-size:9px;padding:8px 9px}.headerActions{gap:8px}.profileBadge div{display:none}}
 @media(max-width:375px){.profileEditButton{font-size:8px;padding:7px 8px}}
+
+/* Navegação pública acessível dentro da área autenticada */
+.sidePublicLinks{display:grid;gap:5px;margin:17px 10px 0;padding-top:15px;border-top:1px solid rgba(255,255,255,.12)}
+.sidePublicLinks a{padding:7px 0;color:#b8c6d8;text-decoration:none;font-size:11px;font-weight:800}
+.sidePublicLinks a:hover{color:#fff}
+.headerQuickLinks{display:flex;align-items:center;gap:10px}
+.headerQuickLinks a{padding:8px 9px;border:1px solid var(--line);border-radius:9px;color:var(--ink);text-decoration:none;font-size:10px;font-weight:800;white-space:nowrap}
+.headerQuickLinks a:hover{border-color:var(--gold);color:var(--gold)}
+.workspacePublicShortcut{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:16px;padding:12px 15px;border:1px solid color-mix(in srgb,var(--gold) 28%,var(--line));border-radius:12px;background:color-mix(in srgb,var(--gold-soft) 55%,var(--surface));color:var(--muted);font-size:11px;line-height:1.5}
+.workspacePublicShortcut a{color:var(--green);font-weight:900;text-decoration:underline;text-underline-offset:3px}
+.mobileNav a{border:0;background:transparent;padding:12px 5px;color:var(--muted);font-size:9px;font-weight:800;text-align:center;text-decoration:none}
+.mobileNav a:hover{color:var(--gold)}
+@media(max-width:920px){.mobileNav{grid-template-columns:repeat(6,1fr)}}
+@media(max-width:650px){.headerQuickLinks{width:100%;justify-content:flex-start;order:3}.headerQuickLinks a{flex:1;text-align:center}.workspacePublicShortcut{align-items:flex-start;flex-direction:column;gap:5px}}
+@media(max-width:375px){.headerQuickLinks a{font-size:9px;padding-inline:5px}}
