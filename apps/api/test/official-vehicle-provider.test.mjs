@@ -9,7 +9,8 @@ process.env.VEHICLE_API_BASE_URL = 'https://gateway.apibrasil.io/api/v2';
 process.env.VEHICLE_API_QUERY_PATH = 'consulta/veiculos/credits';
 process.env.VEHICLE_API_QUERY_METHOD = 'post';
 process.env.VEHICLE_API_AUTH_SCHEME = 'bearer';
-process.env.VEHICLE_API_TOKEN = 'test-token';
+process.env.VEHICLE_API_TOKEN = 'legacy-token';
+process.env.APIBRASIL_BEARER_TOKEN = 'apibrasil-token';
 
 const { OfficialVehicleProvider } = await import('../dist/providers/officialVehicleProvider.js');
 
@@ -33,7 +34,7 @@ test('envia placa para o endpoint APIBrasil por POST sem expor token na URL', as
     const result = await new OfficialVehicleProvider().queryByPlate('JIW6972');
     assert.equal(request.url, 'https://gateway.apibrasil.io/api/v2/consulta/veiculos/credits');
     assert.equal(request.init.method, 'POST');
-    assert.equal(request.init.headers.authorization, 'Bearer test-token');
+    assert.equal(request.init.headers.authorization, 'Bearer apibrasil-token');
     assert.equal(request.init.headers['content-type'], 'application/json');
     assert.equal(request.init.body, JSON.stringify({ placa: 'JIW6972' }));
     assert.equal(result.providerQueryId, undefined);

@@ -86,3 +86,11 @@ Fonte: https://apibrasil.blog/desvendando-as-apis-para-consulta-de-placas-de-car
 A página pública `https://doc.apibrasil.io/` redireciona para autenticação; portanto, a documentação detalhada de veículos não pode ser validada sem uma conta APIBrasil. A página oficial e o SDK público, entretanto, confirmam o gateway `https://gateway.apibrasil.io/api/v2`, autenticação Bearer para operações por créditos e o método de veículos por placa (`consulta->veiculos` / `vehicles->dados`). A implementação deve deixar o caminho configurável e não assumir um retorno FIPE: somente a identificação veicular normalizada deve alimentar a seleção FIPE interna já existente.
 
 Fonte: https://doc.apibrasil.io/
+
+## Evidência atualizada — 2026-08-19
+
+A página oficial da APIBrasil e o repositório oficial `https://github.com/APIBrasil/apigratis-exemplos` confirmam que o gateway de produção usa `https://gateway.apibrasil.io/api/v2`, que consultas por crédito seguem o padrão `POST /api/v2/consulta/{servico}/credits`, e que o serviço veicular por crédito é `consulta/veiculos`. O repositório também confirma `Authorization: Bearer` para consultas por crédito e que `DeviceToken` é ignorado nesse modelo. A página oficial apresenta a categoria “Placa FIPE (Com Chassi)” como API veicular, com consulta por placa e valores FIPE, porém indica que a precificação depende do painel/conta; portanto a integração não deve ser descrita como gratuita ilimitada.
+
+A coleção Postman pública da APIBrasil em `https://www.postman.com/docs-apibrasil/ambiente-apibrasil/request/us8hra2/dbitos-veiculares` mostra uma rota device-based distinta (`/api/v2/vehicles/base/001/consulta`), não a rota por crédito usada pelo Carpivara.
+
+Na produção, o deployment `49a43d4c` ficou Success, mas `PLATE_SMOKE=JIW6972` retornou HTTP 404 `FIPE_PLATE_NOT_FOUND`. Ao editar `VEHICLE_API_QUERY_PATH` no Coolify, o valor exibido para produção era `/api/v2/consulta/veiculos/credits`, ou seja, a rota correta. O próximo ponto a verificar é `VEHICLE_API_BASE_URL`, que pode ter sido salvo com o sufixo incorreto `/a`. Como o adaptador concatena a base com o caminho, a combinação correta é base `https://gateway.apibrasil.io` e caminho `/api/v2/consulta/veiculos/credits`.

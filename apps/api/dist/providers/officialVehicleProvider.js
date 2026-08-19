@@ -35,7 +35,7 @@ export class OfficialVehicleProvider {
     async queryByPlate(plate) {
         if (!env.VEHICLE_API_BASE_URL || !env.VEHICLE_API_QUERY_PATH)
             throw providerError('DATA_PROVIDER_NOT_CONFIGURED');
-        const bearerToken = env.VEHICLE_API_TOKEN ?? env.APIBRASIL_BEARER_TOKEN;
+        const bearerToken = env.APIBRASIL_BEARER_TOKEN ?? env.VEHICLE_API_TOKEN;
         if (env.VEHICLE_API_AUTH_SCHEME === 'bearer' && !bearerToken)
             throw providerError('DATA_PROVIDER_NOT_CONFIGURED');
         if (env.VEHICLE_API_AUTH_SCHEME === 'basic' && (!env.VEHICLE_API_LOGIN || !env.VEHICLE_API_PASSWORD))
