@@ -126,3 +126,8 @@
 .accountForm .checkField input{width:15px;height:15px;margin-top:1px}
 .accountForm .primaryButton,.accountForm .secondaryButton{justify-self:start}
 @media (max-width:760px){.accountSettings{grid-template-columns:1fr}.accountSettings .profileCard{grid-column:auto}.formGrid{grid-template-columns:1fr}}
+
+/* Acesso rápido à conta */
+.profileEditButton{border:1px solid color-mix(in srgb,var(--gold) 48%,var(--line));border-radius:9px;background:var(--gold-soft);padding:8px 10px;color:var(--gold-strong);font-size:9px;font-weight:900;white-space:nowrap}.profileEditButton:hover{border-color:var(--gold);background:var(--gold);color:var(--navy)}
+@media(max-width:650px){.profileEditButton{font-size:9px;padding:8px 9px}.headerActions{gap:8px}.profileBadge div{display:none}}
+@media(max-width:375px){.profileEditButton{font-size:8px;padding:7px 8px}}
