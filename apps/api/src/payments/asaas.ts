@@ -34,12 +34,27 @@ function codedError(code: string): Error & { code: string } {
   return error;
 }
 
+type AsaasCheckoutConfig = Pick<typeof env, 'PAYMENT_PROVIDER' | 'PAYMENT_API_BASE_URL' | 'PAYMENT_API_KEY'>;
+type AsaasIntegrationConfig = AsaasCheckoutConfig & Pick<typeof env, 'PAYMENT_WEBHOOK_SECRET'>;
+
+export function hasAsaasCheckoutConfig(config: AsaasCheckoutConfig): boolean {
+  return config.PAYMENT_PROVIDER === 'asaas' && Boolean(config.PAYMENT_API_BASE_URL && config.PAYMENT_API_KEY);
+}
+
+export function hasAsaasIntegrationConfig(config: AsaasIntegrationConfig): boolean {
+  return hasAsaasCheckoutConfig(config) && Boolean(config.PAYMENT_WEBHOOK_SECRET);
+}
+
+export function isAsaasCheckoutConfigured(): boolean {
+  return hasAsaasCheckoutConfig(env);
+}
+
 export function isAsaasConfigured(): boolean {
-  return env.PAYMENT_PROVIDER === 'asaas' && Boolean(env.PAYMENT_API_BASE_URL && env.PAYMENT_API_KEY && env.PAYMENT_WEBHOOK_SECRET);
+  return hasAsaasIntegrationConfig(env);
 }
 
 export async function createAsaasCheckout(input: AsaasCheckoutInput): Promise<AsaasCheckoutResult> {
-  if (!isAsaasConfigured()) throw codedError('PAYMENT_PROVIDER_NOT_CONFIGURED');
+  if (!isAsaasCheckoutConfigured()) throw codedError('PAYMENT_PROVIDER_NOT_CONFIGURED');
   const origin = publicAppUrl();
   const customerData: Record<string, string> = { name: input.customer.name, email: input.customer.email };
   if (input.customer.cpfCnpj) customerData.cpfCnpj = input.customer.cpfCnpj.replace(/\D/g, '');

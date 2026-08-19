@@ -19,7 +19,7 @@ import { hasPermission, permissionsFor, requirePermission } from './permissions.
 import { getProvider } from './providers/index.js';
 import { getFipeProvider, quoteWithFallback } from './providers/fipeProvider.js';
 import { fipePdf, fipePrintHtml, makeFipeQuote, reportSnapshot } from './fipeReport.js';
-import { createAsaasCheckout, eventReference, externalPaymentId, hasValidAsaasWebhookToken, isAsaasConfigured } from './payments/asaas.js';
+import { createAsaasCheckout, eventReference, externalPaymentId, hasValidAsaasWebhookToken, isAsaasCheckoutConfigured } from './payments/asaas.js';
 import { ensureSchema } from './schema.js';
 await ensureSchema();
 const app = express();
@@ -953,7 +953,7 @@ api.post('/payments/checkout', auth, requirePermission('BUY_CREDITS'), asyncRout
     const parsed = checkoutSchema.safeParse(req.body);
     if (!parsed.success)
         throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
-    if (!isAsaasConfigured())
+    if (!isAsaasCheckoutConfigured())
         throw appError('PAYMENT_PROVIDER_NOT_CONFIGURED', { code: 'PAYMENT_PROVIDER_NOT_CONFIGURED', http: 503, expose: true });
     const draft = await tx(async (client) => {
         const pack = await client.query('SELECT id,slug,name,description,credits,price_cents FROM credit_packages WHERE slug=$1 AND active=true', [parsed.data.packageSlug]);

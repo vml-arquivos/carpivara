@@ -11,11 +11,20 @@ function codedError(code) {
     error.code = code;
     return error;
 }
+export function hasAsaasCheckoutConfig(config) {
+    return config.PAYMENT_PROVIDER === 'asaas' && Boolean(config.PAYMENT_API_BASE_URL && config.PAYMENT_API_KEY);
+}
+export function hasAsaasIntegrationConfig(config) {
+    return hasAsaasCheckoutConfig(config) && Boolean(config.PAYMENT_WEBHOOK_SECRET);
+}
+export function isAsaasCheckoutConfigured() {
+    return hasAsaasCheckoutConfig(env);
+}
 export function isAsaasConfigured() {
-    return env.PAYMENT_PROVIDER === 'asaas' && Boolean(env.PAYMENT_API_BASE_URL && env.PAYMENT_API_KEY && env.PAYMENT_WEBHOOK_SECRET);
+    return hasAsaasIntegrationConfig(env);
 }
 export async function createAsaasCheckout(input) {
-    if (!isAsaasConfigured())
+    if (!isAsaasCheckoutConfigured())
         throw codedError('PAYMENT_PROVIDER_NOT_CONFIGURED');
     const origin = publicAppUrl();
     const customerData = { name: input.customer.name, email: input.customer.email };

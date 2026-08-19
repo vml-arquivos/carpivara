@@ -20,7 +20,7 @@ import { hasPermission, permissionsFor, requirePermission } from './permissions.
 import { getProvider } from './providers/index.js';
 import { getFipeProvider, quoteWithFallback, type FipeCatalogProvider } from './providers/fipeProvider.js';
 import { fipePdf, fipePrintHtml, makeFipeQuote, reportSnapshot } from './fipeReport.js';
-import { createAsaasCheckout, eventReference, externalPaymentId, hasValidAsaasWebhookToken, isAsaasConfigured, type AsaasWebhookEvent } from './payments/asaas.js';
+import { createAsaasCheckout, eventReference, externalPaymentId, hasValidAsaasWebhookToken, isAsaasCheckoutConfigured, type AsaasWebhookEvent } from './payments/asaas.js';
 import { ensureSchema } from './schema.js';
 import type { FipeQuote, FipeSelectionItem, FipeVehicleDetails, FipeVehicleType, NormalizedVehicle } from './types.js';
 
@@ -935,7 +935,7 @@ api.get('/payments/orders', auth, requirePermission('BUY_CREDITS'), asyncRoute(a
 api.post('/payments/checkout', auth, requirePermission('BUY_CREDITS'), asyncRoute(async (req, res) => {
   const parsed = checkoutSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
-  if (!isAsaasConfigured()) throw appError('PAYMENT_PROVIDER_NOT_CONFIGURED', { code: 'PAYMENT_PROVIDER_NOT_CONFIGURED', http: 503, expose: true });
+  if (!isAsaasCheckoutConfigured()) throw appError('PAYMENT_PROVIDER_NOT_CONFIGURED', { code: 'PAYMENT_PROVIDER_NOT_CONFIGURED', http: 503, expose: true });
   const draft = await tx(async (client) => {
     const pack = await client.query('SELECT id,slug,name,description,credits,price_cents FROM credit_packages WHERE slug=$1 AND active=true', [parsed.data.packageSlug]);
     if (!pack.rowCount) throw appError('CREDIT_PACKAGE_NOT_FOUND', { code: 'CREDIT_PACKAGE_NOT_FOUND', http: 404, expose: true });
