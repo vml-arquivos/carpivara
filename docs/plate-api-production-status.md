@@ -33,3 +33,7 @@ Registro atualizado em 2026-08-19.
 ## 2026-08-19 — configuração pública confirmada
 
 A verificação no Coolify confirmou `VEHICLE_API_BASE_URL=https://gateway.apibrasil.io/api/v2` e `VEHICLE_API_QUERY_PATH=/consulta/veiculos/credits` em produção. A URL final montada pelo adaptador é `https://gateway.apibrasil.io/api/v2/consulta/veiculos/credits`; não há mais duplicação de `/api/v2` nem truncamento de `credits`. O smoke após o deployment `adr54usw2plsnefd8bio5egz` ainda retornou 502 para a placa, enquanto healthcheck, catálogo e FIPE manual permaneceram verdes. A próxima investigação deve separar autenticação Bearer, formato do payload e resposta/runtime da APIBrasil. Nenhum token ou valor secreto foi registrado.
+
+## 2026-08-19 — correção da precedência de token
+
+A causa provável do 502 foi a precedência do segredo legado `VEHICLE_API_TOKEN` sobre `APIBRASIL_BEARER_TOKEN` no ambiente de produção. O adaptador foi corrigido para priorizar explicitamente o token APIBrasil, o teste de transporte foi ampliado para cobrir os dois segredos, `npm test` passou integralmente e o commit `c6f5596` foi enviado para `main`. O Coolify foi atualizado para esse commit e iniciou o deployment `eruiuuw7ijtfkugtcqzr7rpn`. Nenhum token ou valor secreto foi registrado.

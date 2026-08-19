@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
+import { createHash, randomBytes } from 'node:crypto';
 import { isIP } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import cors from 'cors';
@@ -11,6 +12,7 @@ import { z } from 'zod';
 import { auth, issueSession, revokeSession } from './auth.js';
 import { completeAuthorization, consumeLoginTicket, createAuthorizationRequest, oauthErrorUrl, oauthSuccessUrl, socialProviderStatus } from './oauth.js';
 import { env } from './config.js';
+import { sendPasswordResetEmail, isEmailConfigured } from './email.js';
 import { pool, tx } from './db.js';
 import { normalizeBdrp } from './normalizer.js';
 import { hasPermission, permissionsFor, requirePermission } from './permissions.js';
@@ -44,7 +46,18 @@ const fipeSelectionSchema = z.object({
     plate: z.string().trim().max(16).optional()
 }).refine((input) => Boolean(input.plate) || Boolean(input.vehicleType && input.brand && input.model && input.year), 'FIPE_SELECTION_REQUIRED');
 const sandboxCreditSchema = z.object({ credits: z.number().int().min(10).max(10000) });
-const changePasswordSchema = z.object({ currentPassword: z.string().min(1).max(128), newPassword: z.string().min(10).max(128) });
+const changePasswordSchema = z.object({ currentPassword: z.string().min(1).max(128).optional(), newPassword: z.string().min(10).max(128) });
+const profileUpdateSchema = z.object({
+    name: z.string().trim().min(2).max(120),
+    cpfCnpj: z.string().trim().max(30).optional(),
+    phone: z.string().trim().max(30).optional(),
+    companyName: z.string().trim().max(160).optional(),
+    city: z.string().trim().max(120).optional(),
+    state: z.string().trim().regex(/^[A-Za-z]{2}$/).optional(),
+    marketingOptIn: z.boolean().optional()
+});
+const forgotPasswordSchema = z.object({ email: z.string().trim().email().max(254) });
+const resetPasswordSchema = z.object({ token: z.string().regex(/^[A-Za-z0-9_-]{30,160}$/), newPassword: z.string().min(10).max(128) });
 const productUpdateSchema = z.object({
     name: z.string().trim().min(2).max(120).optional(),
     description: z.string().trim().min(2).max(400).optional(),
@@ -179,6 +192,19 @@ const loginRateLimit = rateLimit({
     legacyHeaders: false,
     message: { error: 'TOO_MANY_ATTEMPTS', message: 'Muitas tentativas. Aguarde alguns minutos para tentar novamente.' }
 });
+const passwordResetRateLimit = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'TOO_MANY_ATTEMPTS', message: 'Muitas solicitações. Aguarde alguns minutos para tentar novamente.' }
+});
+function passwordResetTokenHash(token) {
+    return createHash('sha256').update(token).digest('hex');
+}
+function passwordResetUnavailable() {
+    return appError('PASSWORD_RESET_UNAVAILABLE', { code: 'PASSWORD_RESET_UNAVAILABLE', http: 503, expose: true });
+}
 api.get('/auth/providers', (_req, res) => {
     res.json({ providers: socialProviderStatus() });
 });
@@ -272,12 +298,102 @@ api.post('/auth/logout', auth, asyncRoute(async (req, res) => {
     await audit(req.user.id, 'LOGOUT', 'USER', req.user.id, { requestId: requestId(req) });
     res.status(204).end();
 }));
+api.get('/profile', auth, asyncRoute(async (req, res) => {
+    const result = await pool.query(`SELECT u.id,u.email,u.name,u.role,u.password_enabled,p.cpf_cnpj,p.phone,p.company_name,p.city,p.state,p.marketing_opt_in
+    FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id WHERE u.id=$1 AND u.active=true`, [req.user.id]);
+    if (!result.rowCount)
+        throw appError('ACCOUNT_NOT_FOUND', { code: 'ACCOUNT_NOT_FOUND', http: 404, expose: true });
+    const row = result.rows[0];
+    res.json({ profile: { id: String(row.id), email: String(row.email), name: String(row.name), role: String(row.role), passwordEnabled: Boolean(row.password_enabled), cpfCnpj: row.cpf_cnpj ?? '', phone: row.phone ?? '', companyName: row.company_name ?? '', city: row.city ?? '', state: row.state ?? '', marketingOptIn: Boolean(row.marketing_opt_in) } });
+}));
+api.put('/profile', auth, asyncRoute(async (req, res) => {
+    const parsed = profileUpdateSchema.safeParse(req.body);
+    if (!parsed.success)
+        throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+    const input = parsed.data;
+    const profile = await tx(async (client) => {
+        const user = await client.query('UPDATE users SET name=$2 WHERE id=$1 AND active=true RETURNING id,email,name,role,password_enabled', [req.user.id, input.name]);
+        if (!user.rowCount)
+            throw appError('ACCOUNT_NOT_FOUND', { code: 'ACCOUNT_NOT_FOUND', http: 404, expose: true });
+        const updated = await client.query(`INSERT INTO user_profiles(user_id,cpf_cnpj,phone,company_name,city,state,marketing_opt_in)
+      VALUES($1,$2,$3,$4,$5,$6,COALESCE($7,false))
+      ON CONFLICT(user_id) DO UPDATE SET cpf_cnpj=EXCLUDED.cpf_cnpj,phone=EXCLUDED.phone,company_name=EXCLUDED.company_name,city=EXCLUDED.city,state=EXCLUDED.state,marketing_opt_in=COALESCE($7,user_profiles.marketing_opt_in),updated_at=now()
+      RETURNING cpf_cnpj,phone,company_name,city,state,marketing_opt_in`, [req.user.id, input.cpfCnpj ?? null, input.phone ?? null, input.companyName ?? null, input.city ?? null, input.state?.toUpperCase() ?? null, input.marketingOptIn ?? null]);
+        if (input.marketingOptIn !== undefined) {
+            await client.query(`INSERT INTO user_consents(user_id,consent_type,granted,policy_version,source,ip_hash)
+        VALUES($1,'MARKETING_EMAIL',$2,'2026-08','profile_update',$3)`, [req.user.id, input.marketingOptIn, hashIp(req.ip)]);
+        }
+        return { user: user.rows[0], profile: updated.rows[0] };
+    });
+    const publicAccount = publicUser({ id: String(profile.user.id), email: String(profile.user.email), name: String(profile.user.name), role: String(profile.user.role) });
+    await audit(req.user.id, 'PROFILE_UPDATED', 'USER', req.user.id, { requestId: requestId(req) });
+    res.json({ user: publicAccount, profile: { id: publicAccount.id, email: publicAccount.email, name: publicAccount.name, role: publicAccount.role, passwordEnabled: Boolean(profile.user.password_enabled), cpfCnpj: profile.profile.cpf_cnpj ?? '', phone: profile.profile.phone ?? '', companyName: profile.profile.company_name ?? '', city: profile.profile.city ?? '', state: profile.profile.state ?? '', marketingOptIn: Boolean(profile.profile.marketing_opt_in) } });
+}));
+api.post('/auth/forgot-password', passwordResetRateLimit, asyncRoute(async (req, res) => {
+    const parsed = forgotPasswordSchema.safeParse(req.body);
+    if (!parsed.success)
+        throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+    const email = parsed.data.email.toLowerCase();
+    const genericMessage = 'Se o e-mail estiver cadastrado, enviaremos as instruções para redefinir sua senha.';
+    const result = await pool.query('SELECT id,email,name FROM users WHERE lower(email)=lower($1) AND active=true', [email]);
+    if (!result.rowCount) {
+        res.status(202).json({ message: genericMessage });
+        return;
+    }
+    if (!isEmailConfigured()) {
+        log('warn', 'password_reset_email_not_configured', { requestId: requestId(req), userId: String(result.rows[0].id) });
+        res.status(202).json({ message: genericMessage });
+        return;
+    }
+    const token = randomBytes(48).toString('base64url');
+    const tokenHash = passwordResetTokenHash(token);
+    const expiresAt = new Date(Date.now() + env.PASSWORD_RESET_TTL_MINUTES * 60 * 1000);
+    await tx(async (client) => {
+        await client.query('UPDATE password_reset_tokens SET used_at=now() WHERE user_id=$1 AND used_at IS NULL', [result.rows[0].id]);
+        await client.query('INSERT INTO password_reset_tokens(user_id,token_hash,expires_at,request_ip_hash) VALUES($1,$2,$3,$4)', [result.rows[0].id, tokenHash, expiresAt, hashIp(req.ip)]);
+    });
+    try {
+        await sendPasswordResetEmail({ to: String(result.rows[0].email), name: String(result.rows[0].name), token });
+    }
+    catch (error) {
+        await pool.query('DELETE FROM password_reset_tokens WHERE token_hash=$1', [tokenHash]);
+        log('warn', 'password_reset_email_failed', { requestId: requestId(req), userId: String(result.rows[0].id), reason: error instanceof Error ? error.message : 'unknown' });
+        res.status(202).json({ message: genericMessage });
+        return;
+    }
+    await audit(String(result.rows[0].id), 'PASSWORD_RESET_REQUESTED', 'USER', String(result.rows[0].id), { requestId: requestId(req) });
+    res.status(202).json({ message: genericMessage });
+}));
+api.post('/auth/reset-password', passwordResetRateLimit, asyncRoute(async (req, res) => {
+    const parsed = resetPasswordSchema.safeParse(req.body);
+    if (!parsed.success)
+        throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+    const tokenHash = passwordResetTokenHash(parsed.data.token);
+    const result = await tx(async (client) => {
+        const token = await client.query(`SELECT t.id,t.user_id,u.email,u.name,u.role
+      FROM password_reset_tokens t JOIN users u ON u.id=t.user_id
+      WHERE t.token_hash=$1 AND t.used_at IS NULL AND t.expires_at>now() AND u.active=true
+      FOR UPDATE`, [tokenHash]);
+        if (!token.rowCount)
+            throw appError('PASSWORD_RESET_TOKEN_INVALID', { code: 'PASSWORD_RESET_TOKEN_INVALID', http: 400, expose: true });
+        const row = token.rows[0];
+        await client.query('UPDATE users SET password_hash=$2,password_enabled=true,failed_login_attempts=0,locked_until=NULL WHERE id=$1', [row.user_id, await bcrypt.hash(parsed.data.newPassword, 12)]);
+        await client.query('UPDATE password_reset_tokens SET used_at=now() WHERE id=$1', [row.id]);
+        await client.query('UPDATE user_sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL', [row.user_id]);
+        return row;
+    });
+    const user = publicUser({ id: String(result.user_id), email: String(result.email), name: String(result.name), role: String(result.role) });
+    const issued = await issueSession(user, { flow: 'password_reset', requestId: requestId(req) });
+    await audit(user.id, 'PASSWORD_RESET_COMPLETED', 'USER', user.id, { requestId: requestId(req) });
+    res.json({ token: issued.token, user, message: 'Senha redefinida com sucesso.' });
+}));
 api.post('/auth/change-password', auth, asyncRoute(async (req, res) => {
     const parsed = changePasswordSchema.safeParse(req.body);
     if (!parsed.success)
         throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
-    const result = await pool.query('SELECT password_hash FROM users WHERE id=$1 AND active=true', [req.user.id]);
-    if (!result.rowCount || !(await bcrypt.compare(parsed.data.currentPassword, result.rows[0].password_hash))) {
+    const result = await pool.query('SELECT password_hash,password_enabled FROM users WHERE id=$1 AND active=true', [req.user.id]);
+    const passwordEnabled = result.rows[0]?.password_enabled === true;
+    if (!result.rowCount || (passwordEnabled && (!parsed.data.currentPassword || !(await bcrypt.compare(parsed.data.currentPassword, result.rows[0].password_hash))))) {
         throw appError('INVALID_CREDENTIALS', { code: 'INVALID_CREDENTIALS', http: 401, expose: true });
     }
     await pool.query('UPDATE users SET password_hash=$2,password_enabled=true WHERE id=$1', [req.user.id, await bcrypt.hash(parsed.data.newPassword, 12)]);
@@ -286,11 +402,17 @@ api.post('/auth/change-password', auth, asyncRoute(async (req, res) => {
     res.status(204).end();
 }));
 api.get('/me', auth, asyncRoute(async (req, res) => {
-    const [wallet, identities] = await Promise.all([
+    const [account, wallet, identities] = await Promise.all([
+        pool.query(`SELECT u.id,u.email,u.name,u.role,p.cpf_cnpj,p.phone,p.company_name,p.city,p.state,p.marketing_opt_in
+      FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id WHERE u.id=$1 AND u.active=true`, [req.user.id]),
         pool.query('SELECT balance FROM wallets WHERE user_id=$1', [req.user.id]),
         pool.query('SELECT provider FROM user_identities WHERE user_id=$1 ORDER BY provider', [req.user.id])
     ]);
-    res.json({ user: req.user, balance: wallet.rows[0]?.balance ?? 0, permissions: permissionsFor(req.user.role), sandbox: env.DATA_PROVIDER === 'mock', identities: identities.rows.map((row) => row.provider) });
+    if (!account.rowCount)
+        throw appError('ACCOUNT_NOT_FOUND', { code: 'ACCOUNT_NOT_FOUND', http: 404, expose: true });
+    const row = account.rows[0];
+    const user = publicUser({ id: String(row.id), email: String(row.email), name: String(row.name), role: String(row.role) });
+    res.json({ user, balance: wallet.rows[0]?.balance ?? 0, permissions: permissionsFor(user.role), sandbox: env.DATA_PROVIDER === 'mock', identities: identities.rows.map((identity) => identity.provider), profile: { id: user.id, email: user.email, name: user.name, role: user.role, passwordEnabled: Boolean(row.password_enabled), cpfCnpj: row.cpf_cnpj ?? '', phone: row.phone ?? '', companyName: row.company_name ?? '', city: row.city ?? '', state: row.state ?? '', marketingOptIn: Boolean(row.marketing_opt_in) } });
 }));
 function fipeUnavailable() {
     return appError('FIPE_FEATURE_DISABLED', { code: 'FIPE_FEATURE_DISABLED', http: 404, expose: true });

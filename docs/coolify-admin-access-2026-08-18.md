@@ -15,3 +15,8 @@ A aplicação pública é `https://carpivara.casadf.com.br` e o acesso operacion
 ## Redefinição autorizada concluída
 
 A senha temporária foi convertida com bcrypt e aplicada no banco de produção por update parametrizado. A verificação posterior retornou a conta com `role: SUPER_ADMIN`, `active=true`, `password_enabled=true`, `failed_login_attempts=0` e `locked_until=null`. Nenhum hash foi retornado ou registrado. O login por e-mail foi validado na aplicação pública e o menu `Administração` abriu a visão operacional protegida, confirmando o RBAC SUPER_ADMIN.
+
+
+## Verificação adicional — 2026-08-19
+
+A tela pública `https://carpivara.casadf.com.br/` foi aberta e o botão **Entrar** direcionou para o formulário de e-mail e senha. Na sessão verificada, não foram exibidos botões de Google, Microsoft ou Apple; portanto, a recuperação atualmente depende da redefinição da senha da conta `vilsonmarcio@gmail.com` no ambiente de produção. Nenhuma senha, hash ou token foi registrado.

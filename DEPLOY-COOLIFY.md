@@ -21,6 +21,16 @@ APP_NAME=Carpivara
 APP_URL=https://carpivara.casadf.com.br
 WEB_ORIGIN=https://carpivara.casadf.com.br
 TRUST_PROXY=1
+
+# Recuperação de senha por e-mail — configure somente no runtime do Coolify.
+EMAIL_PROVIDER=smtp
+SMTP_HOST=SEU_HOST_SMTP
+SMTP_PORT=587
+SMTP_USER=SEU_USUARIO_SMTP
+SMTP_PASSWORD=SEU_SEGREDO_SMTP
+SMTP_SECURE=false
+EMAIL_FROM=no-reply@carpivara.casadf.com.br
+PASSWORD_RESET_TTL_MINUTES=30
 DATABASE_URL=postgresql://USUARIO:SENHA@HOST_INTERNO:5432/NOME_BANCO
 DATABASE_SSL=false
 JWT_SECRET=GERAR_UM_SEGREDO_ALEATORIO_COM_64_OU_MAIS_CARACTERES
@@ -58,6 +68,7 @@ Não use `DATA_PROVIDER=real` até a implementação do adapter ser baseada na d
 | --- | --- |
 | Healthcheck falha | Confirme `DATABASE_URL`, acesso de rede ao PostgreSQL e logs de migration. |
 | Login falha | Confirme segredo JWT, usuários provisionados e limite de login. |
+| Recuperação não envia e-mail | Confirme `EMAIL_PROVIDER=smtp`, host, porta, usuário, senha, remetente autorizado e os logs de entrega do provedor. |
 | Frontend abre sem API | Confirme o domínio único e proxy para a porta `4000`. |
 | Consulta falha em sandbox | Confirme `DATA_PROVIDER=mock` e `SANDBOX_SEED_ENABLED=true` somente em ambiente de demonstração. |
 
