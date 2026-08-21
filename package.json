@@ -1,5 +1,5 @@
 {
-  "name": "carpivara-platform",
+  "name": "buscarr-platform",
   "private": true,
   "version": "0.3.0",
   "workspaces": ["apps/api", "apps/web"],

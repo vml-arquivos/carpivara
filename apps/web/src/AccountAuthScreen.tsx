@@ -1,4 +1,5 @@
-import { type FormEvent, useEffect, useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
+import Brand from './Brand';
 
 const API = '/api';
 type AuthMode = 'login' | 'register' | 'forgot' | 'reset';
@@ -13,9 +14,6 @@ type Props = {
   resetToken?: string;
 };
 
-function Brand(): JSX.Element {
-  return <div className="brand" aria-label="CARPIVARA, consulta veicular inteligente"><span className="brandMark brandMarkOfficial" aria-hidden="true"><img src="/brand/carpivara-crest-final.png" alt="" /></span><span className="brandWord"><strong><span>CAR</span>PIVARA</strong><small>consulta veicular inteligente</small></span></div>;
-}
 
 export default function AccountAuthScreen({ onAuthenticated, onBack, externalError = '', initialMode = 'register', resetToken = '' }: Props) {
   const [mode, setMode] = useState<AuthMode>(resetToken ? 'reset' : initialMode);
