@@ -50,11 +50,14 @@ const envSchema = z.object({
     APIBRASIL_BEARER_TOKEN: optionalString,
     APIBRASIL_DEVICE_TOKEN: optionalString,
     VEHICLE_API_TIMEOUT_MS: z.coerce.number().int().positive().max(120000).default(15000),
-    // Asaas: runtime-only. A API key e o token do webhook jamais devem ser disponibilizados no build ou frontend.
-    PAYMENT_PROVIDER: z.enum(['sandbox', 'asaas']).default('sandbox'),
+    // Pagamentos: credenciais runtime-only; nunca disponibilizar no build ou frontend.
+    PAYMENT_PROVIDER: z.enum(['sandbox', 'asaas', 'mercadopago']).default('sandbox'),
     PAYMENT_API_BASE_URL: optionalUrl,
     PAYMENT_API_KEY: optionalString,
     PAYMENT_WEBHOOK_SECRET: optionalString,
+    MP_ACCESS_TOKEN: optionalString,
+    MP_WEBHOOK_SECRET: optionalString,
+    MP_TIMEOUT_MS: z.coerce.number().int().positive().max(120000).default(15000),
     SANDBOX_SEED_ENABLED: booleanFromEnv.default(false),
     SANDBOX_CREDIT_PURCHASE_ENABLED: booleanFromEnv.default(false),
     QUERY_CACHE_ENABLED: booleanFromEnv.default(true),

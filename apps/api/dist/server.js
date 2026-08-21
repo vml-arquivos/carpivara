@@ -19,7 +19,7 @@ import { hasPermission, permissionsFor, requirePermission } from './permissions.
 import { getProvider } from './providers/index.js';
 import { getFipeProvider, quoteWithFallback } from './providers/fipeProvider.js';
 import { fipePdf, fipePrintHtml, makeFipeQuote, reportSnapshot } from './fipeReport.js';
-import { createAsaasCheckout, eventReference, externalPaymentId, hasValidAsaasWebhookToken, isAsaasCheckoutConfigured } from './payments/asaas.js';
+import { getPaymentProvider, getPaymentProviderFor } from './payments/index.js';
 import { ensureSchema } from './schema.js';
 await ensureSchema();
 const app = express();
@@ -73,6 +73,7 @@ const adminWalletAdjustmentSchema = z.object({
     description: z.string().trim().min(8).max(280)
 });
 const checkoutSchema = z.object({ packageSlug: z.string().trim().min(2).max(80) });
+const planInterestSchema = z.object({ email: z.string().trim().email().max(254), plan: z.enum(['PREMIUM', 'RISK']) });
 function appError(message, options = {}) {
     const error = new Error(message);
     Object.assign(error, options);
@@ -147,9 +148,10 @@ function diagnostic(result) {
 function serializeQuery(row) {
     const normalized = row.normalized;
     const isFipe = Boolean(normalized && typeof normalized === 'object' && '__type' in normalized && normalized.__type === 'FIPE_QUOTE');
+    const vehicle = !isFipe && normalized ? normalized : null;
     const result = isFipe
         ? { fipe: publicFipeQuote(normalized.quote), blocks: normalized.quote.blocks, diagnostic: { level: 'CLEAR', title: 'Valor FIPE consultado', reason: 'A Tabela FIPE foi consultada; a situação documental não está incluída nesta modalidade.' } }
-        : normalized ? { ...normalized, diagnostic: diagnostic(normalized) } : null;
+        : vehicle ? { ...vehicle, coverage: vehicle.coverage ?? { identification: vehicle.identification ? 'FOUND' : 'NOT_QUERIED', debts: vehicle.debts.length ? 'FOUND' : 'NOT_QUERIED', restrictions: vehicle.restrictions.length ? 'FOUND' : 'NOT_QUERIED', recall: vehicle.recall ? 'FOUND' : 'NOT_QUERIED' }, diagnostic: diagnostic(vehicle) } : null;
     return {
         id: row.id,
         plate: row.plate,
@@ -159,6 +161,7 @@ function serializeQuery(row) {
         creditsCost: row.credits_cost,
         createdAt: row.created_at,
         completedAt: row.completed_at,
+        verificationCode: !isFipe ? String(row.id).slice(0, 8).toUpperCase() : undefined,
         result
     };
 }
@@ -176,7 +179,15 @@ app.use((req, res, next) => {
 });
 app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: 'same-origin' } }));
 app.use(cors({ origin: env.NODE_ENV === 'production' ? false : env.WEB_ORIGIN, credentials: false }));
-app.use(express.json({ limit: '256kb', type: 'application/json' }));
+app.use(express.json({
+    limit: '256kb',
+    type: 'application/json',
+    verify: (req, _res, body) => {
+        if (req.url?.split('?')[0] === '/api/payments/mercadopago/webhook') {
+            req.rawBody = Buffer.from(body);
+        }
+    }
+}));
 app.use(express.urlencoded({ extended: false, limit: '32kb' }));
 if (env.RATE_LIMIT_ENABLED) {
     app.use(rateLimit({ windowMs: env.RATE_LIMIT_WINDOW_MS, limit: env.RATE_LIMIT_MAX_REQUESTS, standardHeaders: true, legacyHeaders: false, skip: (req) => req.path === '/health' }));
@@ -797,14 +808,31 @@ api.get('/fipe/reports/:code/print', auth, asyncRoute(async (req, res) => {
     await recordFunnelEvent(null, req, 'REPORT_PRINTED', { documentCode: quote.documentCode });
     res.type('html').send(fipePrintHtml(quote));
 }));
+api.post('/plan-interest', asyncRoute(async (req, res) => {
+    const parsed = planInterestSchema.safeParse(req.body);
+    if (!parsed.success)
+        throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+    await recordFunnelEvent(null, req, parsed.data.plan === 'RISK' ? 'RISK_INTEREST' : 'PREMIUM_INTEREST', { email: parsed.data.email.toLowerCase(), plan: parsed.data.plan });
+    res.status(201).json({ ok: true });
+}));
 api.get('/validar-relatorio/:code', asyncRoute(async (req, res) => {
     const document = await pool.query(`SELECT document_code,report_kind,report_version,provider,report_hash,snapshot,created_at,superseded_at
     FROM report_documents WHERE document_code=$1`, [req.params.code]);
-    if (!document.rowCount)
+    if (document.rowCount) {
+        const row = document.rows[0];
+        const quote = row.report_kind === 'FIPE_FREE' ? snapshotQuote(row) : null;
+        return res.json({ authentic: true, reportKind: row.report_kind, reportVersion: row.report_version, documentCode: row.document_code, createdAt: row.created_at, status: row.superseded_at ? 'UPDATED' : 'VALID', hash: row.report_hash, plate: quote?.plate ? `${quote.plate.slice(0, 3)}***${quote.plate.slice(-2)}` : null, fipeReferenceMonth: quote?.referenceMonth ?? null });
+    }
+    const code = String(req.params.code).trim().toUpperCase();
+    if (!/^[A-F0-9]{8}$/.test(code))
         return res.status(404).json({ authentic: false, status: 'NOT_FOUND' });
-    const row = document.rows[0];
-    const quote = row.report_kind === 'FIPE_FREE' ? snapshotQuote(row) : null;
-    res.json({ authentic: true, reportKind: row.report_kind, reportVersion: row.report_version, documentCode: row.document_code, createdAt: row.created_at, status: row.superseded_at ? 'UPDATED' : 'VALID', hash: row.report_hash, plate: quote?.plate ? `${quote.plate.slice(0, 3)}***${quote.plate.slice(-2)}` : null, fipeReferenceMonth: quote?.referenceMonth ?? null });
+    const query = await pool.query(`SELECT q.id,q.status,q.result_hash,q.created_at,q.plate
+    FROM vehicle_queries q WHERE q.status='SUCCESS' AND upper(q.id::text) LIKE $1 ORDER BY q.created_at DESC LIMIT 1`, [`${code}%`]);
+    if (!query.rowCount)
+        return res.status(404).json({ authentic: false, status: 'NOT_FOUND' });
+    const row = query.rows[0];
+    const plate = String(row.plate ?? '');
+    return res.json({ authentic: true, reportKind: 'VEHICLE_QUERY', reportVersion: 1, documentCode: code, createdAt: row.created_at, status: 'VALID', hash: row.result_hash, plate: plate ? `${plate.slice(0, 3)}***${plate.slice(-2)}` : null, fipeReferenceMonth: null });
 }));
 api.get('/query-products', auth, asyncRoute(async (_req, res) => {
     const products = await pool.query(`SELECT id,name,description,credit_cost,slug,features,display_order,is_free,source,coverage,commercial_status,featured
@@ -953,7 +981,8 @@ api.post('/payments/checkout', auth, requirePermission('BUY_CREDITS'), asyncRout
     const parsed = checkoutSchema.safeParse(req.body);
     if (!parsed.success)
         throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
-    if (!isAsaasCheckoutConfigured())
+    const paymentProvider = getPaymentProvider();
+    if (!paymentProvider.isConfigured())
         throw appError('PAYMENT_PROVIDER_NOT_CONFIGURED', { code: 'PAYMENT_PROVIDER_NOT_CONFIGURED', http: 503, expose: true });
     const draft = await tx(async (client) => {
         const pack = await client.query('SELECT id,slug,name,description,credits,price_cents FROM credit_packages WHERE slug=$1 AND active=true', [parsed.data.packageSlug]);
@@ -964,11 +993,11 @@ api.post('/payments/checkout', auth, requirePermission('BUY_CREDITS'), asyncRout
             throw appError('AUTH_REQUIRED', { code: 'AUTH_REQUIRED', http: 401, expose: true });
         const externalReference = `carpivara_${crypto.randomUUID()}`;
         const order = await client.query(`INSERT INTO payment_orders(user_id,package_id,status,amount_cents,credits,provider,external_reference)
-      VALUES($1,$2,'CREATED',$3,$4,'asaas',$5) RETURNING id`, [req.user.id, pack.rows[0].id, pack.rows[0].price_cents, pack.rows[0].credits, externalReference]);
+      VALUES($1,$2,'CREATED',$3,$4,$5,$6) RETURNING id`, [req.user.id, pack.rows[0].id, pack.rows[0].price_cents, pack.rows[0].credits, paymentProvider.name, externalReference]);
         return { orderId: order.rows[0].id, externalReference, pack: pack.rows[0], customer: profile.rows[0] };
     });
     try {
-        const checkout = await createAsaasCheckout({
+        const checkout = await paymentProvider.createCheckout({
             orderId: draft.externalReference,
             itemName: String(draft.pack.name),
             itemDescription: String(draft.pack.description),
@@ -977,33 +1006,54 @@ api.post('/payments/checkout', auth, requirePermission('BUY_CREDITS'), asyncRout
         });
         await pool.query(`UPDATE payment_orders SET status='CHECKOUT_ACTIVE',provider_checkout_id=$2,checkout_url=$3,updated_at=now() WHERE id=$1`, [draft.orderId, checkout.id, checkout.link]);
         await audit(req.user.id, 'CREATE_PAYMENT_CHECKOUT', 'PAYMENT_ORDER', draft.orderId, { packageSlug: parsed.data.packageSlug, requestId: requestId(req) });
-        res.status(201).json({ orderId: draft.orderId, checkoutUrl: checkout.link, provider: 'asaas' });
+        res.status(201).json({ orderId: draft.orderId, checkoutUrl: checkout.link, provider: paymentProvider.name });
     }
     catch (error) {
         await pool.query(`UPDATE payment_orders SET status='FAILED',updated_at=now() WHERE id=$1`, [draft.orderId]);
         throw error;
     }
 }));
-api.post('/payments/asaas/webhook', asyncRoute(async (req, res) => {
-    const header = typeof req.headers['asaas-access-token'] === 'string' ? req.headers['asaas-access-token'] : undefined;
-    if (!hasValidAsaasWebhookToken(header))
+async function processPaymentWebhook(providerName, req, res) {
+    const provider = getPaymentProviderFor(providerName);
+    if (!provider.isConfigured())
+        throw appError('PAYMENT_PROVIDER_NOT_CONFIGURED', { code: 'PAYMENT_PROVIDER_NOT_CONFIGURED', http: 503, expose: false });
+    const rawRequest = req;
+    if (!provider.isValidWebhookSignature({ headers: req.headers, rawBody: rawRequest.rawBody, query: req.query })) {
         throw appError('PAYMENT_WEBHOOK_UNAUTHORIZED', { code: 'PAYMENT_WEBHOOK_UNAUTHORIZED', http: 401, expose: false });
-    const event = req.body;
-    const eventId = typeof event?.id === 'string' ? event.id : '';
-    const eventType = typeof event?.event === 'string' ? event.event : '';
-    if (!eventId || !eventType)
+    }
+    const parsed = provider.parseWebhookEvent(req.body, req.query);
+    if (!parsed || (providerName === 'mercadopago' && !parsed.externalPaymentId)) {
         throw appError('PAYMENT_WEBHOOK_INVALID', { code: 'PAYMENT_WEBHOOK_INVALID', http: 400, expose: false });
-    const reference = eventReference(event);
-    const paymentExternalId = externalPaymentId(event);
+    }
+    let reference = parsed.externalReference;
+    let rawStatus = parsed.rawStatus;
+    if (provider.fetchPaymentStatus && parsed.externalPaymentId) {
+        const payment = await provider.fetchPaymentStatus(parsed.externalPaymentId);
+        if (!payment)
+            throw appError('PAYMENT_PROVIDER_REQUEST_FAILED', { code: 'PAYMENT_PROVIDER_REQUEST_FAILED', http: 502, expose: false });
+        reference ??= payment.externalReference ?? null;
+        rawStatus = payment.status;
+    }
+    const event = req.body;
+    const asaasEventId = typeof event.id === 'string' ? event.id : '';
+    const eventType = providerName === 'mercadopago' ? `payment.${rawStatus ?? 'unknown'}` : rawStatus ?? '';
+    const eventId = providerName === 'mercadopago'
+        ? `payment:${parsed.externalPaymentId}:${rawStatus ?? 'unknown'}`
+        : asaasEventId;
+    if (!eventId || !eventType || (!reference && !parsed.externalPaymentId)) {
+        throw appError('PAYMENT_WEBHOOK_INVALID', { code: 'PAYMENT_WEBHOOK_INVALID', http: 400, expose: false });
+    }
     let duplicate = false;
     await tx(async (client) => {
         const inserted = await client.query(`INSERT INTO payment_webhook_events(provider,provider_event_id,event_type,payload)
-      VALUES('asaas',$1,$2,$3::jsonb) ON CONFLICT(provider,provider_event_id) DO NOTHING RETURNING id`, [eventId, eventType, JSON.stringify({ id: eventId, event: eventType, reference, externalId: paymentExternalId })]);
+      VALUES($1,$2,$3,$4::jsonb) ON CONFLICT(provider,provider_event_id) DO NOTHING RETURNING id`, [providerName, eventId, eventType, JSON.stringify({ id: eventId, event: eventType, reference, externalId: parsed.externalPaymentId })]);
         if (!inserted.rowCount) {
             duplicate = true;
             return;
         }
-        const order = reference ? await client.query('SELECT * FROM payment_orders WHERE external_reference=$1 FOR UPDATE', [reference]) : await client.query('SELECT * FROM payment_orders WHERE provider_checkout_id=$1 FOR UPDATE', [paymentExternalId]);
+        const order = reference
+            ? await client.query('SELECT * FROM payment_orders WHERE external_reference=$1 FOR UPDATE', [reference])
+            : await client.query('SELECT * FROM payment_orders WHERE provider_checkout_id=$1 FOR UPDATE', [parsed.externalPaymentId]);
         if (!order.rowCount) {
             await client.query('UPDATE payment_webhook_events SET processing_error=$2,processed_at=now() WHERE id=$1', [inserted.rows[0].id, 'ORDER_NOT_FOUND']);
             return;
@@ -1011,26 +1061,37 @@ api.post('/payments/asaas/webhook', asyncRoute(async (req, res) => {
         const current = order.rows[0];
         const orderId = String(current.id);
         await client.query('UPDATE payment_webhook_events SET order_id=$2 WHERE id=$1', [inserted.rows[0].id, orderId]);
-        const paid = eventType === 'CHECKOUT_PAID' || eventType === 'PAYMENT_RECEIVED';
+        const normalizedStatus = String(rawStatus ?? '').toUpperCase();
+        const paid = providerName === 'mercadopago'
+            ? normalizedStatus === 'APPROVED'
+            : normalizedStatus === 'CHECKOUT_PAID' || normalizedStatus === 'PAYMENT_RECEIVED';
         if (paid && current.status !== 'PAID') {
             const wallet = await client.query('SELECT balance FROM wallets WHERE user_id=$1 FOR UPDATE', [current.user_id]);
             const before = Number(wallet.rows[0]?.balance ?? 0);
             const credits = Number(current.credits);
             const after = before + credits;
             const payment = await client.query(`INSERT INTO payments(user_id,provider,status,amount_cents,credits,external_id,order_id,paid_at,provider_status,metadata)
-        VALUES($1,'asaas','PAID',$2,$3,$4,$5,now(),$6,$7::jsonb) RETURNING id`, [current.user_id, current.amount_cents, credits, paymentExternalId, orderId, eventType, JSON.stringify({ eventId })]);
+        VALUES($1,$2,'PAID',$3,$4,$5,$6,now(),$7,$8::jsonb) RETURNING id`, [current.user_id, providerName, current.amount_cents, credits, parsed.externalPaymentId, orderId, rawStatus, JSON.stringify({ eventId })]);
             await client.query('INSERT INTO wallets(user_id,balance) VALUES($1,$2) ON CONFLICT(user_id) DO UPDATE SET balance=EXCLUDED.balance,updated_at=now()', [current.user_id, after]);
             await client.query(`INSERT INTO wallet_transactions(user_id,kind,amount,balance_before,balance_after,payment_id,description,metadata)
-        VALUES($1,'PURCHASE',$2,$3,$4,$5,$6,$7::jsonb)`, [current.user_id, credits, before, after, payment.rows[0].id, `Créditos adquiridos via Asaas`, JSON.stringify({ orderId, eventId })]);
+        VALUES($1,'PURCHASE',$2,$3,$4,$5,$6,$7::jsonb)`, [current.user_id, credits, before, after, payment.rows[0].id, `Créditos adquiridos via ${providerName}`, JSON.stringify({ orderId, eventId })]);
             await client.query(`UPDATE payment_orders SET status='PAID',paid_at=now(),updated_at=now() WHERE id=$1`, [orderId]);
         }
         else if (!paid && current.status !== 'PAID') {
-            const mapped = eventType.includes('EXPIRED') ? 'EXPIRED' : eventType.includes('CANCEL') ? 'CANCELLED' : eventType.includes('REFUND') ? 'REFUNDED' : 'CHECKOUT_ACTIVE';
+            const mapped = normalizedStatus.includes('EXPIRED') ? 'EXPIRED'
+                : normalizedStatus.includes('CANCEL') || normalizedStatus.includes('REJECT') ? 'CANCELLED'
+                    : normalizedStatus.includes('REFUND') ? 'REFUNDED' : 'CHECKOUT_ACTIVE';
             await client.query('UPDATE payment_orders SET status=$2,updated_at=now() WHERE id=$1', [orderId, mapped]);
         }
         await client.query('UPDATE payment_webhook_events SET processed_at=now() WHERE id=$1', [inserted.rows[0].id]);
     });
     res.status(200).json({ received: true, duplicate });
+}
+api.post('/payments/asaas/webhook', asyncRoute(async (req, res) => {
+    await processPaymentWebhook('asaas', req, res);
+}));
+api.post('/payments/mercadopago/webhook', asyncRoute(async (req, res) => {
+    await processPaymentWebhook('mercadopago', req, res);
 }));
 api.get('/admin/overview', auth, requirePermission('VIEW_AUDIT'), asyncRoute(async (_req, res) => {
     const summary = await pool.query(`SELECT

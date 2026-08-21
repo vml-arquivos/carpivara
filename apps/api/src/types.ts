@@ -6,6 +6,7 @@ export type NormalizedVehicle = {
   debts: { key:string; label:string; amountCents:number; hasDebt:boolean }[];
   restrictions: { key:string; label:string; status:string; alert:boolean }[];
   recall?:string;
+  coverage?: { identification: 'FOUND' | 'NOT_QUERIED'; debts: 'FOUND' | 'NOT_QUERIED'; restrictions: 'FOUND' | 'NOT_QUERIED'; recall: 'FOUND' | 'NOT_QUERIED' };
 };
 
 export type FipeVehicleType = 'cars' | 'motorcycles' | 'trucks';

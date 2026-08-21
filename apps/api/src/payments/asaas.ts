@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { env, publicAppUrl } from '../config.js';
+import type { CheckoutInput, CheckoutResult, PaymentCheckoutProvider, PaymentWebhookEvent, PaymentWebhookRequest } from './types.js';
 
 export type AsaasCheckoutInput = {
   orderId: string;
@@ -100,4 +101,35 @@ export function eventReference(event: AsaasWebhookEvent): string | null {
 
 export function externalPaymentId(event: AsaasWebhookEvent): string | null {
   return event.checkout?.id ?? event.payment?.id ?? null;
+}
+
+export class AsaasProvider implements PaymentCheckoutProvider {
+  readonly name = 'asaas';
+
+  isConfigured(): boolean {
+    return isAsaasCheckoutConfigured();
+  }
+
+  createCheckout(input: CheckoutInput): Promise<CheckoutResult> {
+    return createAsaasCheckout(input);
+  }
+
+  isValidWebhookSignature(request: PaymentWebhookRequest): boolean {
+    const value = request.headers['asaas-access-token'];
+    const header = Array.isArray(value) ? value[0] : value;
+    return hasValidAsaasWebhookToken(header);
+  }
+
+  parseWebhookEvent(payload: unknown): PaymentWebhookEvent | null {
+    const event = payload as AsaasWebhookEvent;
+    const externalReference = eventReference(event);
+    const paymentId = externalPaymentId(event);
+    const rawStatus = typeof event.event === 'string' ? event.event : null;
+    if (!externalReference && !paymentId) return null;
+    return { externalReference, externalPaymentId: paymentId, rawStatus };
+  }
+}
+
+export function createAsaasProvider(): PaymentCheckoutProvider {
+  return new AsaasProvider();
 }

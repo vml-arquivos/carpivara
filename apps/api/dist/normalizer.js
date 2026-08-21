@@ -61,6 +61,27 @@ export function normalizeBdrp(raw) {
     const fullModel = text(valueOf(raw, ['MARCAMODELOCOMPLETO', 'marcaModeloCompleto', 'marcaModelo', 'marca_modelo', 'fullModel', 'fullVehicleModel']));
     if (!plate || (!brand && !model && !fullModel))
         throw new Error('Resposta do provedor inválida');
+    const debtAliases = [
+        ['VALORTOTALDEBITOMULTA', 'valorTotalDebitoMulta', 'finesAmount'],
+        ['EXISTEDEBITODELICENCIAMENTOVL', 'debitoLicenciamento', 'licensingDebt'],
+        ['DEBIPVA', 'debitoIpva', 'ipvaDebt'],
+        ['DEBDETRAN', 'debitoDetran'],
+        ['DEBDER', 'debitoDer'],
+        ['DEBPOLRODFED', 'debitoPrf'],
+        ['DEBRENAINF', 'debitoRenainf'],
+        ['DEBMUNICIPAIS', 'debitoMunicipal']
+    ];
+    const restrictionAliases = [
+        ['RESFURTO', 'furtoRoubo', 'theftRestriction'],
+        ['RESJUDICIAL', 'restricaoJudicial', 'judicialRestriction'],
+        ['RESRENAJUD', 'renajud'],
+        ['RESADMINISTRATIVA', 'restricaoAdministrativa'],
+        ['RESTRIBUTARIA', 'restricaoTributaria'],
+        ['RESTRICAOFINAN', 'restricaoFinanceira'],
+        ['RESTRICAORFB', 'restricaoReceitaFederal'],
+        ['RESAMBIENTAL', 'restricaoAmbiental']
+    ];
+    const recall = text(valueOf(raw, ['RECALL', 'recall']));
     return {
         identification: {
             plate,
@@ -101,26 +122,32 @@ export function normalizeBdrp(raw) {
             documentType: text(valueOf(raw, ['TIPODOCUMENTOPROPRIETARIO', 'tipoDocumentoProprietario', 'ownerDocumentType']))
         },
         debts: [
-            ['MULTAS', 'Multas', valueOf(raw, ['VALORTOTALDEBITOMULTA', 'valorTotalDebitoMulta', 'finesAmount'])],
-            ['LICENCIAMENTO', 'Licenciamento', valueOf(raw, ['EXISTEDEBITODELICENCIAMENTOVL', 'debitoLicenciamento', 'licensingDebt'])],
-            ['IPVA', 'IPVA', valueOf(raw, ['DEBIPVA', 'debitoIpva', 'ipvaDebt'])],
-            ['DETRAN', 'DETRAN', valueOf(raw, ['DEBDETRAN', 'debitoDetran'])],
-            ['DER', 'DER', valueOf(raw, ['DEBDER', 'debitoDer'])],
-            ['PRF', 'Polícia Rodoviária Federal', valueOf(raw, ['DEBPOLRODFED', 'debitoPrf'])],
-            ['RENAINF', 'RENAINF', valueOf(raw, ['DEBRENAINF', 'debitoRenainf'])],
-            ['MUNICIPAIS', 'Débitos municipais', valueOf(raw, ['DEBMUNICIPAIS', 'debitoMunicipal'])]
-        ].map(([debtKey, label, value]) => ({ key: String(debtKey), label: String(label), amountCents: cents(value), hasDebt: cents(value) > 0 })),
+            ['MULTAS', 'Multas', debtAliases[0]],
+            ['LICENCIAMENTO', 'Licenciamento', debtAliases[1]],
+            ['IPVA', 'IPVA', debtAliases[2]],
+            ['DETRAN', 'DETRAN', debtAliases[3]],
+            ['DER', 'DER', debtAliases[4]],
+            ['PRF', 'Polícia Rodoviária Federal', debtAliases[5]],
+            ['RENAINF', 'RENAINF', debtAliases[6]],
+            ['MUNICIPAIS', 'Débitos municipais', debtAliases[7]]
+        ].map(([debtKey, label, aliases]) => { const value = valueOf(raw, aliases); return { key: String(debtKey), label: String(label), amountCents: cents(value), hasDebt: cents(value) > 0 }; }),
         restrictions: [
-            ['FURTO', 'Furto/Roubo', valueOf(raw, ['RESFURTO', 'furtoRoubo', 'theftRestriction'])],
-            ['JUDICIAL', 'Judicial', valueOf(raw, ['RESJUDICIAL', 'restricaoJudicial', 'judicialRestriction'])],
-            ['RENAJUD', 'RENAJUD', valueOf(raw, ['RESRENAJUD', 'renajud'])],
-            ['ADMIN', 'Administrativa', valueOf(raw, ['RESADMINISTRATIVA', 'restricaoAdministrativa'])],
-            ['TRIBUTARIA', 'Tributária', valueOf(raw, ['RESTRIBUTARIA', 'restricaoTributaria'])],
-            ['FINANCEIRA', 'Financeira', valueOf(raw, ['RESTRICAOFINAN', 'restricaoFinanceira'])],
-            ['RFB', 'Receita Federal', valueOf(raw, ['RESTRICAORFB', 'restricaoReceitaFederal'])],
-            ['AMBIENTAL', 'Ambiental', valueOf(raw, ['RESAMBIENTAL', 'restricaoAmbiental'])]
-        ].map(([restrictionKey, label, status]) => ({ key: String(restrictionKey), label: String(label), status: text(status) ?? 'SEM INFORMACAO', alert: !ok(status) })),
-        recall: text(valueOf(raw, ['RECALL', 'recall']))
+            ['FURTO', 'Furto/Roubo', restrictionAliases[0]],
+            ['JUDICIAL', 'Judicial', restrictionAliases[1]],
+            ['RENAJUD', 'RENAJUD', restrictionAliases[2]],
+            ['ADMIN', 'Administrativa', restrictionAliases[3]],
+            ['TRIBUTARIA', 'Tributária', restrictionAliases[4]],
+            ['FINANCEIRA', 'Financeira', restrictionAliases[5]],
+            ['RFB', 'Receita Federal', restrictionAliases[6]],
+            ['AMBIENTAL', 'Ambiental', restrictionAliases[7]]
+        ].map(([restrictionKey, label, aliases]) => { const status = valueOf(raw, aliases); return { key: String(restrictionKey), label: String(label), status: text(status) ?? 'SEM INFORMACAO', alert: !ok(status) }; }),
+        recall,
+        coverage: {
+            identification: 'FOUND',
+            debts: debtAliases.some((aliases) => valueOf(raw, aliases) !== undefined) ? 'FOUND' : 'NOT_QUERIED',
+            restrictions: restrictionAliases.some((aliases) => valueOf(raw, aliases) !== undefined) ? 'FOUND' : 'NOT_QUERIED',
+            recall: recall ? 'FOUND' : 'NOT_QUERIED'
+        }
     };
 }
 export function normalizeFipe(raw) {

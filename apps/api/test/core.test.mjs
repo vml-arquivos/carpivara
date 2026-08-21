@@ -29,6 +29,7 @@ test('normaliza valores monetários e mantém dados de relatório independentes 
   assert.equal(report.debts.find((item) => item.key === 'IPVA')?.amountCents, 182500);
   assert.equal(report.debts.find((item) => item.key === 'MULTAS')?.amountCents, 45900);
   assert.equal(report.restrictions.every((item) => !item.alert), true);
+  assert.deepEqual(report.coverage, { identification: 'FOUND', debts: 'FOUND', restrictions: 'FOUND', recall: 'FOUND' });
 });
 
 test('normaliza resposta veicular da APIBrasil sem exigir campos de relatório completo', () => {
@@ -56,6 +57,11 @@ test('normaliza resposta veicular da APIBrasil sem exigir campos de relatório c
   assert.equal(report.characteristics.fuel, 'FLEX');
   assert.equal(report.registration.city, 'BRASILIA');
   assert.equal(report.registration.state, 'DF');
+});
+
+test('marca como não consultados os blocos ausentes no retorno', () => {
+  const report = normalizeBdrp({ placa: 'JIW6972', data: { marca: 'VOLKSWAGEN', modelo: 'GOL 1.0', marcaModelo: 'VOLKSWAGEN GOL 1.0' } });
+  assert.deepEqual(report.coverage, { identification: 'FOUND', debts: 'NOT_QUERIED', restrictions: 'NOT_QUERIED', recall: 'NOT_QUERIED' });
 });
 
 test('sinaliza restrição material sem depender apenas da apresentação', () => {

@@ -73,3 +73,29 @@ export function eventReference(event) {
 export function externalPaymentId(event) {
     return event.checkout?.id ?? event.payment?.id ?? null;
 }
+export class AsaasProvider {
+    name = 'asaas';
+    isConfigured() {
+        return isAsaasCheckoutConfigured();
+    }
+    createCheckout(input) {
+        return createAsaasCheckout(input);
+    }
+    isValidWebhookSignature(request) {
+        const value = request.headers['asaas-access-token'];
+        const header = Array.isArray(value) ? value[0] : value;
+        return hasValidAsaasWebhookToken(header);
+    }
+    parseWebhookEvent(payload) {
+        const event = payload;
+        const externalReference = eventReference(event);
+        const paymentId = externalPaymentId(event);
+        const rawStatus = typeof event.event === 'string' ? event.event : null;
+        if (!externalReference && !paymentId)
+            return null;
+        return { externalReference, externalPaymentId: paymentId, rawStatus };
+    }
+}
+export function createAsaasProvider() {
+    return new AsaasProvider();
+}
