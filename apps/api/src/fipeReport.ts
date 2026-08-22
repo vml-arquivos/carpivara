@@ -82,9 +82,19 @@ function vehicleLines(details?: FipeVehicleDetails): string[] {
   return entries.filter(([, value]) => Boolean(value)).map(([label, value]) => `${label}: ${value}`);
 }
 
-export function fipePdf(quote: FipeQuote): Buffer {
+export type ReportBranding = { name?: string; primaryColor?: string; accentColor?: string; logoUrl?: string };
+
+function brandingColor(value: string | undefined, fallback: string): string {
+  return value && /^#[0-9A-Fa-f]{6}$/.test(value) ? value : fallback;
+}
+
+function brandingLogo(branding: ReportBranding): string {
+  return branding.logoUrl && /^https?:\/\//i.test(branding.logoUrl) ? branding.logoUrl : '';
+}
+
+export function fipePdf(quote: FipeQuote, branding: ReportBranding = {}): Buffer {
   const lines = [
-    'CARPIVARA — CONSULTA ZERO',
+    stripAccents(branding.name || 'BUSCARR') + ' — CONSULTA ZERO',
     'Relatorio gratuito de valor medio FIPE',
     `Documento: ${quote.documentCode}`,
     `Validacao: ${quote.reportHash.slice(0, 24)}`,
@@ -132,15 +142,19 @@ export function fipePdf(quote: FipeQuote): Buffer {
   return Buffer.from(pdf, 'latin1');
 }
 
-export function fipePrintHtml(quote: FipeQuote): string {
+export function fipePrintHtml(quote: FipeQuote, branding: ReportBranding = {}): string {
+  const primaryColor = brandingColor(branding.primaryColor, '#168579');
+  const accentColor = brandingColor(branding.accentColor, '#C99A3D');
+  const logoUrl = brandingLogo(branding);
+  const logo = logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt="" style="max-height:42px;max-width:220px;object-fit:contain;margin-bottom:8px">` : '';
   const blocks = quote.blocks.map((block) => `<li><strong>${escapeHtml(block.label)}</strong>: ${escapeHtml(block.message)}</li>`).join('');
   const details = vehicleLines(quote.vehicleDetails).map((line) => {
     const separator = line.indexOf(':');
     return `<div><span>${escapeHtml(separator > 0 ? line.slice(0, separator) : 'Informação')}</span><strong>${escapeHtml(separator > 0 ? line.slice(separator + 1).trim() : line)}</strong></div>`;
   }).join('');
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Consulta zero ${escapeHtml(quote.documentCode)}</title><style>
-  @page{size:A4;margin:18mm}body{font-family:Arial,sans-serif;color:#1f2937;line-height:1.45;max-width:760px;margin:0 auto}header{border-bottom:3px solid #0f766e;padding-bottom:12px;margin-bottom:22px}h1{font-size:22px;margin:0;color:#0f766e}h2{font-size:15px;margin-top:24px;color:#0f766e}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.card{border:1px solid #d1d5db;border-radius:8px;padding:12px}.details{display:grid;grid-template-columns:1fr 1fr;gap:8px}.details div{border:1px solid #e5e7eb;border-radius:6px;padding:8px}.details span{display:block;color:#6b7280;font-size:11px}.details strong{display:block;margin-top:3px;font-size:13px}.muted{color:#6b7280;font-size:12px}ul{padding-left:18px}.notice{background:#f0fdfa;border-left:4px solid #0f766e;padding:12px}.print{margin:20px 0;padding:10px 16px;border:0;background:#0f766e;color:white;border-radius:6px}@media print{.print{display:none}.card,.details div{break-inside:avoid}}@media(max-width:560px){.details{grid-template-columns:1fr}}
-  </style></head><body><header><h1>Carpivara — Consulta zero</h1><div class="muted">Documento ${escapeHtml(quote.documentCode)} · Validação ${escapeHtml(quote.reportHash)}</div></header><h2>Identificação do veículo</h2><div class="details">${details || '<div><span>Identificação</span><strong>Não informada</strong></div>'}</div><h2>Dados FIPE</h2><div class="grid"><div class="card"><strong>Veículo FIPE</strong><br>${escapeHtml(quote.brand.name)} / ${escapeHtml(quote.model.name)}<br>Ano: ${escapeHtml(quote.year.name)}<br>Combustível: ${escapeHtml(quote.fuel || 'Não informado')}</div><div class="card"><strong>Valor FIPE vigente</strong><br><span style="font-size:24px">${escapeHtml(quote.valueLabel)}</span><br>Referência: ${escapeHtml(quote.referenceMonth)}<br>Código: ${escapeHtml(quote.fipeCode)}</div></div><p class="muted">Consulta realizada em ${escapeHtml(new Date(quote.consultedAt).toLocaleString('pt-BR'))}</p><h2>Estimativa informativa</h2><p>${escapeHtml(formatCents(quote.estimatedNegotiation?.minCents ?? 0))} a ${escapeHtml(quote.estimatedNegotiation?.maxCents ?? 0)}. ${escapeHtml(quote.estimatedNegotiation?.disclaimer)}</p><h2>O que a Consulta zero não verifica</h2><div class="notice">A FIPE informa o valor médio, mas não verifica gravame, restrições, débitos, roubo/furto, leilão ou sinistro. Para uma análise documental completa, avance para a consulta completa.</div><h2>Resumo da cobertura</h2><ul>${blocks}</ul><p class="muted">Validação pública: /validar-relatorio/${escapeHtml(quote.documentCode)}</p><button class="print" onclick="window.print()">Imprimir</button></body></html>`;
+  @page{size:A4;margin:18mm}body{font-family:Arial,sans-serif;color:#1f2937;line-height:1.45;max-width:760px;margin:0 auto}header{border-bottom:3px solid ${escapeHtml(primaryColor)};padding-bottom:12px;margin-bottom:22px}h1{font-size:22px;margin:0;color:${escapeHtml(primaryColor)}}h2{font-size:15px;margin-top:24px;color:${escapeHtml(primaryColor)}}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.card{border:1px solid #d1d5db;border-radius:8px;padding:12px}.details{display:grid;grid-template-columns:1fr 1fr;gap:8px}.details div{border:1px solid #e5e7eb;border-radius:6px;padding:8px}.details span{display:block;color:#6b7280;font-size:11px}.details strong{display:block;margin-top:3px;font-size:13px}.muted{color:#6b7280;font-size:12px}ul{padding-left:18px}.notice{background:#f0fdfa;border-left:4px solid ${escapeHtml(accentColor)};padding:12px}.print{margin:20px 0;padding:10px 16px;border:0;background:${escapeHtml(primaryColor)};color:white;border-radius:6px}@media print{.print{display:none}.card,.details div{break-inside:avoid}}@media(max-width:560px){.details{grid-template-columns:1fr}}
+  </style></head><body><header>${logo}<h1>${escapeHtml(branding.name || 'BUSCARR')} — Consulta zero</h1><div class="muted">Documento ${escapeHtml(quote.documentCode)} · Validação ${escapeHtml(quote.reportHash)}</div></header><h2>Identificação do veículo</h2><div class="details">${details || '<div><span>Identificação</span><strong>Não informada</strong></div>'}</div><h2>Dados FIPE</h2><div class="grid"><div class="card"><strong>Veículo FIPE</strong><br>${escapeHtml(quote.brand.name)} / ${escapeHtml(quote.model.name)}<br>Ano: ${escapeHtml(quote.year.name)}<br>Combustível: ${escapeHtml(quote.fuel || 'Não informado')}</div><div class="card"><strong>Valor FIPE vigente</strong><br><span style="font-size:24px">${escapeHtml(quote.valueLabel)}</span><br>Referência: ${escapeHtml(quote.referenceMonth)}<br>Código: ${escapeHtml(quote.fipeCode)}</div></div><p class="muted">Consulta realizada em ${escapeHtml(new Date(quote.consultedAt).toLocaleString('pt-BR'))}</p><h2>Estimativa informativa</h2><p>${escapeHtml(formatCents(quote.estimatedNegotiation?.minCents ?? 0))} a ${escapeHtml(quote.estimatedNegotiation?.maxCents ?? 0)}. ${escapeHtml(quote.estimatedNegotiation?.disclaimer)}</p><h2>O que a Consulta zero não verifica</h2><div class="notice">A FIPE informa o valor médio, mas não verifica gravame, restrições, débitos, roubo/furto, leilão ou sinistro. Para uma análise documental completa, avance para a consulta completa.</div><h2>Resumo da cobertura</h2><ul>${blocks}</ul><p class="muted">Validação pública: /validar-relatorio/${escapeHtml(quote.documentCode)}</p><button class="print" onclick="window.print()">Imprimir</button></body></html>`;
 }
 
 function formatCents(cents: number): string {

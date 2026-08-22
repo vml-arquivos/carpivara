@@ -358,6 +358,97 @@ const migrations: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_active ON password_reset_tokens(token_hash, expires_at) WHERE used_at IS NULL;
       `);
     }
+  },
+  {
+    id: '007_admin_commercial_controls',
+    name: 'Admin series, coupons, affiliates and organization branding',
+    async up(client) {
+      await client.query(`
+        ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS subtotal_cents integer;
+        ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS discount_cents integer NOT NULL DEFAULT 0;
+        ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS coupon_id uuid;
+        ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS affiliate_id uuid;
+        ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS affiliate_commission_bps integer NOT NULL DEFAULT 0;
+        ALTER TABLE organizations ADD COLUMN IF NOT EXISTS slug text;
+        ALTER TABLE organizations ADD COLUMN IF NOT EXISTS primary_color text;
+        ALTER TABLE organizations ADD COLUMN IF NOT EXISTS accent_color text;
+        ALTER TABLE organizations ADD COLUMN IF NOT EXISTS logo_url text;
+        ALTER TABLE organizations ADD COLUMN IF NOT EXISTS custom_domain text;
+        ALTER TABLE organizations ADD COLUMN IF NOT EXISTS settings jsonb NOT NULL DEFAULT '{}'::jsonb;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_organizations_slug ON organizations(slug) WHERE slug IS NOT NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_organizations_custom_domain ON organizations(custom_domain) WHERE custom_domain IS NOT NULL;
+        CREATE TABLE IF NOT EXISTS platform_settings (
+          key text PRIMARY KEY,
+          value jsonb NOT NULL DEFAULT '{}'::jsonb,
+          updated_by uuid REFERENCES users(id),
+          updated_at timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE TABLE IF NOT EXISTS coupons (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          code text NOT NULL UNIQUE,
+          discount_type text NOT NULL CHECK (discount_type IN ('PERCENT','FIXED')),
+          discount_value integer NOT NULL CHECK (discount_value > 0),
+          max_redemptions integer CHECK (max_redemptions IS NULL OR max_redemptions > 0),
+          redeemed_count integer NOT NULL DEFAULT 0,
+          starts_at timestamptz,
+          expires_at timestamptz,
+          active boolean NOT NULL DEFAULT true,
+          created_by uuid REFERENCES users(id),
+          created_at timestamptz NOT NULL DEFAULT now(),
+          updated_at timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE TABLE IF NOT EXISTS affiliates (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id uuid REFERENCES users(id) ON DELETE SET NULL,
+          name text NOT NULL,
+          email text,
+          code text NOT NULL UNIQUE,
+          commission_bps integer NOT NULL DEFAULT 1000 CHECK (commission_bps >= 0 AND commission_bps <= 5000),
+          active boolean NOT NULL DEFAULT true,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          updated_at timestamptz NOT NULL DEFAULT now()
+        );
+        ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS user_id uuid REFERENCES users(id) ON DELETE SET NULL;
+        CREATE TABLE IF NOT EXISTS affiliate_commissions (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          affiliate_id uuid NOT NULL REFERENCES affiliates(id),
+          payment_id uuid UNIQUE REFERENCES payments(id),
+          order_id uuid REFERENCES payment_orders(id),
+          amount_cents integer NOT NULL CHECK (amount_cents >= 0),
+          status text NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','PAID','CANCELLED')),
+          created_at timestamptz NOT NULL DEFAULT now(),
+          paid_at timestamptz
+        );
+        CREATE TABLE IF NOT EXISTS coupon_redemptions (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          coupon_id uuid NOT NULL REFERENCES coupons(id) ON DELETE CASCADE,
+          payment_order_id uuid NOT NULL UNIQUE REFERENCES payment_orders(id) ON DELETE CASCADE,
+          status text NOT NULL DEFAULT 'RESERVED' CHECK (status IN ('RESERVED','REDEEMED','RELEASED')),
+          created_at timestamptz NOT NULL DEFAULT now(),
+          updated_at timestamptz NOT NULL DEFAULT now(),
+          redeemed_at timestamptz
+        );
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_payment_orders_coupon') THEN
+            ALTER TABLE payment_orders ADD CONSTRAINT fk_payment_orders_coupon FOREIGN KEY (coupon_id) REFERENCES coupons(id);
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_payment_orders_affiliate') THEN
+            ALTER TABLE payment_orders ADD CONSTRAINT fk_payment_orders_affiliate FOREIGN KEY (affiliate_id) REFERENCES affiliates(id);
+          END IF;
+        END $$;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_coupons_code_upper ON coupons(upper(code));
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_affiliates_code_upper ON affiliates(upper(code));
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_affiliates_user ON affiliates(user_id) WHERE user_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_payment_orders_coupon ON payment_orders(coupon_id);
+        CREATE INDEX IF NOT EXISTS idx_payment_orders_affiliate ON payment_orders(affiliate_id);
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS affiliate_id uuid REFERENCES affiliates(id);
+        CREATE INDEX IF NOT EXISTS idx_affiliate_commissions_affiliate ON affiliate_commissions(affiliate_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_coupons_active_window ON coupons(active, starts_at, expires_at);
+        CREATE INDEX IF NOT EXISTS idx_coupon_redemptions_coupon_status ON coupon_redemptions(coupon_id, status);
+        CREATE INDEX IF NOT EXISTS idx_users_affiliate ON users(affiliate_id);
+        CREATE INDEX IF NOT EXISTS idx_organization_members_org_user ON organization_members(organization_id, user_id);
+      `);
+    }
   }
 ];
 

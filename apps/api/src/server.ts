@@ -19,11 +19,12 @@ import { normalizeBdrp } from './normalizer.js';
 import { hasPermission, permissionsFor, requirePermission } from './permissions.js';
 import { getProvider } from './providers/index.js';
 import { getFipeProvider, quoteWithFallback, type FipeCatalogProvider } from './providers/fipeProvider.js';
-import { fipePdf, fipePrintHtml, makeFipeQuote, reportSnapshot } from './fipeReport.js';
+import { fipePdf, fipePrintHtml, makeFipeQuote, reportSnapshot, type ReportBranding } from './fipeReport.js';
 import { getPaymentProvider, getPaymentProviderFor, type PaymentProviderName } from './payments/index.js';
 import { ensureSchema } from './schema.js';
 import { performAdminLookup } from './adminLookup.js';
 import { executeVehicleLookup } from './vehicleLookup.js';
+import { calculateAffiliateCommission, calculateCouponDiscount, couponHasCapacity, couponWindowIsOpen } from './commercial.js';
 import type { FipeQuote, FipeSelectionItem, FipeVehicleDetails, FipeVehicleType, NormalizedVehicle } from './types.js';
 
 await ensureSchema();
@@ -37,7 +38,8 @@ const registerSchema = z.object({
   password: z.string().min(10).max(128),
   acceptTerms: z.literal(true),
   acceptPrivacy: z.literal(true),
-  marketingOptIn: z.boolean().optional().default(false)
+  marketingOptIn: z.boolean().optional().default(false),
+  affiliateCode: z.string().trim().min(3).max(40).optional()
 });
 const oauthTicketSchema = z.object({ ticket: z.string().regex(/^[A-Za-z0-9_-]{30,160}$/) });
 const loginSchema = z.object({ email: z.string().trim().email().max(254), password: z.string().min(1).max(128) });
@@ -78,8 +80,23 @@ const adminWalletAdjustmentSchema = z.object({
   amount: z.number().int().min(-100000).max(100000).refine((value) => value !== 0, 'ZERO_ADJUSTMENT'),
   description: z.string().trim().min(8).max(280)
 });
-const checkoutSchema = z.object({ packageSlug: z.string().trim().min(2).max(80) });
-const planInterestSchema = z.object({ email: z.string().trim().email().max(254), plan: z.enum(['PREMIUM', 'RISK']) });
+  const checkoutSchema = z.object({ packageSlug: z.string().trim().min(2).max(80), couponCode: z.string().trim().min(3).max(40).optional(), affiliateCode: z.string().trim().min(3).max(40).optional() });
+  const couponFieldsSchema = z.object({ code: z.string().trim().min(3).max(40).regex(/^[A-Za-z0-9_-]+$/), discountType: z.enum(['PERCENT', 'FIXED']), discountValue: z.number().int().positive().max(100000), maxRedemptions: z.number().int().positive().max(1000000).nullable().optional(), startsAt: z.string().datetime().nullable().optional(), expiresAt: z.string().datetime().nullable().optional(), active: z.boolean().optional().default(true) });
+  const couponCreateSchema = couponFieldsSchema.superRefine((value, ctx) => { if (value.discountType === 'PERCENT' && value.discountValue > 100) ctx.addIssue({ code: z.ZodIssueCode.too_big, maximum: 100, type: 'number', inclusive: true, path: ['discountValue'], message: 'PERCENT_MAX_100' }); });
+  const couponUpdateSchema = couponFieldsSchema.partial().refine((input) => Object.keys(input).length > 0, 'EMPTY_UPDATE');
+  const affiliateCreateSchema = z.object({ name: z.string().trim().min(2).max(120), email: z.string().trim().email().max(254).optional().or(z.literal('')), code: z.string().trim().min(3).max(40).regex(/^[A-Za-z0-9_-]+$/), commissionBps: z.number().int().min(0).max(5000), active: z.boolean().optional().default(true) });
+  const affiliateUpdateSchema = affiliateCreateSchema.partial().refine((input) => Object.keys(input).length > 0, 'EMPTY_UPDATE');
+  const affiliateActivationSchema = z.object({ code: z.string().trim().min(3).max(40).regex(/^[A-Za-z0-9_-]+$/).optional() });
+  const organizationBrandingSchema = z.object({ name: z.string().trim().min(2).max(160), document: z.string().trim().max(30).optional().nullable(), slug: z.string().trim().min(2).max(80).regex(/^[a-z0-9-]+$/).optional().nullable(), primaryColor: z.string().trim().regex(/^#[0-9A-Fa-f]{6}$/).optional().nullable(), accentColor: z.string().trim().regex(/^#[0-9A-Fa-f]{6}$/).optional().nullable(), logoUrl: z.string().url().max(500).optional().nullable(), customDomain: z.string().trim().max(255).optional().nullable(), settings: z.record(z.string(), z.string().trim().max(280)).optional(), active: z.boolean().optional() });
+  const organizationMemberSchema = z.object({ userId: z.string().uuid(), role: z.enum(['OWNER', 'ADMIN', 'MEMBER', 'VIEWER']).default('MEMBER') });
+  const planInterestSchema = z.object({ email: z.string().trim().email().max(254), plan: z.enum(['PREMIUM', 'RISK']) });
+  const safeSettingsSchema = z.object({
+    siteTagline: z.string().trim().max(180).nullable().optional(),
+    supportEmail: z.string().trim().email().max(254).nullable().optional(),
+    maintenanceNotice: z.string().trim().max(280).nullable().optional(),
+    defaultAffiliateRateBps: z.number().int().min(0).max(5000).optional(),
+    fipeGuestDailyLimit: z.number().int().min(1).max(100000).optional()
+  }).refine((input) => Object.keys(input).length > 0, 'EMPTY_UPDATE');
 
 type AppError = Error & { code?: string; http?: number; expose?: boolean };
 type RawBodyRequest = Request & { rawBody?: Buffer };
@@ -274,7 +291,13 @@ api.post('/auth/register', asyncRoute(async (req, res) => {
   const passwordHash = await bcrypt.hash(parsed.data.password, 12);
   try {
     const created = await tx(async (client) => {
-      const user = await client.query('INSERT INTO users(email,password_hash,name,role) VALUES($1,$2,$3,$4) RETURNING id,email,name,role', [email, passwordHash, parsed.data.name, 'CLIENTE']);
+      let affiliateId: string | null = null;
+      if (parsed.data.affiliateCode) {
+        const affiliate = await client.query('SELECT id,user_id FROM affiliates WHERE upper(code)=upper($1) AND active=true', [parsed.data.affiliateCode]);
+        if (!affiliate.rowCount) throw appError('AFFILIATE_INVALID', { code: 'AFFILIATE_INVALID', http: 400, expose: true });
+        affiliateId = String(affiliate.rows[0].id);
+      }
+      const user = await client.query('INSERT INTO users(email,password_hash,name,role,affiliate_id) VALUES($1,$2,$3,$4,$5) RETURNING id,email,name,role', [email, passwordHash, parsed.data.name, 'CLIENTE', affiliateId]);
       await client.query('INSERT INTO wallets(user_id,balance) VALUES($1,0)', [user.rows[0].id]);
       await client.query('INSERT INTO user_profiles(user_id,marketing_opt_in) VALUES($1,$2)', [user.rows[0].id, parsed.data.marketingOptIn]);
       await client.query(`INSERT INTO user_consents(user_id,consent_type,granted,policy_version,source,ip_hash)
@@ -512,6 +535,20 @@ async function findCachedFipeResult(input: { vehicleType: FipeVehicleType; brand
   return cached.rows[0].payload as Awaited<ReturnType<typeof quoteWithFallback>>;
 }
 
+async function organizationBrandingForUser(userId: string): Promise<ReportBranding> {
+  const result = await pool.query(`SELECT o.name,o.primary_color,o.accent_color,o.logo_url
+    FROM organization_members m JOIN organizations o ON o.id=m.organization_id
+    WHERE m.user_id=$1 AND o.active=true ORDER BY o.created_at LIMIT 1`, [userId]);
+  if (!result.rowCount) return {};
+  const row = result.rows[0] as Record<string, unknown>;
+  return {
+    name: typeof row.name === 'string' ? row.name : undefined,
+    primaryColor: typeof row.primary_color === 'string' ? row.primary_color : undefined,
+    accentColor: typeof row.accent_color === 'string' ? row.accent_color : undefined,
+    logoUrl: typeof row.logo_url === 'string' ? row.logo_url : undefined
+  };
+}
+
 async function saveFipeDocument(quote: FipeQuote): Promise<void> {
   await pool.query(`INSERT INTO report_documents(document_code,report_kind,provider,report_hash,snapshot)
     VALUES($1,'FIPE_FREE',$2,$3,$4::jsonb) ON CONFLICT(document_code) DO NOTHING`, [quote.documentCode, quote.provider, quote.reportHash, JSON.stringify(reportSnapshot(quote))]);
@@ -526,6 +563,11 @@ function snapshotQuote(document: Record<string, unknown>): FipeQuote {
 function publicFipeQuote(quote: FipeQuote): Omit<FipeQuote, 'provider' | 'source'> {
   const { provider: _provider, source: _source, ...publicQuote } = quote;
   return publicQuote;
+}
+
+async function safeBusinessSettings(): Promise<Record<string, unknown>> {
+  const stored = await pool.query('SELECT value FROM platform_settings WHERE key=$1', ['safe_business']);
+  return (stored.rows[0]?.value ?? {}) as Record<string, unknown>;
 }
 
 const publicOfferDescriptions: Record<string, string> = {
@@ -716,7 +758,10 @@ api.post('/fipe/quote', asyncRoute(async (req, res) => {
   // O prefixo v2 isola contadores criados antes da correção de proxy e evita
   // que um IP compartilhado do Cloudflare consuma a cota de todos os visitantes.
   const scopeKey = `v2:ip:${hashIp(requestSourceIp(req)) ?? 'unknown'}`;
-  await reserveFipeQuota(scopeKey, env.FIPE_GUEST_DAILY_LIMIT);
+  const safeBusiness = await safeBusinessSettings();
+  const configuredGuestLimit = safeBusiness.fipeGuestDailyLimit;
+  const guestLimit = typeof configuredGuestLimit === 'number' && Number.isInteger(configuredGuestLimit) && configuredGuestLimit > 0 ? configuredGuestLimit : env.FIPE_GUEST_DAILY_LIMIT;
+  await reserveFipeQuota(scopeKey, guestLimit);
   let quotaReserved = true;
   let input: { vehicleType: FipeVehicleType; brand: FipeSelectionItem; model: FipeSelectionItem; year: FipeSelectionItem };
   let vehicleDetails: FipeVehicleDetails | undefined;
@@ -779,7 +824,8 @@ api.get('/fipe/reports/:code/pdf', auth, asyncRoute(async (req, res) => {
   const quote = snapshotQuote(document.rows[0] as Record<string, unknown>);
   await recordFunnelEvent(null, req, 'FREE_REPORT_DOWNLOADED', { documentCode: quote.documentCode });
   res.setHeader('Content-Disposition', `attachment; filename="carpivara-${quote.documentCode}.pdf"`);
-  res.type('application/pdf').send(fipePdf(quote));
+  const branding = await organizationBrandingForUser(req.user!.id);
+  res.type('application/pdf').send(fipePdf(quote, branding));
 }));
 
 api.get('/fipe/reports/:code/print', auth, asyncRoute(async (req, res) => {
@@ -788,7 +834,8 @@ api.get('/fipe/reports/:code/print', auth, asyncRoute(async (req, res) => {
   if (!document.rowCount) throw appError('REPORT_NOT_FOUND', { code: 'REPORT_NOT_FOUND', http: 404, expose: true });
   const quote = snapshotQuote(document.rows[0] as Record<string, unknown>);
   await recordFunnelEvent(null, req, 'REPORT_PRINTED', { documentCode: quote.documentCode });
-  res.type('html').send(fipePrintHtml(quote));
+  const branding = await organizationBrandingForUser(req.user!.id);
+  res.type('html').send(fipePrintHtml(quote, branding));
 }));
 
 api.get('/stats', asyncRoute(async (_req, res) => {
@@ -977,24 +1024,55 @@ api.post('/payments/checkout', auth, requirePermission('BUY_CREDITS'), asyncRout
     if (!pack.rowCount) throw appError('CREDIT_PACKAGE_NOT_FOUND', { code: 'CREDIT_PACKAGE_NOT_FOUND', http: 404, expose: true });
     const profile = await client.query(`SELECT u.name,u.email,p.cpf_cnpj,p.phone FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id WHERE u.id=$1 AND u.active=true`, [req.user!.id]);
     if (!profile.rowCount) throw appError('AUTH_REQUIRED', { code: 'AUTH_REQUIRED', http: 401, expose: true });
+    const packRow = pack.rows[0] as Record<string, unknown>;
+    const subtotalCents = Number(packRow.price_cents);
+    let discountCents = 0;
+    let couponId: string | null = null;
+    let couponCode: string | null = null;
+    if (parsed.data.couponCode) {
+      const coupon = await client.query(`SELECT id,code,discount_type,discount_value,max_redemptions,redeemed_count,active,starts_at,expires_at
+        FROM coupons WHERE upper(code)=upper($1) FOR UPDATE`, [parsed.data.couponCode]);
+      if (!coupon.rowCount) throw appError('COUPON_INVALID', { code: 'COUPON_INVALID', http: 400, expose: true });
+      const couponRow = coupon.rows[0] as Record<string, unknown>;
+      const reservations = await client.query(`SELECT count(*)::int AS reserved_count FROM coupon_redemptions WHERE coupon_id=$1 AND status='RESERVED'`, [couponRow.id]);
+      if (!couponWindowIsOpen({ active: Boolean(couponRow.active), startsAt: couponRow.starts_at as string | Date | null, expiresAt: couponRow.expires_at as string | Date | null }) || !couponHasCapacity(couponRow.max_redemptions == null ? null : Number(couponRow.max_redemptions), Number(couponRow.redeemed_count), Number(reservations.rows[0]?.reserved_count ?? 0))) {
+        throw appError('COUPON_UNAVAILABLE', { code: 'COUPON_UNAVAILABLE', http: 400, expose: true });
+      }
+      couponId = String(couponRow.id); couponCode = String(couponRow.code);
+      discountCents = calculateCouponDiscount(subtotalCents, String(couponRow.discount_type) as 'PERCENT' | 'FIXED', Number(couponRow.discount_value));
+      if (discountCents >= subtotalCents) throw appError('COUPON_ZERO_TOTAL_UNSUPPORTED', { code: 'COUPON_ZERO_TOTAL_UNSUPPORTED', http: 400, expose: true });
+    }
+    let affiliateId: string | null = null;
+    let affiliateCommissionBps = 0;
+    if (parsed.data.affiliateCode) {
+      const affiliate = await client.query('SELECT id,user_id,commission_bps FROM affiliates WHERE upper(code)=upper($1) AND active=true', [parsed.data.affiliateCode]);
+      if (!affiliate.rowCount || (affiliate.rows[0].user_id && String(affiliate.rows[0].user_id) === req.user!.id)) throw appError('AFFILIATE_INVALID', { code: 'AFFILIATE_INVALID', http: 400, expose: true });
+      affiliateId = String(affiliate.rows[0].id); affiliateCommissionBps = Number(affiliate.rows[0].commission_bps);
+    } else {
+      const affiliate = await client.query(`SELECT a.id,a.user_id,a.commission_bps FROM users u JOIN affiliates a ON a.id=u.affiliate_id AND a.active=true WHERE u.id=$1`, [req.user!.id]);
+      if (affiliate.rowCount && (!affiliate.rows[0].user_id || String(affiliate.rows[0].user_id) !== req.user!.id)) { affiliateId = String(affiliate.rows[0].id); affiliateCommissionBps = Number(affiliate.rows[0].commission_bps); }
+    }
+    const amountCents = Math.max(0, subtotalCents - discountCents);
     const externalReference = `carpivara_${crypto.randomUUID()}`;
-    const order = await client.query(`INSERT INTO payment_orders(user_id,package_id,status,amount_cents,credits,provider,external_reference)
-      VALUES($1,$2,'CREATED',$3,$4,$5,$6) RETURNING id`, [req.user!.id, pack.rows[0].id, pack.rows[0].price_cents, pack.rows[0].credits, paymentProvider.name, externalReference]);
-    return { orderId: order.rows[0].id as string, externalReference, pack: pack.rows[0] as Record<string, unknown>, customer: profile.rows[0] as Record<string, unknown> };
+    const order = await client.query(`INSERT INTO payment_orders(user_id,package_id,status,subtotal_cents,amount_cents,credits,provider,external_reference,discount_cents,coupon_id,affiliate_id,affiliate_commission_bps)
+      VALUES($1,$2,'CREATED',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`, [req.user!.id, packRow.id, subtotalCents, amountCents, packRow.credits, paymentProvider.name, externalReference, discountCents, couponId, affiliateId, affiliateCommissionBps]);
+    if (couponId) await client.query(`INSERT INTO coupon_redemptions(coupon_id,payment_order_id,status) VALUES($1,$2,'RESERVED')`, [couponId, order.rows[0].id]);
+    return { orderId: order.rows[0].id as string, externalReference, pack: packRow, customer: profile.rows[0] as Record<string, unknown>, subtotalCents, discountCents, amountCents, couponCode, couponId, affiliateId };
   });
   try {
     const checkout = await paymentProvider.createCheckout({
       orderId: draft.externalReference,
       itemName: String(draft.pack.name),
       itemDescription: String(draft.pack.description),
-      amountCents: Number(draft.pack.price_cents),
+      amountCents: draft.amountCents,
       customer: { name: String(draft.customer.name), email: String(draft.customer.email), cpfCnpj: draft.customer.cpf_cnpj ? String(draft.customer.cpf_cnpj) : undefined, phone: draft.customer.phone ? String(draft.customer.phone) : undefined }
     });
     await pool.query(`UPDATE payment_orders SET status='CHECKOUT_ACTIVE',provider_checkout_id=$2,checkout_url=$3,updated_at=now() WHERE id=$1`, [draft.orderId, checkout.id, checkout.link]);
     await audit(req.user!.id, 'CREATE_PAYMENT_CHECKOUT', 'PAYMENT_ORDER', draft.orderId, { packageSlug: parsed.data.packageSlug, requestId: requestId(req) });
-    res.status(201).json({ orderId: draft.orderId, checkoutUrl: checkout.link, provider: paymentProvider.name });
+    res.status(201).json({ orderId: draft.orderId, checkoutUrl: checkout.link, provider: paymentProvider.name, subtotalCents: draft.subtotalCents, discountCents: draft.discountCents, amountCents: draft.amountCents, couponCode: draft.couponCode });
   } catch (error) {
     await pool.query(`UPDATE payment_orders SET status='FAILED',updated_at=now() WHERE id=$1`, [draft.orderId]);
+    await pool.query(`UPDATE coupon_redemptions SET status='RELEASED',updated_at=now() WHERE payment_order_id=$1 AND status='RESERVED'`, [draft.orderId]);
     throw error;
   }
 }));
@@ -1057,12 +1135,23 @@ async function processPaymentWebhook(providerName: PaymentProviderName, req: Req
       await client.query('INSERT INTO wallets(user_id,balance) VALUES($1,$2) ON CONFLICT(user_id) DO UPDATE SET balance=EXCLUDED.balance,updated_at=now()', [current.user_id, after]);
       await client.query(`INSERT INTO wallet_transactions(user_id,kind,amount,balance_before,balance_after,payment_id,description,metadata)
         VALUES($1,'PURCHASE',$2,$3,$4,$5,$6,$7::jsonb)`, [current.user_id, credits, before, after, payment.rows[0].id, `Créditos adquiridos via ${providerName}`, JSON.stringify({ orderId, eventId })]);
+      if (current.coupon_id) {
+        const redemption = await client.query(`UPDATE coupon_redemptions SET status='REDEEMED',redeemed_at=now(),updated_at=now()
+          WHERE payment_order_id=$1 AND status='RESERVED' RETURNING id`, [orderId]);
+        if (redemption.rowCount) await client.query('UPDATE coupons SET redeemed_count=redeemed_count+1,updated_at=now() WHERE id=$1', [current.coupon_id]);
+      }
+      if (current.affiliate_id) {
+        const commissionCents = calculateAffiliateCommission(Number(current.amount_cents), Number(current.affiliate_commission_bps ?? 0));
+        await client.query(`INSERT INTO affiliate_commissions(affiliate_id,payment_id,order_id,amount_cents,status)
+          VALUES($1,$2,$3,$4,'PENDING') ON CONFLICT(payment_id) DO NOTHING`, [current.affiliate_id, payment.rows[0].id, orderId, commissionCents]);
+      }
       await client.query(`UPDATE payment_orders SET status='PAID',paid_at=now(),updated_at=now() WHERE id=$1`, [orderId]);
     } else if (!paid && current.status !== 'PAID') {
       const mapped = normalizedStatus.includes('EXPIRED') ? 'EXPIRED'
         : normalizedStatus.includes('CANCEL') || normalizedStatus.includes('REJECT') ? 'CANCELLED'
           : normalizedStatus.includes('REFUND') ? 'REFUNDED' : 'CHECKOUT_ACTIVE';
       await client.query('UPDATE payment_orders SET status=$2,updated_at=now() WHERE id=$1', [orderId, mapped]);
+      if (['CANCELLED', 'EXPIRED', 'FAILED'].includes(mapped)) await client.query(`UPDATE coupon_redemptions SET status='RELEASED',updated_at=now() WHERE payment_order_id=$1 AND status='RESERVED'`, [orderId]);
     }
     await client.query('UPDATE payment_webhook_events SET processed_at=now() WHERE id=$1', [inserted.rows[0].id]);
   });
@@ -1100,7 +1189,279 @@ api.get('/admin/overview', auth, requirePermission('VIEW_AUDIT'), asyncRoute(asy
     (SELECT count(*) FROM provider_health_events WHERE source_type='FIPE' AND status='FAILED' AND created_at >= now() - interval '24 hours') AS fipe_provider_failures_24h,
     (SELECT max(created_at) FROM provider_health_events WHERE source_type='FIPE' AND status='SUCCESS') AS fipe_provider_last_success,
     (SELECT coalesce(round(100.0 * (SELECT count(*) FROM funnel_events WHERE event_type='FREE_QUERY_SAVED') / nullif((SELECT count(*) FROM funnel_events WHERE event_type='FREE_QUERY_COMPLETED'),0),2),0)) AS fipe_save_rate_pct`);
-  res.json(summary.rows[0]);
+  const daily = await pool.query(`WITH days AS (
+    SELECT generate_series(current_date - interval '29 days', current_date, interval '1 day')::date AS day
+  ), q AS (
+    SELECT created_at::date AS day, count(*)::int AS queries, count(*) FILTER (WHERE status='SUCCESS')::int AS successful_queries
+    FROM vehicle_queries WHERE created_at >= current_date - interval '29 days' GROUP BY created_at::date
+  ), p AS (
+    SELECT paid_at::date AS day, count(*)::int AS sales, coalesce(sum(amount_cents),0)::int AS revenue_cents
+    FROM payments WHERE status='PAID' AND paid_at >= current_date - interval '29 days' GROUP BY paid_at::date
+  ), u AS (
+    SELECT created_at::date AS day, count(*)::int AS users FROM users WHERE created_at >= current_date - interval '29 days' GROUP BY created_at::date
+  )
+  SELECT to_char(days.day,'YYYY-MM-DD') AS date, coalesce(q.queries,0) AS queries, coalesce(q.successful_queries,0) AS successful_queries,
+    coalesce(p.sales,0) AS sales, coalesce(p.revenue_cents,0) AS revenue_cents, coalesce(u.users,0) AS users
+  FROM days LEFT JOIN q USING(day) LEFT JOIN p USING(day) LEFT JOIN u USING(day) ORDER BY days.day`);
+  res.json({ ...summary.rows[0], daily: daily.rows });
+}));
+
+api.get('/admin/overview/series', auth, requirePermission('VIEW_AUDIT'), asyncRoute(async (_req, res) => {
+  const daily = await pool.query(`WITH days AS (
+    SELECT generate_series(current_date - interval '29 days', current_date, interval '1 day')::date AS day
+  ), q AS (
+    SELECT created_at::date AS day, count(*)::int AS queries, count(*) FILTER (WHERE status='SUCCESS')::int AS successful_queries
+    FROM vehicle_queries WHERE created_at >= current_date - interval '29 days' GROUP BY created_at::date
+  ), p AS (
+    SELECT paid_at::date AS day, count(*)::int AS sales, coalesce(sum(amount_cents),0)::int AS revenue_cents
+    FROM payments WHERE status='PAID' AND paid_at >= current_date - interval '29 days' GROUP BY paid_at::date
+  ), u AS (
+    SELECT created_at::date AS day, count(*)::int AS users FROM users WHERE created_at >= current_date - interval '29 days' GROUP BY created_at::date
+  )
+  SELECT to_char(days.day,'YYYY-MM-DD') AS date, coalesce(q.queries,0) AS queries, coalesce(q.successful_queries,0) AS successful_queries,
+    coalesce(p.sales,0) AS sales, coalesce(p.revenue_cents,0) AS revenue_cents, coalesce(u.users,0) AS users
+  FROM days LEFT JOIN q USING(day) LEFT JOIN p USING(day) LEFT JOIN u USING(day) ORDER BY days.day`);
+  res.json({ daily: daily.rows });
+}));
+
+api.get('/admin/settings', auth, requirePermission('VIEW_AUDIT'), asyncRoute(async (_req, res) => {
+  const value = await safeBusinessSettings();
+  res.json({
+    environment: {
+      appName: env.APP_NAME,
+      appUrl: env.APP_URL,
+      webOrigin: env.WEB_ORIGIN,
+      nodeEnv: env.NODE_ENV,
+      paymentProvider: env.PAYMENT_PROVIDER,
+      dataProvider: env.DATA_PROVIDER,
+      featureFreeFipe: env.FEATURE_FREE_FIPE,
+      featureReportPdf: env.FEATURE_REPORT_PDF,
+      queryCacheEnabled: env.QUERY_CACHE_ENABLED,
+      queryCacheTtlSeconds: env.QUERY_CACHE_TTL_SECONDS,
+      queryRequestTimeoutMs: env.QUERY_REQUEST_TIMEOUT_MS,
+      rateLimitEnabled: env.RATE_LIMIT_ENABLED,
+      auditLogEnabled: env.AUDIT_LOG_ENABLED,
+      logLevel: env.LOG_LEVEL
+    },
+    configured: {
+      payment: Boolean(env.PAYMENT_API_KEY),
+      vehicleProvider: Boolean(env.VEHICLE_API_BASE_URL),
+      email: isEmailConfigured(),
+      fipe: Boolean(env.FIPE_PRIMARY_BASE_URL)
+    },
+    safe: {
+      siteTagline: typeof value.siteTagline === 'string' ? value.siteTagline : 'Consulta zero para orientar o valor. Consulta completa para aprofundar a decisão.',
+      supportEmail: typeof value.supportEmail === 'string' ? value.supportEmail : null,
+      maintenanceNotice: typeof value.maintenanceNotice === 'string' ? value.maintenanceNotice : null,
+      defaultAffiliateRateBps: typeof value.defaultAffiliateRateBps === 'number' ? value.defaultAffiliateRateBps : 1000,
+      fipeGuestDailyLimit: typeof value.fipeGuestDailyLimit === 'number' ? value.fipeGuestDailyLimit : env.FIPE_GUEST_DAILY_LIMIT
+    }
+  });
+}));
+
+api.patch('/admin/settings', auth, requirePermission('MANAGE_PROVIDERS'), asyncRoute(async (req, res) => {
+  const parsed = safeSettingsSchema.safeParse(req.body);
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const current = await safeBusinessSettings();
+  const next = { ...current, ...parsed.data };
+  await pool.query(`INSERT INTO platform_settings(key,value,updated_by,updated_at) VALUES('safe_business',$1::jsonb,$2,now())
+    ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_by=EXCLUDED.updated_by,updated_at=now()`, [JSON.stringify(next), req.user!.id]);
+  await audit(req.user!.id, 'UPDATE_SAFE_SETTINGS', 'PLATFORM_SETTINGS', 'safe_business', { keys: Object.keys(parsed.data), requestId: requestId(req) });
+  res.json({ safe: next });
+}));
+
+api.get('/admin/coupons', auth, requirePermission('MANAGE_BILLING'), asyncRoute(async (_req, res) => {
+  const result = await pool.query(`SELECT id,code,discount_type,discount_value,max_redemptions,redeemed_count,starts_at,expires_at,active,created_at
+    FROM coupons ORDER BY created_at DESC`);
+  res.json(result.rows.map((row) => ({ id: row.id, code: row.code, discountType: row.discount_type, discountValue: Number(row.discount_value), maxRedemptions: row.max_redemptions === null ? null : Number(row.max_redemptions), redeemedCount: Number(row.redeemed_count), startsAt: row.starts_at, expiresAt: row.expires_at, active: row.active, createdAt: row.created_at })));
+}));
+
+api.post('/admin/coupons', auth, requirePermission('MANAGE_BILLING'), asyncRoute(async (req, res) => {
+  const parsed = couponCreateSchema.safeParse(req.body);
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const code = parsed.data.code.toUpperCase();
+  const result = await pool.query(`INSERT INTO coupons(code,discount_type,discount_value,max_redemptions,starts_at,expires_at,active,created_by)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id,code,discount_type,discount_value,max_redemptions,redeemed_count,starts_at,expires_at,active,created_at`, [code, parsed.data.discountType, parsed.data.discountValue, parsed.data.maxRedemptions ?? null, parsed.data.startsAt ?? null, parsed.data.expiresAt ?? null, parsed.data.active, req.user!.id]);
+  await audit(req.user!.id, 'CREATE_COUPON', 'COUPON', result.rows[0].id, { code, requestId: requestId(req) });
+  res.status(201).json(result.rows[0]);
+}));
+
+api.patch('/admin/coupons/:id', auth, requirePermission('MANAGE_BILLING'), asyncRoute(async (req, res) => {
+  const parsed = couponUpdateSchema.safeParse(req.body);
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const fields = Object.entries(parsed.data).filter(([, value]) => value !== undefined);
+  if (!fields.length) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const values: unknown[] = []; const assignments: string[] = [];
+  for (const [key, value] of fields) {
+    const column = key === 'discountType' ? 'discount_type' : key === 'discountValue' ? 'discount_value' : key === 'maxRedemptions' ? 'max_redemptions' : key === 'startsAt' ? 'starts_at' : key === 'expiresAt' ? 'expires_at' : key;
+    values.push(key === 'code' ? String(value).toUpperCase() : value ?? null); assignments.push(`${column}=$${values.length}`);
+  }
+  values.push(req.params.id);
+  const result = await pool.query(`UPDATE coupons SET ${assignments.join(',')},updated_at=now() WHERE id=$${values.length} RETURNING id,code,discount_type,discount_value,max_redemptions,redeemed_count,starts_at,expires_at,active,created_at`, values);
+  if (!result.rowCount) throw appError('COUPON_NOT_FOUND', { code: 'COUPON_NOT_FOUND', http: 404, expose: true });
+  await audit(req.user!.id, 'UPDATE_COUPON', 'COUPON', String(req.params.id), { requestId: requestId(req) });
+  res.json(result.rows[0]);
+}));
+
+api.delete('/admin/coupons/:id', auth, requirePermission('MANAGE_BILLING'), asyncRoute(async (req, res) => {
+  const result = await pool.query(`UPDATE coupons SET active=false,updated_at=now() WHERE id=$1 RETURNING id`, [req.params.id]);
+  if (!result.rowCount) throw appError('COUPON_NOT_FOUND', { code: 'COUPON_NOT_FOUND', http: 404, expose: true });
+  await audit(req.user!.id, 'DELETE_COUPON', 'COUPON', String(req.params.id), { requestId: requestId(req) });
+  res.status(204).end();
+}));
+
+api.get('/admin/affiliates', auth, requirePermission('MANAGE_BILLING'), asyncRoute(async (_req, res) => {
+  const result = await pool.query(`SELECT a.id,a.name,a.email,a.code,a.commission_bps,a.active,a.created_at,
+    count(ac.id)::int AS commissions_count, coalesce(sum(ac.amount_cents) FILTER (WHERE ac.status='PENDING'),0)::int AS pending_cents
+    FROM affiliates a LEFT JOIN affiliate_commissions ac ON ac.affiliate_id=a.id GROUP BY a.id ORDER BY a.created_at DESC`);
+  res.json(result.rows.map((row) => ({ id: row.id, name: row.name, email: row.email, code: row.code, commissionBps: Number(row.commission_bps), active: row.active, commissionsCount: Number(row.commissions_count), pendingCents: Number(row.pending_cents), createdAt: row.created_at })));
+}));
+
+api.post('/admin/affiliates', auth, requirePermission('MANAGE_BILLING'), asyncRoute(async (req, res) => {
+  const parsed = affiliateCreateSchema.safeParse(req.body);
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const result = await pool.query(`INSERT INTO affiliates(name,email,code,commission_bps,active) VALUES($1,$2,$3,$4,$5)
+    RETURNING id,name,email,code,commission_bps,active,created_at`, [parsed.data.name, parsed.data.email ?? null, parsed.data.code.toUpperCase(), parsed.data.commissionBps, parsed.data.active]);
+  await audit(req.user!.id, 'CREATE_AFFILIATE', 'AFFILIATE', result.rows[0].id, { requestId: requestId(req) });
+  res.status(201).json(result.rows[0]);
+}));
+
+api.patch('/admin/affiliates/:id', auth, requirePermission('MANAGE_BILLING'), asyncRoute(async (req, res) => {
+  const parsed = affiliateUpdateSchema.safeParse(req.body);
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const fields = Object.entries(parsed.data).filter(([, value]) => value !== undefined);
+  if (!fields.length) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const values: unknown[] = []; const assignments: string[] = [];
+  for (const [key, value] of fields) {
+    const column = key === 'commissionBps' ? 'commission_bps' : key;
+    values.push(key === 'code' ? String(value).toUpperCase() : value ?? null); assignments.push(`${column}=$${values.length}`);
+  }
+  values.push(req.params.id);
+  const result = await pool.query(`UPDATE affiliates SET ${assignments.join(',')},updated_at=now() WHERE id=$${values.length} RETURNING id,name,email,code,commission_bps,active,created_at`, values);
+  if (!result.rowCount) throw appError('AFFILIATE_NOT_FOUND', { code: 'AFFILIATE_NOT_FOUND', http: 404, expose: true });
+  await audit(req.user!.id, 'UPDATE_AFFILIATE', 'AFFILIATE', String(req.params.id), { requestId: requestId(req) });
+  res.json(result.rows[0]);
+}));
+
+api.get('/admin/organizations', auth, requirePermission('ADMIN_SYSTEM'), asyncRoute(async (_req, res) => {
+  const result = await pool.query(`SELECT id,name,document,active,slug,primary_color,accent_color,logo_url,custom_domain,settings,created_at
+    FROM organizations ORDER BY created_at DESC`);
+  res.json(result.rows.map((row) => ({ id: row.id, name: row.name, document: row.document, active: row.active, slug: row.slug, primaryColor: row.primary_color, accentColor: row.accent_color, logoUrl: row.logo_url, customDomain: row.custom_domain, settings: row.settings ?? {}, createdAt: row.created_at })));
+}));
+
+api.post('/admin/organizations', auth, requirePermission('ADMIN_SYSTEM'), asyncRoute(async (req, res) => {
+  const parsed = organizationBrandingSchema.extend({ name: z.string().min(2), document: z.string().max(30).optional(), active: z.boolean().default(true) }).safeParse(req.body);
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const result = await pool.query(`INSERT INTO organizations(name,document,active,slug,primary_color,accent_color,logo_url,custom_domain,settings)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb) RETURNING id,name,document,active,slug,primary_color,accent_color,logo_url,custom_domain,settings,created_at`, [parsed.data.name, parsed.data.document ?? null, parsed.data.active, parsed.data.slug ?? null, parsed.data.primaryColor ?? null, parsed.data.accentColor ?? null, parsed.data.logoUrl ?? null, parsed.data.customDomain ?? null, JSON.stringify(parsed.data.settings ?? {})]);
+  await audit(req.user!.id, 'CREATE_ORGANIZATION', 'ORGANIZATION', result.rows[0].id, { requestId: requestId(req) });
+  res.status(201).json(result.rows[0]);
+}));
+
+api.patch('/admin/organizations/:id', auth, requirePermission('ADMIN_SYSTEM'), asyncRoute(async (req, res) => {
+  const parsed = organizationBrandingSchema.partial().safeParse(req.body);
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const fields = Object.entries(parsed.data).filter(([, value]) => value !== undefined);
+  if (!fields.length) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const values: unknown[] = []; const assignments: string[] = [];
+  for (const [key, value] of fields) {
+    const column = key === 'primaryColor' ? 'primary_color' : key === 'accentColor' ? 'accent_color' : key === 'logoUrl' ? 'logo_url' : key === 'customDomain' ? 'custom_domain' : key;
+    values.push(key === 'settings' ? JSON.stringify(value ?? {}) : value ?? null); assignments.push(`${column}=${key === 'settings' ? `$${values.length}::jsonb` : `$${values.length}`}`);
+  }
+  values.push(req.params.id);
+  const result = await pool.query(`UPDATE organizations SET ${assignments.join(',')} WHERE id=$${values.length} RETURNING id,name,document,active,slug,primary_color,accent_color,logo_url,custom_domain,settings,created_at`, values);
+  if (!result.rowCount) throw appError('ORGANIZATION_NOT_FOUND', { code: 'ORGANIZATION_NOT_FOUND', http: 404, expose: true });
+  await audit(req.user!.id, 'UPDATE_ORGANIZATION_BRANDING', 'ORGANIZATION', String(req.params.id), { requestId: requestId(req) });
+  res.json(result.rows[0]);
+}));
+
+api.get('/affiliate/me', auth, asyncRoute(async (req, res) => {
+  const result = await pool.query(`SELECT id,name,email,code,commission_bps,active,created_at FROM affiliates WHERE user_id=$1`, [req.user!.id]);
+  if (!result.rowCount) { res.json({ affiliate: null }); return; }
+  const row = result.rows[0];
+  res.json({ affiliate: { id: row.id, name: row.name, email: row.email, code: row.code, commissionBps: Number(row.commission_bps), active: row.active, createdAt: row.created_at } });
+}));
+
+api.post('/affiliate/activate', auth, asyncRoute(async (req, res) => {
+  const parsed = affiliateActivationSchema.safeParse(req.body ?? {});
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const existing = await pool.query('SELECT id,name,email,code,commission_bps,active,created_at FROM affiliates WHERE user_id=$1', [req.user!.id]);
+  if (existing.rowCount) { res.json({ affiliate: existing.rows[0] }); return; }
+  const account = await pool.query('SELECT name,email FROM users WHERE id=$1 AND active=true', [req.user!.id]);
+  if (!account.rowCount) throw appError('ACCOUNT_NOT_FOUND', { code: 'ACCOUNT_NOT_FOUND', http: 404, expose: true });
+  const safeBusiness = await safeBusinessSettings();
+  const configuredRate = safeBusiness.defaultAffiliateRateBps;
+  const commissionBps = typeof configuredRate === 'number' && Number.isInteger(configuredRate) && configuredRate >= 0 && configuredRate <= 5000 ? configuredRate : 1000;
+  const defaultCode = `BUSCARR-${randomBytes(5).toString('hex').toUpperCase()}`;
+  const code = (parsed.data.code ?? defaultCode).toUpperCase();
+  const result = await pool.query(`INSERT INTO affiliates(user_id,name,email,code,commission_bps,active) VALUES($1,$2,$3,$4,$5,true)
+    RETURNING id,name,email,code,commission_bps,active,created_at`, [req.user!.id, account.rows[0].name, account.rows[0].email, code, commissionBps]);
+  await audit(req.user!.id, 'ACTIVATE_AFFILIATE', 'AFFILIATE', result.rows[0].id, { requestId: requestId(req) });
+  res.status(201).json({ affiliate: result.rows[0] });
+}));
+
+api.get('/affiliate/link', auth, asyncRoute(async (req, res) => {
+  const result = await pool.query('SELECT code,active FROM affiliates WHERE user_id=$1', [req.user!.id]);
+  if (!result.rowCount || !result.rows[0].active) throw appError('AFFILIATE_NOT_ACTIVE', { code: 'AFFILIATE_NOT_ACTIVE', http: 404, expose: true });
+  const link = new URL('/?ref=' + encodeURIComponent(String(result.rows[0].code)), env.APP_URL).toString();
+  res.json({ code: result.rows[0].code, link });
+}));
+
+api.get('/affiliate/stats', auth, asyncRoute(async (req, res) => {
+  const affiliate = await pool.query('SELECT id,code FROM affiliates WHERE user_id=$1', [req.user!.id]);
+  if (!affiliate.rowCount) { res.json({ affiliate: null, totals: { pendingCents: 0, paidCents: 0, commissions: 0 } }); return; }
+  const totals = await pool.query(`SELECT count(*)::int AS commissions,
+      coalesce(sum(amount_cents) FILTER (WHERE status='PENDING'),0)::int AS pending_cents,
+      coalesce(sum(amount_cents) FILTER (WHERE status='PAID'),0)::int AS paid_cents
+    FROM affiliate_commissions WHERE affiliate_id=$1`, [affiliate.rows[0].id]);
+  res.json({ affiliate: { id: affiliate.rows[0].id, code: affiliate.rows[0].code }, totals: { commissions: Number(totals.rows[0].commissions), pendingCents: Number(totals.rows[0].pending_cents), paidCents: Number(totals.rows[0].paid_cents) } });
+}));
+
+api.get('/admin/affiliate-commissions', auth, requirePermission('MANAGE_BILLING'), asyncRoute(async (_req, res) => {
+  const result = await pool.query(`SELECT c.id,c.amount_cents,c.status,c.created_at,c.paid_at,a.name AS affiliate_name,a.code,p.external_reference
+    FROM affiliate_commissions c JOIN affiliates a ON a.id=c.affiliate_id LEFT JOIN payment_orders p ON p.id=c.order_id
+    ORDER BY c.created_at DESC LIMIT 200`);
+  res.json(result.rows.map((row) => ({ id: row.id, amountCents: Number(row.amount_cents), status: row.status, createdAt: row.created_at, paidAt: row.paid_at, affiliate: { name: row.affiliate_name, code: row.code }, externalReference: row.external_reference })));
+}));
+
+api.patch('/admin/affiliate-commissions/:id', auth, requirePermission('MANAGE_BILLING'), asyncRoute(async (req, res) => {
+  const parsed = z.object({ status: z.enum(['PAID', 'CANCELLED']) }).safeParse(req.body);
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const result = await pool.query(`UPDATE affiliate_commissions SET status=$2,paid_at=CASE WHEN $2='PAID' THEN now() ELSE paid_at END
+    WHERE id=$1 AND status='PENDING' RETURNING id,amount_cents,status,paid_at`, [req.params.id, parsed.data.status]);
+  if (!result.rowCount) throw appError('COMMISSION_NOT_FOUND_OR_CLOSED', { code: 'COMMISSION_NOT_FOUND_OR_CLOSED', http: 404, expose: true });
+  await audit(req.user!.id, 'UPDATE_AFFILIATE_COMMISSION', 'AFFILIATE_COMMISSION', String(req.params.id), { status: parsed.data.status, requestId: requestId(req) });
+  res.json({ id: result.rows[0].id, amountCents: Number(result.rows[0].amount_cents), status: result.rows[0].status, paidAt: result.rows[0].paid_at });
+}));
+
+api.get('/admin/organizations/:id/members', auth, requirePermission('ADMIN_SYSTEM'), asyncRoute(async (req, res) => {
+  const result = await pool.query(`SELECT m.organization_id,m.user_id,m.role,u.name,u.email,u.active
+    FROM organization_members m JOIN users u ON u.id=m.user_id WHERE m.organization_id=$1 ORDER BY u.name`, [req.params.id]);
+  res.json(result.rows.map((row) => ({ organizationId: row.organization_id, userId: row.user_id, role: row.role, name: row.name, email: row.email, active: row.active })));
+}));
+
+api.post('/admin/organizations/:id/members', auth, requirePermission('ADMIN_SYSTEM'), asyncRoute(async (req, res) => {
+  const parsed = organizationMemberSchema.safeParse(req.body);
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const result = await pool.query(`INSERT INTO organization_members(organization_id,user_id,role) VALUES($1,$2,$3)
+    ON CONFLICT(organization_id,user_id) DO UPDATE SET role=EXCLUDED.role RETURNING organization_id,user_id,role`, [req.params.id, parsed.data.userId, parsed.data.role]);
+  await audit(req.user!.id, 'UPSERT_ORGANIZATION_MEMBER', 'ORGANIZATION', String(req.params.id), { memberId: parsed.data.userId, role: parsed.data.role, requestId: requestId(req) });
+  res.status(201).json(result.rows[0]);
+}));
+
+api.delete('/admin/organizations/:id/members/:userId', auth, requirePermission('ADMIN_SYSTEM'), asyncRoute(async (req, res) => {
+  await pool.query('DELETE FROM organization_members WHERE organization_id=$1 AND user_id=$2', [req.params.id, req.params.userId]);
+  await audit(req.user!.id, 'REMOVE_ORGANIZATION_MEMBER', 'ORGANIZATION', String(req.params.id), { memberId: req.params.userId, requestId: requestId(req) });
+  res.status(204).end();
+}));
+
+api.get('/organization/context', auth, asyncRoute(async (req, res) => {
+  const result = await pool.query(`SELECT o.id,o.name,o.slug,o.primary_color,o.accent_color,o.logo_url,o.custom_domain,o.settings,m.role
+    FROM organization_members m JOIN organizations o ON o.id=m.organization_id
+    WHERE m.user_id=$1 AND o.active=true ORDER BY o.created_at LIMIT 1`, [req.user!.id]);
+  if (!result.rowCount) { res.json({ organization: null }); return; }
+  const row = result.rows[0];
+  res.json({ organization: { id: row.id, name: row.name, slug: row.slug, primaryColor: row.primary_color, accentColor: row.accent_color, logoUrl: row.logo_url, customDomain: row.custom_domain, settings: row.settings ?? {}, role: row.role } });
 }));
 
 api.get('/admin/queries', auth, requirePermission('VIEW_AUDIT'), asyncRoute(async (_req, res) => {

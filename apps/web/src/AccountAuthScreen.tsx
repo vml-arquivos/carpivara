@@ -12,10 +12,11 @@ type Props = {
   externalError?: string;
   initialMode?: 'login' | 'register';
   resetToken?: string;
+  affiliateCode?: string;
 };
 
 
-export default function AccountAuthScreen({ onAuthenticated, onBack, externalError = '', initialMode = 'register', resetToken = '' }: Props) {
+export default function AccountAuthScreen({ onAuthenticated, onBack, externalError = '', initialMode = 'register', resetToken = '', affiliateCode = '' }: Props) {
   const [mode, setMode] = useState<AuthMode>(resetToken ? 'reset' : initialMode);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -59,7 +60,7 @@ export default function AccountAuthScreen({ onAuthenticated, onBack, externalErr
       if (mode === 'register' && (form.get('acceptTerms') !== 'on' || form.get('acceptPrivacy') !== 'on')) throw new Error('Para criar sua conta, aceite os Termos de Uso e a Política de Privacidade.');
       const payload = mode === 'login'
         ? { email, password }
-        : { name: String(form.get('name') ?? ''), email, password, acceptTerms: form.get('acceptTerms') === 'on', acceptPrivacy: form.get('acceptPrivacy') === 'on', marketingOptIn: form.get('marketingOptIn') === 'on' };
+        : { name: String(form.get('name') ?? ''), email, password, acceptTerms: form.get('acceptTerms') === 'on', acceptPrivacy: form.get('acceptPrivacy') === 'on', marketingOptIn: form.get('marketingOptIn') === 'on', ...(affiliateCode ? { affiliateCode } : {}) };
       const response = await fetch(`${API}/auth/${mode === 'login' ? 'login' : 'register'}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const body = await response.json() as ApiError & { token?: string };
       if (!response.ok || !body.token) throw new Error(body.message ?? 'Não foi possível acessar sua conta.');
