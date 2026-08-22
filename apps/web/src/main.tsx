@@ -1,9 +1,12 @@
 import { Fragment, type FormEvent, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { registerSW } from 'virtual:pwa-register';
 import AccountAuthScreen from './AccountAuthScreen';
 import Brand from './Brand';
 import LegalPage from './LegalPage';
 import './styles.css';
+
+registerSW({ immediate: true });
 
 const API = '/api';
 type Theme = 'light' | 'dark' | 'system';
