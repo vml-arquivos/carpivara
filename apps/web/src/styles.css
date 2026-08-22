@@ -639,3 +639,57 @@
   .mobileNav{padding-bottom:max(12px,env(safe-area-inset-bottom))}
   .mobileNav button,.mobileNav a{min-height:48px;padding:14px 5px 12px;display:flex;align-items:center;justify-content:center}
 }
+
+
+/* Área administrativa BUSCARR: separação visual e controles operacionais */
+.adminSidebar{border-right-color:color-mix(in srgb,var(--gold) 28%,var(--line));background:linear-gradient(180deg,color-mix(in srgb,var(--navy) 96%,var(--surface)) 0%,var(--surface) 100%)}
+.adminSidebar .workspaceLabel{border-color:color-mix(in srgb,var(--gold) 42%,var(--line));background:color-mix(in srgb,var(--gold-soft) 72%,var(--surface));}
+.adminSidebar .workspaceLabel span{color:var(--gold-strong);font-weight:700}
+.adminSidebar .workspaceLabel b{color:var(--muted)}
+.adminSidebar .adminNavPrimary{border-color:color-mix(in srgb,var(--gold) 45%,var(--line));background:color-mix(in srgb,var(--gold-soft) 68%,transparent);color:var(--gold-strong)}
+.adminSidebar .adminNavPrimary i{color:var(--gold)}
+.adminHeader{border-bottom-color:color-mix(in srgb,var(--gold) 28%,var(--line))}
+.adminReturnButton{border-color:color-mix(in srgb,var(--teal) 42%,var(--line));background:color-mix(in srgb,var(--teal-soft) 72%,var(--surface));color:var(--teal)}
+.adminIdentity{display:flex;align-items:center;justify-content:space-between;gap:20px;border-color:color-mix(in srgb,var(--gold) 32%,var(--line));background:linear-gradient(120deg,var(--surface),color-mix(in srgb,var(--gold-soft) 45%,var(--surface)))}
+.adminIdentity h2{margin-top:8px;font-size:26px}
+.adminIdentity p:last-child{max-width:720px;margin-top:8px;color:var(--muted);font-size:11px;line-height:1.6}
+.adminIdentityBadge,.adminLookupBadge{display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:8px 12px;border:1px solid color-mix(in srgb,var(--gold) 52%,var(--line));border-radius:999px;background:var(--gold-soft);color:var(--gold-strong);font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}
+.adminTabs{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0 18px;padding:5px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2)}
+.adminTabs button{min-height:36px;padding:9px 13px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--muted);font-size:10px;font-weight:700}
+.adminTabs button:hover{color:var(--text);border-color:var(--line)}
+.adminTabs button.active{border-color:color-mix(in srgb,var(--gold) 48%,var(--line));background:var(--gold-soft);color:var(--gold-strong)}
+.adminDataHead.adminUsers,.adminDataRow.adminUsers{grid-template-columns:1.55fr .8fr .75fr .6fr .7fr .65fr}
+.adminDataRow.adminUsers{cursor:pointer;transition:background .18s ease,border-color .18s ease}
+.adminDataRow.adminUsers:hover,.adminDataRow.adminUsers.selected{background:color-mix(in srgb,var(--gold-soft) 42%,var(--surface))}
+.adminDataRow.adminUsers .tableButton{justify-self:start}
+.adminDetailPanel{margin-top:16px;border-color:color-mix(in srgb,var(--gold) 32%,var(--line));background:var(--surface-2)}
+.adminDetailHeader{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}
+.adminDetailHeader h2,.adminDetailHeader h3{margin-top:6px}
+.adminDetailHeader p:last-child{margin-top:5px;color:var(--muted);font-size:10px}
+.adminActionGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.adminActionCard{padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.adminActionCard h3{margin-bottom:13px;font-size:15px}
+.adminActionCard .checkField{margin:12px 0}
+.adminActionCard .primaryButton,.adminActionCard .secondaryButton,.adminActionCard .dangerButton{width:100%;justify-content:center}
+.formHint{display:block;margin-top:10px;color:var(--muted);font-size:9px;line-height:1.45}
+.dangerCard{border-color:color-mix(in srgb,var(--red) 35%,var(--line))}
+.dangerCard p{margin:0 0 16px;color:var(--muted);font-size:10px;line-height:1.5}
+.dangerButton{min-height:38px;padding:10px 13px;border:1px solid color-mix(in srgb,var(--red) 60%,var(--line));border-radius:9px;background:color-mix(in srgb,var(--red) 12%,var(--surface));color:var(--red);font-size:10px;font-weight:700}
+.dangerButton:hover{background:var(--red);color:#fff}
+.adminProductGrid{grid-template-columns:repeat(3,1fr)}
+.adminProductGrid article{display:flex;flex-direction:column;align-items:flex-start;gap:8px}
+.adminProductGrid article .tableButton{margin-top:auto}
+.adminProductGrid article.inactiveProduct{opacity:.68;border-style:dashed}
+.adminProductEditor{margin-top:18px;padding:18px;border:1px solid color-mix(in srgb,var(--gold) 42%,var(--line));border-radius:13px;background:var(--surface-2)}
+.adminProductEditor .adminDetailHeader{margin-bottom:14px}
+.adminAudit.adminDataHead,.adminAudit.adminDataRow{grid-template-columns:1.55fr 1fr 1fr 1fr}
+.adminDataRow.adminAudit{font-size:10px}
+.adminLookupForm{max-width:760px;margin-top:20px;padding:18px;border:1px solid color-mix(in srgb,var(--teal) 35%,var(--line));border-radius:13px;background:var(--surface-2)}
+.adminLookupForm .primaryButton{margin-top:14px}
+.adminLookupResult{margin-top:18px;padding:18px;border:1px solid color-mix(in srgb,var(--teal) 46%,var(--line));border-radius:13px;background:var(--surface-2)}
+.adminLookupFields{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:16px}
+.adminLookupFields>div{display:grid;gap:5px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.adminLookupFields span{color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.06em}
+.adminLookupFields strong{font-size:11px}
+@media(max-width:1000px){.adminActionGrid,.adminProductGrid{grid-template-columns:1fr 1fr}.adminIdentity{align-items:flex-start;flex-direction:column}.adminLookupFields{grid-template-columns:repeat(2,1fr)}.adminDataHead.adminUsers,.adminDataRow.adminUsers{grid-template-columns:1.5fr .8fr .75fr .6fr .7fr .7fr}.adminAudit.adminDataHead,.adminAudit.adminDataRow{grid-template-columns:1.4fr 1fr 1fr 1fr}}
+@media(max-width:650px){.adminTabs{overflow-x:auto;flex-wrap:nowrap}.adminTabs button{flex:0 0 auto}.adminActionGrid,.adminProductGrid,.adminLookupFields{grid-template-columns:1fr}.adminDataHead.adminUsers,.adminDataRow.adminUsers,.adminAudit.adminDataHead,.adminAudit.adminDataRow{grid-template-columns:1fr 1fr}.adminDataRow.adminUsers>div:first-child,.adminDataRow.adminAudit>div:first-child{grid-column:span 2}.adminDataRow.adminUsers>span:nth-child(2):before{content:'Perfil: ';color:var(--muted)}.adminDataRow.adminUsers>strong:before{content:'Carteira: ';color:var(--muted);font-size:9px;font-weight:700}.adminDataRow.adminUsers>span:nth-child(4):before{content:'Consultas: ';color:var(--muted)}.adminDataRow.adminUsers>span:nth-child(5):before{content:'Status: ';color:var(--muted)}.adminDataRow.adminUsers .tableButton{grid-column:span 2}.adminDetailHeader{align-items:stretch;flex-direction:column}.adminIdentityBadge,.adminLookupBadge{align-self:flex-start}.adminProductEditor{padding:14px}.adminSidebar .workspaceLabel{margin-bottom:3px}}

@@ -22,6 +22,8 @@ import { getFipeProvider, quoteWithFallback, type FipeCatalogProvider } from './
 import { fipePdf, fipePrintHtml, makeFipeQuote, reportSnapshot } from './fipeReport.js';
 import { getPaymentProvider, getPaymentProviderFor, type PaymentProviderName } from './payments/index.js';
 import { ensureSchema } from './schema.js';
+import { performAdminLookup } from './adminLookup.js';
+import { executeVehicleLookup } from './vehicleLookup.js';
 import type { FipeQuote, FipeSelectionItem, FipeVehicleDetails, FipeVehicleType, NormalizedVehicle } from './types.js';
 
 await ensureSchema();
@@ -869,8 +871,8 @@ api.post('/queries', auth, requirePermission('QUERY_VEHICLE'), asyncRoute(async 
         VALUES($1,'QUERY',$2,$3,$4,$5,$6,$7::jsonb)`, [req.user!.id, -cost, before, after, queryId, `Consulta ${parsed.data.plate}`, JSON.stringify({ productId: parsed.data.productId, requestId: requestId(req) })]);
     });
 
-    const output = await withTimeout(provider.queryByPlate(parsed.data.plate), env.QUERY_REQUEST_TIMEOUT_MS);
-    const normalized = normalizeBdrp(output.raw);
+    const output = await executeVehicleLookup({ provider, plate: parsed.data.plate, timeoutMs: env.QUERY_REQUEST_TIMEOUT_MS, normalize: normalizeBdrp });
+    const normalized = output.normalized;
     const resultHash = crypto.createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
     await tx(async (client) => {
       await client.query('INSERT INTO vehicle_query_results(query_id,normalized,raw_response) VALUES($1,$2::jsonb,$3::jsonb)', [queryId, JSON.stringify(normalized), JSON.stringify(env.STORE_RAW_PROVIDER_RESPONSE ? output.raw : { stored: false })]);
@@ -1122,6 +1124,29 @@ api.get('/admin/queries', auth, requirePermission('VIEW_AUDIT'), asyncRoute(asyn
   })));
 }));
 
+api.post('/admin/lookups', auth, requirePermission('VIEW_SENSITIVE_DATA'), asyncRoute(async (req, res) => {
+  const parsed = z.object({ plate: plateSchema, productId: z.string().trim().min(1).max(80) }).safeParse(req.body);
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const product = await pool.query('SELECT id,name FROM query_products WHERE id=$1 AND active=true', [parsed.data.productId]);
+  if (!product.rowCount) throw appError('PRODUCT_NOT_FOUND', { code: 'PRODUCT_NOT_FOUND', http: 404, expose: true });
+  const provider = getProvider();
+  try {
+    const output = await performAdminLookup({ provider, plate: parsed.data.plate, productId: parsed.data.productId, productName: product.rows[0].name, timeoutMs: env.QUERY_REQUEST_TIMEOUT_MS, normalize: normalizeBdrp });
+    await audit(req.user!.id, 'ADMIN_LOOKUP', 'VEHICLE_QUERY', null, { plate: parsed.data.plate, productId: parsed.data.productId, provider: provider.name, status: 'SUCCESS', requestId: requestId(req) });
+    res.status(200).json({ ...output, result: { ...output.result, diagnostic: diagnostic(output.result) } });
+  } catch (error) {
+    const errorCode = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'PROVIDER_ERROR';
+    await audit(req.user!.id, 'ADMIN_LOOKUP', 'VEHICLE_QUERY', null, { plate: parsed.data.plate, productId: parsed.data.productId, provider: provider.name, status: 'FAILED', errorCode, requestId: requestId(req) });
+    throw error;
+  }
+}));
+
+api.get('/admin/products', auth, requirePermission('MANAGE_PRICING'), asyncRoute(async (_req, res) => {
+  const products = await pool.query(`SELECT id,name,description,credit_cost,active,slug,features,is_free,commercial_status,featured
+    FROM query_products ORDER BY display_order,credit_cost`);
+  res.json(products.rows.map((product) => ({ id: product.id, name: product.name, description: product.description, creditCost: Number(product.credit_cost), active: Boolean(product.active), slug: product.slug, features: product.features, isFree: Boolean(product.is_free), commercialStatus: product.commercial_status, featured: Boolean(product.featured) })));
+}));
+
 api.patch('/admin/products/:id', auth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
   const parsed = productUpdateSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
@@ -1136,7 +1161,8 @@ api.patch('/admin/products/:id', auth, requirePermission('MANAGE_PRICING'), asyn
   const product = await pool.query(`UPDATE query_products SET ${assignments.join(', ')} WHERE id=$${values.length} RETURNING id,name,description,credit_cost,active`, values);
   if (!product.rowCount) throw appError('PRODUCT_NOT_FOUND', { code: 'PRODUCT_NOT_FOUND', http: 404, expose: true });
   await audit(req.user!.id, 'UPDATE_QUERY_PRODUCT', 'QUERY_PRODUCT', String(req.params.id), { fields: Object.keys(parsed.data), requestId: requestId(req) });
-  res.json(product.rows[0]);
+  const row = product.rows[0];
+  res.json({ id: row.id, name: row.name, description: row.description, creditCost: Number(row.credit_cost), active: Boolean(row.active) });
 }));
 
 api.get('/admin/users', auth, requirePermission('MANAGE_USERS'), asyncRoute(async (_req, res) => {
@@ -1192,7 +1218,7 @@ api.post('/admin/users/:id/wallet-adjustments', auth, requirePermission('MANAGE_
     await client.query('INSERT INTO wallets(user_id,balance) VALUES($1,$2) ON CONFLICT(user_id) DO UPDATE SET balance=EXCLUDED.balance,updated_at=now()', [req.params.id, after]);
     const transaction = await client.query(`INSERT INTO wallet_transactions(user_id,kind,amount,balance_before,balance_after,description,metadata)
       VALUES($1,'ADMIN_ADJUSTMENT',$2,$3,$4,$5,$6::jsonb) RETURNING id`, [req.params.id, parsed.data.amount, before, after, parsed.data.description, JSON.stringify({ adminId: req.user!.id, requestId: requestId(req) })]);
-    return { transactionId: transaction.rows[0].id, balance: after };
+    return { transactionId: transaction.rows[0].id, balanceBefore: before, balanceAfter: after, balance: after };
   });
   await audit(req.user!.id, 'ADMIN_WALLET_ADJUSTMENT', 'WALLET', String(req.params.id), { amount: parsed.data.amount, requestId: requestId(req) });
   res.status(201).json(result);
