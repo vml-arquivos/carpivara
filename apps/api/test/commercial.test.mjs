@@ -62,3 +62,16 @@ test('aceita cupom dentro da janela e rejeita expirado ou esgotado antes do paga
   assert.equal(couponWindowIsOpen({ active: true, expiresAt: '2026-08-21T23:59:59.000Z', now }), false);
   assert.equal(couponHasCapacity(10, 10, 0), false);
 });
+
+
+// O status CREATED é literal; a quantidade de expressões precisa continuar igual à quantidade de colunas.
+test('mantém o INSERT de payment_orders com colunas e expressões alinhadas', async () => {
+  const source = await (await import('node:fs/promises')).readFile(new URL('../src/server.ts', import.meta.url), 'utf8');
+  const match = source.match(/INSERT INTO payment_orders\(([^)]+)\)\s+VALUES\(([^)]+)\)\s+RETURNING id/);
+  assert.ok(match, 'INSERT de payment_orders não encontrado');
+  const columns = match[1].split(',').map((item) => item.trim()).filter(Boolean);
+  const expressions = match[2].split(',').map((item) => item.trim()).filter(Boolean);
+  assert.equal(columns.length, expressions.length);
+  assert.equal(expressions.filter((item) => item === "'CREATED'").length, 1);
+  assert.equal(expressions.includes('$12'), false);
+});

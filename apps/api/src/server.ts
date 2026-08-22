@@ -1082,7 +1082,7 @@ api.post('/payments/checkout', auth, requirePermission('BUY_CREDITS'), asyncRout
     const amountCents = Math.max(0, subtotalCents - discountCents);
     const externalReference = `carpivara_${crypto.randomUUID()}`;
     const order = await client.query(`INSERT INTO payment_orders(user_id,package_id,status,subtotal_cents,amount_cents,credits,provider,external_reference,discount_cents,coupon_id,affiliate_id,affiliate_commission_bps)
-      VALUES($1,$2,'CREATED',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`, [req.user!.id, packRow.id, subtotalCents, amountCents, packRow.credits, paymentProvider.name, externalReference, discountCents, couponId, affiliateId, affiliateCommissionBps]);
+      VALUES($1,$2,'CREATED',$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`, [req.user!.id, packRow.id, subtotalCents, amountCents, packRow.credits, paymentProvider.name, externalReference, discountCents, couponId, affiliateId, affiliateCommissionBps]);
     if (couponId) await client.query(`INSERT INTO coupon_redemptions(coupon_id,payment_order_id,status) VALUES($1,$2,'RESERVED')`, [couponId, order.rows[0].id]);
     return { orderId: order.rows[0].id as string, externalReference, pack: packRow, customer: profile.rows[0] as Record<string, unknown>, subtotalCents, discountCents, amountCents, couponCode, couponId, affiliateId };
   });
