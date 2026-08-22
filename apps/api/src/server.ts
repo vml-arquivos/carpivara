@@ -13,8 +13,9 @@ import { z } from 'zod';
 import { auth, issueSession, revokeSession, type AuthUser } from './auth.js';
 import { completeAuthorization, consumeLoginTicket, createAuthorizationRequest, oauthErrorUrl, oauthSuccessUrl, socialProviderStatus, type OAuthProvider } from './oauth.js';
 import { env } from './config.js';
-import { sendPasswordResetEmail, isEmailConfigured } from './email.js';
+import { sendContactConfirmationEmail, sendContactMessageEmail, sendPasswordResetEmail, isEmailConfigured } from './email.js';
 import { pool, tx } from './db.js';
+import type { PoolClient } from 'pg';
 import { normalizeBdrp } from './normalizer.js';
 import { hasPermission, permissionsFor, requirePermission } from './permissions.js';
 import { getProvider } from './providers/index.js';
@@ -25,6 +26,9 @@ import { ensureSchema } from './schema.js';
 import { performAdminLookup } from './adminLookup.js';
 import { executeVehicleLookup } from './vehicleLookup.js';
 import { calculateAffiliateCommission, calculateCouponDiscount, couponHasCapacity, couponWindowIsOpen } from './commercial.js';
+import { publicVehicleResult } from './privacy.js';
+import { buildGenericReport, defaultReportTemplate, reportPdf, reportPrintHtml, type GenericReport, type GenericReportTemplate } from './reportEngine.js';
+import { decryptTotpSecret, encryptTotpSecret, generateRecoveryCodes, generateTotpSetup, hashRecoveryCode, verifyTotpCode } from './totp.js';
 import type { FipeQuote, FipeSelectionItem, FipeVehicleDetails, FipeVehicleType, NormalizedVehicle } from './types.js';
 
 await ensureSchema();
@@ -42,8 +46,8 @@ const registerSchema = z.object({
   affiliateCode: z.string().trim().min(3).max(40).optional()
 });
 const oauthTicketSchema = z.object({ ticket: z.string().regex(/^[A-Za-z0-9_-]{30,160}$/) });
-const loginSchema = z.object({ email: z.string().trim().email().max(254), password: z.string().min(1).max(128) });
-const requestQuerySchema = z.object({ plate: plateSchema, productId: z.string().trim().min(1).max(80) });
+const loginSchema = z.object({ email: z.string().trim().email().max(254), password: z.string().min(1).max(128) }).strict();
+const requestQuerySchema = z.object({ plate: plateSchema, productId: z.string().trim().min(1).max(80) }).strict();
 const fipeVehicleTypeSchema = z.enum(['cars', 'motorcycles', 'trucks']);
 const fipeItemSchema = z.object({ code: z.string().trim().min(1).max(80), name: z.string().trim().min(1).max(180) });
 const fipeSelectionSchema = z.object({
@@ -53,8 +57,8 @@ const fipeSelectionSchema = z.object({
   year: fipeItemSchema.optional(),
   plate: z.string().trim().max(16).optional()
 }).refine((input) => Boolean(input.plate) || Boolean(input.vehicleType && input.brand && input.model && input.year), 'FIPE_SELECTION_REQUIRED');
-const sandboxCreditSchema = z.object({ credits: z.number().int().min(10).max(10000) });
-const changePasswordSchema = z.object({ currentPassword: z.string().min(1).max(128).optional(), newPassword: z.string().min(10).max(128) });
+const sandboxCreditSchema = z.object({ credits: z.number().int().min(10).max(10000) }).strict();
+const changePasswordSchema = z.object({ currentPassword: z.string().min(1).max(128).optional(), newPassword: z.string().min(10).max(128) }).strict();
 const profileUpdateSchema = z.object({
   name: z.string().trim().min(2).max(120),
   cpfCnpj: z.string().trim().max(30).optional(),
@@ -64,14 +68,50 @@ const profileUpdateSchema = z.object({
   state: z.string().trim().regex(/^[A-Za-z]{2}$/).optional(),
   marketingOptIn: z.boolean().optional()
 });
-const forgotPasswordSchema = z.object({ email: z.string().trim().email().max(254) });
-const resetPasswordSchema = z.object({ token: z.string().regex(/^[A-Za-z0-9_-]{30,160}$/), newPassword: z.string().min(10).max(128) });
-const productUpdateSchema = z.object({
-  name: z.string().trim().min(2).max(120).optional(),
-  description: z.string().trim().min(2).max(400).optional(),
-  creditCost: z.number().int().min(0).max(100000).optional(),
-  active: z.boolean().optional()
-}).refine((input) => Object.keys(input).length > 0, 'EMPTY_UPDATE');
+const forgotPasswordSchema = z.object({ email: z.string().trim().email().max(254) }).strict();
+  const resetPasswordSchema = z.object({ token: z.string().regex(/^[A-Za-z0-9_-]{30,160}$/), newPassword: z.string().min(10).max(128) }).strict();
+  const totpChallengeSchema = z.object({ challenge: z.string().regex(/^[A-Za-z0-9_-]{30,160}$/), code: z.string().trim().min(6).max(16) }).strict();
+  const totpEnrollmentSchema = z.object({ challenge: z.string().regex(/^[A-Za-z0-9_-]{30,160}$/), code: z.string().trim().regex(/^\d{6}$/) }).strict();
+  const reportFieldAdminSchema = z.object({ key: z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_.]{0,119}$/), label: z.string().trim().min(1).max(120), visible: z.boolean().optional().default(true) }).strict().refine((field) => !/(owner|cpf|cnpj|document|address|endereco|logradouro|phone|telefone|email)/i.test(field.key), 'PRIVATE_FIELD_FORBIDDEN');
+  const reportSectionAdminSchema = z.object({ key: z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,79}$/), label: z.string().trim().min(1).max(120), order: z.number().int().min(-10000).max(10000).optional(), visible: z.boolean().optional().default(true), fields: z.array(reportFieldAdminSchema).max(60) }).strict();
+  const reportTemplateConfigSchema = z.object({ title: z.string().trim().min(1).max(160).optional(), subtitle: z.string().trim().min(1).max(240).optional(), sections: z.array(reportSectionAdminSchema).min(1).max(40) }).strict();
+  const productUpdateSchema = z.object({
+    name: z.string().trim().min(2).max(120).optional(),
+    description: z.string().trim().min(2).max(400).optional(),
+    creditCost: z.number().int().min(0).max(100000).optional(),
+    referencePriceCents: z.number().int().min(0).max(100000000).nullable().optional(),
+    slug: z.string().trim().min(2).max(80).regex(/^[a-z0-9-]+$/).optional(),
+    features: z.array(z.string().trim().min(1).max(180)).max(30).optional(),
+    source: z.string().trim().max(240).nullable().optional(),
+    coverage: z.string().trim().max(500).nullable().optional(),
+    commercialStatus: z.enum(['ACTIVE', 'SOON', 'FREE', 'HIDDEN']).optional(),
+    featured: z.boolean().optional(),
+    displayOrder: z.number().int().min(-10000).max(10000).optional(),
+    isFree: z.boolean().optional(),
+    active: z.boolean().optional()
+  }).strict().refine((input) => Object.keys(input).length > 0, 'EMPTY_UPDATE');
+  const reportTemplateCreateSchema = z.object({ name: z.string().trim().min(2).max(160), status: z.enum(['DRAFT', 'PUBLISHED']).default('DRAFT'), config: reportTemplateConfigSchema }).strict();
+  const orgPackagePriceSchema = z.object({ packageSlug: z.string().trim().min(2).max(80), priceCents: z.number().int().min(1).max(100000000), active: z.boolean().default(true), startsAt: z.string().datetime().nullable().optional(), endsAt: z.string().datetime().nullable().optional() }).strict().refine((value) => !value.startsAt || !value.endsAt || value.endsAt > value.startsAt, 'INVALID_PRICE_WINDOW');
+  const contactMessageSchema = z.object({ name: z.string().trim().min(2).max(120), email: z.string().trim().email().max(254), subject: z.string().trim().min(2).max(160), message: z.string().trim().min(10).max(5000), category: z.enum(['SUPPORT', 'PRIVACY', 'LGPD', 'COMMERCIAL']).default('SUPPORT') }).strict();
+  const contactStatusSchema = z.object({ status: z.enum(['OPEN', 'IN_PROGRESS', 'CLOSED']) }).strict();
+  const auditRetentionSchema = z.object({ olderThanDays: z.number().int().min(30).max(3650).default(180), execute: z.boolean().default(false) }).strict();
+  const productCreateSchema = z.object({
+    id: z.string().trim().regex(/^[A-Z][A-Z0-9_]{1,39}$/),
+    name: z.string().trim().min(2).max(120),
+    description: z.string().trim().min(2).max(400),
+    creditCost: z.number().int().min(0).max(100000),
+    referencePriceCents: z.number().int().min(0).max(100000000).nullable().optional(),
+    slug: z.string().trim().min(2).max(80).regex(/^[a-z0-9-]+$/),
+    features: z.array(z.string().trim().min(1).max(180)).max(30).default([]),
+    source: z.string().trim().max(240).nullable().optional(),
+    coverage: z.string().trim().max(500).nullable().optional(),
+    commercialStatus: z.enum(['ACTIVE', 'SOON', 'FREE', 'HIDDEN']).default('SOON'),
+    featured: z.boolean().default(false),
+    displayOrder: z.number().int().min(-10000).max(10000).default(100),
+    isFree: z.boolean().default(false),
+    active: z.boolean().default(true),
+    reportConfig: reportTemplateConfigSchema.optional()
+  }).strict();
 const adminUserUpdateSchema = z.object({
   active: z.boolean().optional(),
   role: z.enum(['OPERADOR', 'ADMIN', 'CLIENTE']).optional()
@@ -134,6 +174,78 @@ function publicUser(row: { id: string; email: string; name: string; role: string
   return { id: row.id, email: row.email, name: row.name, role: row.role };
 }
 
+function isTeamRole(role: string): boolean {
+  return ['OPERADOR', 'ADMIN', 'SUPER_ADMIN'].includes(role);
+}
+
+function challengeHash(challenge: string): string {
+  return createHash('sha256').update(challenge).digest('hex');
+}
+
+async function createAuthChallenge(userId: string, kind: 'TOTP_LOGIN' | 'TOTP_ENROLL', ip: string): Promise<string> {
+  const challenge = randomBytes(48).toString('base64url');
+  await pool.query(`INSERT INTO auth_challenges(user_id,kind,token_hash,expires_at,ip_hash) VALUES($1,$2,$3,now()+interval '10 minutes',$4)`, [userId, kind, challengeHash(challenge), hashIp(ip)]);
+  return challenge;
+}
+
+async function authResultForUser(user: AuthUser, flow: string, req: Request): Promise<Record<string, unknown>> {
+  if (!isTeamRole(user.role)) {
+    const issued = await issueSession(user, { flow, requestId: requestId(req), totpVerified: false });
+    return { token: issued.token, user };
+  }
+  const existing = await pool.query('SELECT enabled_at FROM team_totp WHERE user_id=$1', [user.id]);
+  if (existing.rowCount && existing.rows[0].enabled_at) {
+    const challenge = await createAuthChallenge(user.id, 'TOTP_LOGIN', req.ip ?? 'unknown');
+    return { user, totpRequired: 'VERIFY', challenge, expiresInSeconds: 600 };
+  }
+  const setup = generateTotpSetup(user.email);
+  await pool.query(`INSERT INTO team_totp(user_id,encrypted_secret,enabled_at) VALUES($1,$2,NULL)
+    ON CONFLICT(user_id) DO UPDATE SET encrypted_secret=EXCLUDED.encrypted_secret,enabled_at=NULL,updated_at=now()`, [user.id, encryptTotpSecret(setup.secret)]);
+  const challenge = await createAuthChallenge(user.id, 'TOTP_ENROLL', req.ip ?? 'unknown');
+  return { user, totpRequired: 'ENROLL', challenge, setup, expiresInSeconds: 600 };
+}
+
+async function completeTotpEnrollment(challenge: string, code: string): Promise<{ user: AuthUser; recoveryCodes: string[] }> {
+  return tx(async (client) => {
+    const found = await client.query(`SELECT c.id,c.user_id,u.id AS uid,u.email,u.name,u.role,t.encrypted_secret
+      FROM auth_challenges c JOIN users u ON u.id=c.user_id JOIN team_totp t ON t.user_id=u.id
+      WHERE c.token_hash=$1 AND c.kind='TOTP_ENROLL' AND c.used_at IS NULL AND c.expires_at>now() AND u.active=true FOR UPDATE`, [challengeHash(challenge)]);
+    if (!found.rowCount) throw appError('TOTP_CHALLENGE_INVALID', { code: 'TOTP_CHALLENGE_INVALID', http: 401, expose: true });
+    const row = found.rows[0] as Record<string, unknown>;
+    let valid = false;
+    try { valid = verifyTotpCode(decryptTotpSecret(String(row.encrypted_secret)), code); } catch { valid = false; }
+    if (!valid) throw appError('TOTP_CODE_INVALID', { code: 'TOTP_CODE_INVALID', http: 401, expose: true });
+    const recoveryCodes = generateRecoveryCodes();
+    await client.query('UPDATE team_totp SET enabled_at=now(),last_verified_at=now(),updated_at=now() WHERE user_id=$1', [row.user_id]);
+    await client.query('DELETE FROM team_totp_recovery_codes WHERE user_id=$1', [row.user_id]);
+    for (const recoveryCode of recoveryCodes) await client.query('INSERT INTO team_totp_recovery_codes(user_id,code_hash) VALUES($1,$2)', [row.user_id, hashRecoveryCode(recoveryCode)]);
+    await client.query('UPDATE auth_challenges SET used_at=now() WHERE id=$1', [row.id]);
+    return { user: { id: String(row.uid), email: String(row.email), name: String(row.name), role: String(row.role) } as AuthUser, recoveryCodes };
+  });
+}
+
+async function completeTotpLogin(challenge: string, code: string): Promise<AuthUser> {
+  const result = await tx(async (client) => {
+    const found = await client.query(`SELECT c.id,c.user_id,u.id AS uid,u.email,u.name,u.role,t.encrypted_secret,t.enabled_at
+      FROM auth_challenges c JOIN users u ON u.id=c.user_id LEFT JOIN team_totp t ON t.user_id=u.id
+      WHERE c.token_hash=$1 AND c.kind='TOTP_LOGIN' AND c.used_at IS NULL AND c.expires_at>now() AND u.active=true FOR UPDATE`, [challengeHash(challenge)]);
+    if (!found.rowCount) throw appError('TOTP_CHALLENGE_INVALID', { code: 'TOTP_CHALLENGE_INVALID', http: 401, expose: true });
+    const row = found.rows[0] as Record<string, unknown>;
+    if (!row.encrypted_secret || !row.enabled_at) throw appError('TOTP_ENROLLMENT_REQUIRED', { code: 'TOTP_ENROLLMENT_REQUIRED', http: 403, expose: true });
+    let valid = false;
+    try { valid = verifyTotpCode(decryptTotpSecret(String(row.encrypted_secret)), code); } catch { valid = false; }
+    if (!valid) {
+      const recovery = await client.query(`SELECT id FROM team_totp_recovery_codes WHERE user_id=$1 AND used_at IS NULL AND code_hash=$2 LIMIT 1 FOR UPDATE`, [row.user_id, hashRecoveryCode(code)]);
+      if (!recovery.rowCount) throw appError('TOTP_CODE_INVALID', { code: 'TOTP_CODE_INVALID', http: 401, expose: true });
+      await client.query('UPDATE team_totp_recovery_codes SET used_at=now() WHERE id=$1', [recovery.rows[0].id]);
+    }
+    await client.query('UPDATE auth_challenges SET used_at=now() WHERE id=$1', [row.id]);
+    await client.query('UPDATE team_totp SET last_verified_at=now() WHERE user_id=$1', [row.user_id]);
+    return { id: String(row.uid), email: String(row.email), name: String(row.name), role: String(row.role) } as AuthUser;
+  });
+  return result;
+}
+
 function toSafeQueryError(error: unknown): { status: number; code: string; message: string } {
   const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : undefined;
   if (code === 'NOT_FOUND') return { status: 404, code: 'PLACA_NAO_ENCONTRADA_SANDBOX', message: 'Esta placa não está disponível no ambiente de testes.' };
@@ -175,7 +287,7 @@ function serializeQuery(row: QueryRow & Record<string, unknown>): Record<string,
   const vehicle = !isFipe && normalized ? normalized as NormalizedVehicle : null;
   const result = isFipe
     ? { fipe: publicFipeQuote((normalized as FipeStoredResult).quote), blocks: (normalized as FipeStoredResult).quote.blocks, diagnostic: { level: 'CLEAR', title: 'Valor FIPE consultado', reason: 'A Tabela FIPE foi consultada; a situação documental não está incluída nesta modalidade.' } }
-    : vehicle ? { ...vehicle, coverage: vehicle.coverage ?? { identification: vehicle.identification ? 'FOUND' : 'NOT_QUERIED', debts: vehicle.debts.length ? 'FOUND' : 'NOT_QUERIED', restrictions: vehicle.restrictions.length ? 'FOUND' : 'NOT_QUERIED', recall: vehicle.recall ? 'FOUND' : 'NOT_QUERIED' }, diagnostic: diagnostic(vehicle) } : null;
+    : vehicle ? { ...publicVehicleResult(vehicle), coverage: vehicle.coverage ?? { identification: vehicle.identification ? 'FOUND' : 'NOT_QUERIED', debts: vehicle.debts.length ? 'FOUND' : 'NOT_QUERIED', restrictions: vehicle.restrictions.length ? 'FOUND' : 'NOT_QUERIED', recall: vehicle.recall ? 'FOUND' : 'NOT_QUERIED' }, diagnostic: diagnostic(vehicle) } : null;
   return {
     id: row.id,
     plate: row.plate,
@@ -202,8 +314,25 @@ app.use((req, res, next) => {
   res.on('finish', () => log('info', 'request_complete', { requestId: id, method: req.method, path: req.path, status: res.statusCode, durationMs: Math.round(performance.now() - started) }));
   next();
 });
-app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: 'same-origin' } }));
-app.use(cors({ origin: env.NODE_ENV === 'production' ? false : env.WEB_ORIGIN, credentials: false }));
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      baseUri: ["'self'"],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+      formAction: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+      fontSrc: ["'self'", 'data:', 'https:'],
+      connectSrc: ["'self'", env.WEB_ORIGIN],
+      ...(env.NODE_ENV === 'production' ? { upgradeInsecureRequests: [] } : {})
+    }
+  },
+  crossOriginResourcePolicy: { policy: 'same-origin' }
+}));
+app.use(cors({ origin: env.WEB_ORIGIN, credentials: false }));
 app.use(express.json({
   limit: '256kb',
   type: 'application/json',
@@ -236,6 +365,13 @@ const passwordResetRateLimit = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'TOO_MANY_ATTEMPTS', message: 'Muitas solicitações. Aguarde alguns minutos para tentar novamente.' }
+});
+const contactRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'TOO_MANY_ATTEMPTS', message: 'Muitas mensagens. Aguarde alguns minutos para tentar novamente.' }
 });
 
 function passwordResetTokenHash(token: string): string {
@@ -279,9 +415,34 @@ api.post('/auth/oauth/consume', loginRateLimit, asyncRoute(async (req, res) => {
   const parsed = oauthTicketSchema.safeParse(req.body);
   if (!parsed.success) throw appError('OAUTH_TICKET_INVALID', { code: 'OAUTH_TICKET_INVALID', http: 401, expose: true });
   const user = await consumeLoginTicket(parsed.data.ticket);
-  const issued = await issueSession(user, { flow: 'social', requestId: requestId(req) });
-  await audit(user.id, 'OAUTH_LOGIN', 'USER', user.id, { requestId: requestId(req) });
+  const result = await authResultForUser(user, 'social', req);
+  await audit(user.id, 'OAUTH_LOGIN', 'USER', user.id, { requestId: requestId(req), totpRequired: isTeamRole(user.role) });
+  res.json(result);
+}));
+
+api.post('/auth/totp/verify', loginRateLimit, asyncRoute(async (req, res) => {
+  const parsed = totpChallengeSchema.safeParse(req.body);
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const user = await completeTotpLogin(parsed.data.challenge, parsed.data.code);
+  const issued = await issueSession(user, { flow: 'totp_login', requestId: requestId(req), totpVerified: true });
+  await audit(user.id, 'TOTP_LOGIN', 'USER', user.id, { requestId: requestId(req), recoveryCodeUsed: !/^\d{6}$/.test(parsed.data.code) });
   res.json({ token: issued.token, user });
+}));
+
+api.post('/auth/totp/enroll/confirm', loginRateLimit, asyncRoute(async (req, res) => {
+  const parsed = totpEnrollmentSchema.safeParse(req.body);
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const enrolled = await completeTotpEnrollment(parsed.data.challenge, parsed.data.code);
+  const issued = await issueSession(enrolled.user, { flow: 'totp_enrollment', requestId: requestId(req), totpVerified: true });
+  await audit(enrolled.user.id, 'TOTP_ENROLLED', 'USER', enrolled.user.id, { requestId: requestId(req) });
+  res.json({ token: issued.token, user: enrolled.user, recoveryCodes: enrolled.recoveryCodes });
+}));
+
+api.get('/auth/totp/status', auth, asyncRoute(async (req, res) => {
+  if (!isTeamRole(req.user!.role)) { res.json({ required: false, enabled: false }); return; }
+  const result = await pool.query(`SELECT t.enabled_at,(SELECT count(*) FROM team_totp_recovery_codes c WHERE c.user_id=t.user_id AND c.used_at IS NULL) AS recovery_codes
+    FROM team_totp t WHERE t.user_id=$1`, [req.user!.id]);
+  res.json({ required: true, enabled: Boolean(result.rows[0]?.enabled_at), recoveryCodesRemaining: Number(result.rows[0]?.recovery_codes ?? 0) });
 }));
 
 api.post('/auth/register', asyncRoute(async (req, res) => {
@@ -335,9 +496,9 @@ api.post('/auth/login', loginRateLimit, asyncRoute(async (req, res) => {
   }
   const user = publicUser({ id: String(account.id), email: String(account.email), name: String(account.name), role: String(account.role) });
   await pool.query('UPDATE users SET failed_login_attempts=0, locked_until=NULL, last_login_at=now() WHERE id=$1', [user.id]);
-  const issued = await issueSession(user, { flow: 'password', requestId: requestId(req) });
-  await audit(user.id, 'LOGIN', 'USER', user.id, { requestId: requestId(req) });
-  res.json({ token: issued.token, user });
+  const resultForUser = await authResultForUser(user, 'password', req);
+  await audit(user.id, 'LOGIN', 'USER', user.id, { requestId: requestId(req), totpRequired: isTeamRole(user.role) });
+  res.json(resultForUser);
 }));
 
 api.post('/auth/logout', auth, asyncRoute(async (req, res) => {
@@ -426,9 +587,9 @@ api.post('/auth/reset-password', passwordResetRateLimit, asyncRoute(async (req, 
     return row as { id: string; user_id: string; email: string; name: string; role: string };
   });
   const user = publicUser({ id: String(result.user_id), email: String(result.email), name: String(result.name), role: String(result.role) });
-  const issued = await issueSession(user, { flow: 'password_reset', requestId: requestId(req) });
-  await audit(user.id, 'PASSWORD_RESET_COMPLETED', 'USER', user.id, { requestId: requestId(req) });
-  res.json({ token: issued.token, user, message: 'Senha redefinida com sucesso.' });
+  const resultForUser = await authResultForUser(user, 'password_reset', req);
+  await audit(user.id, 'PASSWORD_RESET_COMPLETED', 'USER', user.id, { requestId: requestId(req), totpRequired: isTeamRole(user.role) });
+  res.json({ ...resultForUser, message: 'Senha redefinida com sucesso.' });
 }));
 
 api.post('/auth/change-password', auth, asyncRoute(async (req, res) => {
@@ -548,6 +709,58 @@ async function organizationBrandingForUser(userId: string): Promise<ReportBrandi
   };
 }
 
+async function effectivePackagePrice(client: PoolClient, userId: string, packageId: string, basePriceCents: number): Promise<{ priceCents: number; negotiated: boolean }> {
+  const membership = await client.query(`SELECT m.organization_id
+    FROM organization_members m JOIN organizations o ON o.id=m.organization_id
+    WHERE m.user_id=$1 AND o.active=true ORDER BY o.created_at LIMIT 1`, [userId]);
+  if (!membership.rowCount) return { priceCents: basePriceCents, negotiated: false };
+  const agreement = await client.query(`SELECT price_cents FROM organization_credit_package_prices
+    WHERE organization_id=$1 AND package_id=$2 AND active=true
+      AND (starts_at IS NULL OR starts_at <= now())
+      AND (ends_at IS NULL OR ends_at > now())`, [membership.rows[0].organization_id, packageId]);
+  if (!agreement.rowCount) return { priceCents: basePriceCents, negotiated: false };
+  const priceCents = Number(agreement.rows[0].price_cents);
+  return Number.isInteger(priceCents) && priceCents > 0 ? { priceCents, negotiated: true } : { priceCents: basePriceCents, negotiated: false };
+}
+
+async function loadGenericReportTemplate(productId: string, productName: string): Promise<GenericReportTemplate> {
+  try {
+    const result = await pool.query(`SELECT t.id,t.product_id,t.version,t.name,t.status,t.config
+      FROM product_report_configs c JOIN report_templates t ON t.id=c.template_id
+      WHERE c.product_id=$1 AND t.status='PUBLISHED'`, [productId]);
+    if (result.rowCount) {
+      const row = result.rows[0] as Record<string, unknown>;
+      const config = row.config as Record<string, unknown>;
+      if (config && Array.isArray(config.sections)) return { id: String(row.id), productId: String(row.product_id), version: Number(row.version), name: String(row.name), status: 'PUBLISHED', title: typeof config.title === 'string' ? config.title : productName, subtitle: typeof config.subtitle === 'string' ? config.subtitle : 'Relatório veicular BUSCARR', sections: config.sections as GenericReportTemplate['sections'] };
+    }
+  } catch (error) {
+    log('warn', 'report_template_fallback', { productId, error: error instanceof Error ? error.message : 'unknown' });
+  }
+  return defaultReportTemplate(productId, productName);
+}
+
+async function saveGenericVehicleReport(queryId: string, userId: string, productId: string, productName: string, normalized: NormalizedVehicle, provider: string): Promise<void> {
+  const template = await loadGenericReportTemplate(productId, productName);
+  const report = buildGenericReport(template, publicVehicleResult(normalized));
+  const documentCode = `RPT-${randomBytes(6).toString('hex').toUpperCase()}`;
+  await pool.query(`INSERT INTO report_documents(document_code,query_id,user_id,report_kind,report_version,provider,report_hash,snapshot,product_id,template_id,template_version)
+    VALUES($1,$2,$3,'VEHICLE_QUERY',$4,$5,$6,$7::jsonb,$8,$9,$10)`, [documentCode, queryId, userId, template.version, provider, report.validation, JSON.stringify({ report }), productId, template.id.startsWith('default-') ? null : template.id, template.version]);
+}
+
+async function genericReportForQuery(queryId: string, userId: string): Promise<GenericReport> {
+  const stored = await pool.query(`SELECT d.snapshot FROM report_documents d WHERE d.query_id=$1 AND d.user_id=$2 AND d.report_kind='VEHICLE_QUERY' ORDER BY d.created_at DESC LIMIT 1`, [queryId, userId]);
+  if (stored.rowCount) {
+    const report = (stored.rows[0].snapshot as Record<string, unknown>)?.report as GenericReport | undefined;
+    if (report?.schema === 'buscarr.generic.report.v1') return report;
+  }
+  const query = await pool.query(`SELECT q.product_id,p.name,r.normalized,q.provider FROM vehicle_queries q JOIN query_products p ON p.id=q.product_id JOIN vehicle_query_results r ON r.query_id=q.id WHERE q.id=$1 AND q.user_id=$2 AND q.status='SUCCESS'`, [queryId, userId]);
+  if (!query.rowCount) throw appError('REPORT_NOT_FOUND', { code: 'REPORT_NOT_FOUND', http: 404, expose: true });
+  const row = query.rows[0] as Record<string, unknown>;
+  const normalized = publicVehicleResult(row.normalized as NormalizedVehicle);
+  const template = await loadGenericReportTemplate(String(row.product_id), String(row.name));
+  return buildGenericReport(template, normalized);
+}
+
 async function saveFipeDocument(quote: FipeQuote): Promise<void> {
   await pool.query(`INSERT INTO report_documents(document_code,report_kind,provider,report_hash,snapshot)
     VALUES($1,'FIPE_FREE',$2,$3,$4::jsonb) ON CONFLICT(document_code) DO NOTHING`, [quote.documentCode, quote.provider, quote.reportHash, JSON.stringify(reportSnapshot(quote))]);
@@ -567,6 +780,22 @@ function publicFipeQuote(quote: FipeQuote): Omit<FipeQuote, 'provider' | 'source
 async function safeBusinessSettings(): Promise<Record<string, unknown>> {
   const stored = await pool.query('SELECT value FROM platform_settings WHERE key=$1', ['safe_business']);
   return (stored.rows[0]?.value ?? {}) as Record<string, unknown>;
+}
+
+async function createContactTicket(userId: string | null, input: { name: string; email: string; subject: string; message: string; category: string }): Promise<{ id: string; emailSent: boolean }> {
+  const inserted = await pool.query(`INSERT INTO contact_messages(user_id,name,email,subject,message,category) VALUES($1,$2,$3,$4,$5,$6) RETURNING id,created_at`, [userId, input.name, input.email.toLowerCase(), input.subject, input.message, input.category]);
+  const ticketId = String(inserted.rows[0].id);
+  const settings = await safeBusinessSettings();
+  const supportEmail = typeof settings.supportEmail === 'string' && settings.supportEmail ? settings.supportEmail : null;
+  if (!supportEmail || !isEmailConfigured()) return { id: ticketId, emailSent: false };
+  try {
+    await sendContactMessageEmail({ to: supportEmail, requesterName: input.name, requesterEmail: input.email, subject: input.subject, message: input.message, category: input.category, ticketId });
+    await sendContactConfirmationEmail({ to: input.email, requesterName: input.name, subject: input.subject, ticketId });
+    return { id: ticketId, emailSent: true };
+  } catch (error) {
+    log('warn', 'contact_email_failed', { requestId: 'internal', ticketId, reason: error instanceof Error ? error.message : 'unknown' });
+    return { id: ticketId, emailSent: false };
+  }
 }
 
 const publicOfferDescriptions: Record<string, string> = {
@@ -842,6 +1071,21 @@ api.get('/stats', asyncRoute(async (_req, res) => {
   res.json({ totalQueries: Number(result.rows[0].total_queries) });
 }));
 
+api.post('/contact', contactRateLimit, asyncRoute(async (req, res) => {
+  const parsed = contactMessageSchema.safeParse(req.body);
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const result = await createContactTicket(null, parsed.data);
+  res.status(201).json({ ticketId: result.id, emailSent: result.emailSent, message: result.emailSent ? 'Solicitação recebida. Enviamos uma confirmação para o e-mail informado.' : 'Solicitação recebida. O protocolo foi registrado; o retorno por e-mail será ativado quando o canal estiver configurado.' });
+}));
+
+api.post('/account/contact', auth, contactRateLimit, asyncRoute(async (req, res) => {
+  const parsed = contactMessageSchema.safeParse(req.body);
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const result = await createContactTicket(req.user!.id, parsed.data);
+  await audit(req.user!.id, 'CREATE_CONTACT_TICKET', 'CONTACT', result.id, { category: parsed.data.category, requestId: requestId(req) });
+  res.status(201).json({ ticketId: result.id, emailSent: result.emailSent, message: result.emailSent ? 'Solicitação recebida. Enviamos uma confirmação para o e-mail informado.' : 'Solicitação recebida e registrada. O canal de e-mail ainda não está configurado.' });
+}));
+
 api.post('/plan-interest', asyncRoute(async (req, res) => {
   const parsed = planInterestSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
@@ -927,7 +1171,13 @@ api.post('/queries', auth, requirePermission('QUERY_VEHICLE'), asyncRoute(async 
     await audit(req.user!.id, 'VEHICLE_QUERY', 'VEHICLE_QUERY', queryId, { plate: parsed.data.plate, productId: parsed.data.productId, provider: provider.name, requestId: requestId(req) });
     const completed = await pool.query(`SELECT q.id,q.plate,q.product_id,q.status,q.credits_cost,q.provider,q.created_at,q.completed_at,p.name AS product_name,r.normalized
       FROM vehicle_queries q JOIN query_products p ON p.id=q.product_id JOIN vehicle_query_results r ON r.query_id=q.id WHERE q.id=$1`, [queryId]);
-    res.status(201).json(serializeQuery(completed.rows[0] as QueryRow & Record<string, unknown>));
+    const completedRow = completed.rows[0] as QueryRow & Record<string, unknown>;
+    try {
+      await saveGenericVehicleReport(String(queryId), req.user!.id, String(completedRow.product_id), String(completedRow.product_name), completedRow.normalized as NormalizedVehicle, String(completedRow.provider));
+    } catch (error) {
+      log('error', 'generic_report_snapshot_failed', { queryId, error: error instanceof Error ? error.message : 'unknown' });
+    }
+    res.status(201).json(serializeQuery(completedRow));
   } catch (error: unknown) {
     if (queryId) {
       await tx(async (client) => {
@@ -978,6 +1228,21 @@ api.get('/queries/:id/export', auth, requirePermission('VIEW_HISTORY'), asyncRou
   res.type('application/json').send(JSON.stringify(serializeQuery(query.rows[0] as QueryRow & Record<string, unknown>), null, 2));
 }));
 
+api.get('/queries/:id/report/pdf', auth, requirePermission('VIEW_HISTORY'), asyncRoute(async (req, res) => {
+  const report = await genericReportForQuery(String(req.params.id), req.user!.id);
+  const branding = await organizationBrandingForUser(req.user!.id);
+  await audit(req.user!.id, 'EXPORT_QUERY_REPORT_PDF', 'VEHICLE_QUERY', String(req.params.id), { requestId: requestId(req) });
+  res.setHeader('Content-Disposition', `attachment; filename="buscarr-${String(req.params.id).slice(0, 8)}.pdf"`);
+  res.type('application/pdf').send(reportPdf(report, branding));
+}));
+
+api.get('/queries/:id/report/print', auth, requirePermission('VIEW_HISTORY'), asyncRoute(async (req, res) => {
+  const report = await genericReportForQuery(String(req.params.id), req.user!.id);
+  const branding = await organizationBrandingForUser(req.user!.id);
+  await audit(req.user!.id, 'PRINT_QUERY_REPORT', 'VEHICLE_QUERY', String(req.params.id), { requestId: requestId(req) });
+  res.type('html').send(reportPrintHtml(report, branding));
+}));
+
 api.get('/wallet/transactions', auth, asyncRoute(async (req, res) => {
   const transactions = await pool.query('SELECT id,kind,amount,balance_before,balance_after,description,created_at FROM wallet_transactions WHERE user_id=$1 ORDER BY created_at DESC LIMIT 100', [req.user!.id]);
   res.json(transactions.rows.map((row) => ({ id: row.id, kind: row.kind, amount: row.amount, balanceBefore: row.balance_before, balanceAfter: row.balance_after, description: row.description, createdAt: row.created_at })));
@@ -1002,9 +1267,13 @@ api.post('/payments/sandbox', auth, requirePermission('BUY_CREDITS'), asyncRoute
   res.status(201).json({ status: 'PAID', credits: parsed.data.credits, ...result });
 }));
 
-api.get('/credit-packages', auth, requirePermission('BUY_CREDITS'), asyncRoute(async (_req, res) => {
-  const packages = await pool.query('SELECT slug,name,description,credits,price_cents FROM credit_packages WHERE active=true ORDER BY display_order,price_cents');
-  res.json(packages.rows.map((item) => ({ slug: item.slug, name: item.name, description: item.description, credits: Number(item.credits), priceCents: Number(item.price_cents) })));
+api.get('/credit-packages', auth, requirePermission('BUY_CREDITS'), asyncRoute(async (req, res) => {
+  const packages = await pool.query('SELECT id,slug,name,description,credits,price_cents FROM credit_packages WHERE active=true ORDER BY display_order,price_cents');
+  const items = await Promise.all(packages.rows.map(async (item) => {
+    const pricing = await tx((client) => effectivePackagePrice(client, req.user!.id, String(item.id), Number(item.price_cents)));
+    return { slug: item.slug, name: item.name, description: item.description, credits: Number(item.credits), basePriceCents: Number(item.price_cents), priceCents: pricing.priceCents, negotiated: pricing.negotiated };
+  }));
+  res.json(items);
 }));
 
 api.get('/payments/orders', auth, requirePermission('BUY_CREDITS'), asyncRoute(async (req, res) => {
@@ -1017,10 +1286,12 @@ api.post('/payments/quote', auth, requirePermission('BUY_CREDITS'), asyncRoute(a
   const parsed = checkoutSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
   const quote = await tx(async (client) => {
-    const pack = await client.query('SELECT slug,name,credits,price_cents FROM credit_packages WHERE slug=$1 AND active=true', [parsed.data.packageSlug]);
+    const pack = await client.query('SELECT id,slug,name,credits,price_cents FROM credit_packages WHERE slug=$1 AND active=true', [parsed.data.packageSlug]);
     if (!pack.rowCount) throw appError('CREDIT_PACKAGE_NOT_FOUND', { code: 'CREDIT_PACKAGE_NOT_FOUND', http: 404, expose: true });
     const packRow = pack.rows[0] as Record<string, unknown>;
-    const subtotalCents = Number(packRow.price_cents);
+    const basePriceCents = Number(packRow.price_cents);
+    const pricing = await effectivePackagePrice(client, req.user!.id, String(packRow.id), basePriceCents);
+    const subtotalCents = pricing.priceCents;
     let discountCents = 0;
     let couponCode: string | null = null;
     if (parsed.data.couponCode) {
@@ -1036,7 +1307,7 @@ api.post('/payments/quote', auth, requirePermission('BUY_CREDITS'), asyncRoute(a
       discountCents = calculateCouponDiscount(subtotalCents, String(couponRow.discount_type) as 'PERCENT' | 'FIXED', Number(couponRow.discount_value));
       if (discountCents >= subtotalCents) throw appError('COUPON_ZERO_TOTAL_UNSUPPORTED', { code: 'COUPON_ZERO_TOTAL_UNSUPPORTED', http: 400, expose: true });
     }
-    return { packageSlug: String(packRow.slug), packageName: String(packRow.name), credits: Number(packRow.credits), couponCode, affiliateCode: parsed.data.affiliateCode ?? null, subtotalCents, discountCents, amountCents: Math.max(0, subtotalCents - discountCents) };
+    return { packageSlug: String(packRow.slug), packageName: String(packRow.name), credits: Number(packRow.credits), couponCode, affiliateCode: parsed.data.affiliateCode ?? null, basePriceCents, negotiated: pricing.negotiated, subtotalCents, discountCents, amountCents: Math.max(0, subtotalCents - discountCents) };
   });
   res.json({ ...quote, paymentProviderConfigured: getPaymentProvider().isConfigured(), usageCountChangesOnlyAfterPaid: true });
 }));
@@ -1052,7 +1323,9 @@ api.post('/payments/checkout', auth, requirePermission('BUY_CREDITS'), asyncRout
     const profile = await client.query(`SELECT u.name,u.email,p.cpf_cnpj,p.phone FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id WHERE u.id=$1 AND u.active=true`, [req.user!.id]);
     if (!profile.rowCount) throw appError('AUTH_REQUIRED', { code: 'AUTH_REQUIRED', http: 401, expose: true });
     const packRow = pack.rows[0] as Record<string, unknown>;
-    const subtotalCents = Number(packRow.price_cents);
+    const basePriceCents = Number(packRow.price_cents);
+    const pricing = await effectivePackagePrice(client, req.user!.id, String(packRow.id), basePriceCents);
+    const subtotalCents = pricing.priceCents;
     let discountCents = 0;
     let couponId: string | null = null;
     let couponCode: string | null = null;
@@ -1533,9 +1806,29 @@ api.post('/admin/lookups', auth, requirePermission('VIEW_SENSITIVE_DATA'), async
 }));
 
 api.get('/admin/products', auth, requirePermission('MANAGE_PRICING'), asyncRoute(async (_req, res) => {
-  const products = await pool.query(`SELECT id,name,description,credit_cost,active,slug,features,is_free,commercial_status,featured
-    FROM query_products ORDER BY display_order,credit_cost`);
-  res.json(products.rows.map((product) => ({ id: product.id, name: product.name, description: product.description, creditCost: Number(product.credit_cost), active: Boolean(product.active), slug: product.slug, features: product.features, isFree: Boolean(product.is_free), commercialStatus: product.commercial_status, featured: Boolean(product.featured) })));
+  const products = await pool.query(`SELECT p.id,p.name,p.description,p.credit_cost,p.reference_price_cents,p.active,p.slug,p.features,p.is_free,p.commercial_status,p.featured,p.display_order,p.source,p.coverage,
+      t.id AS template_id,t.version AS template_version,t.name AS template_name,t.status AS template_status
+    FROM query_products p LEFT JOIN product_report_configs c ON c.product_id=p.id LEFT JOIN report_templates t ON t.id=c.template_id ORDER BY p.display_order,p.credit_cost`);
+  res.json(products.rows.map((product) => ({ id: product.id, name: product.name, description: product.description, creditCost: Number(product.credit_cost), referencePriceCents: product.reference_price_cents == null ? null : Number(product.reference_price_cents), active: Boolean(product.active), slug: product.slug, features: product.features ?? [], isFree: Boolean(product.is_free), commercialStatus: product.commercial_status, featured: Boolean(product.featured), displayOrder: Number(product.display_order ?? 100), source: product.source, coverage: product.coverage, reportTemplate: product.template_id ? { id: product.template_id, version: Number(product.template_version), name: product.template_name, status: product.template_status } : null })));
+}));
+
+api.post('/admin/products', auth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
+  const parsed = productCreateSchema.safeParse(req.body);
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const value = parsed.data;
+  const defaultTemplate = defaultReportTemplate(value.id, value.name);
+  const templateConfig = value.reportConfig ?? { title: defaultTemplate.title, subtitle: defaultTemplate.subtitle, sections: defaultTemplate.sections };
+  const templateName = value.reportConfig ? `${value.name} — template inicial` : defaultTemplate.name;
+  const created = await tx(async (client) => {
+    const product = await client.query(`INSERT INTO query_products(id,name,description,credit_cost,reference_price_cents,active,slug,features,display_order,source,coverage,commercial_status,featured,is_free)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14) RETURNING id,name,description,credit_cost,reference_price_cents,active,slug,features,display_order,source,coverage,commercial_status,featured,is_free`, [value.id, value.name, value.description, value.creditCost, value.referencePriceCents ?? null, value.active, value.slug, JSON.stringify(value.features), value.displayOrder, value.source ?? null, value.coverage ?? null, value.commercialStatus, value.featured, value.isFree]);
+    const insertedTemplate = await client.query(`INSERT INTO report_templates(product_id,version,name,status,config,created_by) VALUES($1,1,$2,'PUBLISHED',$3::jsonb,$4) RETURNING id,version,name,status`, [value.id, templateName, JSON.stringify(templateConfig), req.user!.id]);
+    await client.query(`INSERT INTO product_report_configs(product_id,template_id,mode,formats,updated_by) VALUES($1,$2,'SNAPSHOT',ARRAY['JSON','HTML','PDF'],$3)`, [value.id, insertedTemplate.rows[0].id, req.user!.id]);
+    return { product: product.rows[0], template: insertedTemplate.rows[0] };
+  });
+  await audit(req.user!.id, 'CREATE_QUERY_PRODUCT', 'QUERY_PRODUCT', value.id, { requestId: requestId(req) });
+  const row = created.product as Record<string, unknown>;
+  res.status(201).json({ id: row.id, name: row.name, description: row.description, creditCost: Number(row.credit_cost), referencePriceCents: row.reference_price_cents == null ? null : Number(row.reference_price_cents), active: Boolean(row.active), slug: row.slug, features: row.features, displayOrder: Number(row.display_order), source: row.source, coverage: row.coverage, commercialStatus: row.commercial_status, featured: Boolean(row.featured), isFree: Boolean(row.is_free), reportTemplate: created.template });
 }));
 
 api.patch('/admin/products/:id', auth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
@@ -1546,14 +1839,90 @@ api.patch('/admin/products/:id', auth, requirePermission('MANAGE_PRICING'), asyn
   if (parsed.data.name !== undefined) { values.push(parsed.data.name); assignments.push(`name=$${values.length}`); }
   if (parsed.data.description !== undefined) { values.push(parsed.data.description); assignments.push(`description=$${values.length}`); }
   if (parsed.data.creditCost !== undefined) { values.push(parsed.data.creditCost); assignments.push(`credit_cost=$${values.length}`); }
+  if (parsed.data.referencePriceCents !== undefined) { values.push(parsed.data.referencePriceCents); assignments.push(`reference_price_cents=$${values.length}`); }
+  if (parsed.data.slug !== undefined) { values.push(parsed.data.slug); assignments.push(`slug=$${values.length}`); }
+  if (parsed.data.features !== undefined) { values.push(JSON.stringify(parsed.data.features)); assignments.push(`features=$${values.length}::jsonb`); }
+  if (parsed.data.source !== undefined) { values.push(parsed.data.source); assignments.push(`source=$${values.length}`); }
+  if (parsed.data.coverage !== undefined) { values.push(parsed.data.coverage); assignments.push(`coverage=$${values.length}`); }
+  if (parsed.data.commercialStatus !== undefined) { values.push(parsed.data.commercialStatus); assignments.push(`commercial_status=$${values.length}`); }
+  if (parsed.data.featured !== undefined) { values.push(parsed.data.featured); assignments.push(`featured=$${values.length}`); }
+  if (parsed.data.displayOrder !== undefined) { values.push(parsed.data.displayOrder); assignments.push(`display_order=$${values.length}`); }
+  if (parsed.data.isFree !== undefined) { values.push(parsed.data.isFree); assignments.push(`is_free=$${values.length}`); }
   if (parsed.data.active !== undefined) { values.push(parsed.data.active); assignments.push(`active=$${values.length}`); }
   assignments.push('updated_at=now()');
   values.push(req.params.id);
-  const product = await pool.query(`UPDATE query_products SET ${assignments.join(', ')} WHERE id=$${values.length} RETURNING id,name,description,credit_cost,active`, values);
+  const product = await pool.query(`UPDATE query_products SET ${assignments.join(', ')} WHERE id=$${values.length} RETURNING id,name,description,credit_cost,reference_price_cents,active,slug,features,display_order,source,coverage,commercial_status,featured,is_free`, values);
   if (!product.rowCount) throw appError('PRODUCT_NOT_FOUND', { code: 'PRODUCT_NOT_FOUND', http: 404, expose: true });
   await audit(req.user!.id, 'UPDATE_QUERY_PRODUCT', 'QUERY_PRODUCT', String(req.params.id), { fields: Object.keys(parsed.data), requestId: requestId(req) });
   const row = product.rows[0];
-  res.json({ id: row.id, name: row.name, description: row.description, creditCost: Number(row.credit_cost), active: Boolean(row.active) });
+  res.json({ id: row.id, name: row.name, description: row.description, creditCost: Number(row.credit_cost), referencePriceCents: row.reference_price_cents == null ? null : Number(row.reference_price_cents), active: Boolean(row.active), slug: row.slug, features: row.features ?? [], displayOrder: Number(row.display_order ?? 100), source: row.source, coverage: row.coverage, commercialStatus: row.commercial_status, featured: Boolean(row.featured), isFree: Boolean(row.is_free) });
+}));
+
+api.get('/admin/products/:id/report-templates', auth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
+  const templates = await pool.query(`SELECT id,product_id,version,name,status,config,created_by,created_at FROM report_templates WHERE product_id=$1 ORDER BY version DESC`, [req.params.id]);
+  res.json(templates.rows.map((row) => ({ id: row.id, productId: row.product_id, version: Number(row.version), name: row.name, status: row.status, config: row.config, createdBy: row.created_by, createdAt: row.created_at })));
+}));
+
+api.post('/admin/products/:id/report-templates', auth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
+  const parsed = reportTemplateCreateSchema.safeParse(req.body);
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const created = await tx(async (client) => {
+    const product = await client.query('SELECT id FROM query_products WHERE id=$1', [req.params.id]);
+    if (!product.rowCount) throw appError('PRODUCT_NOT_FOUND', { code: 'PRODUCT_NOT_FOUND', http: 404, expose: true });
+    const next = await client.query('SELECT COALESCE(MAX(version),0)+1 AS version FROM report_templates WHERE product_id=$1', [req.params.id]);
+    const version = Number(next.rows[0].version);
+    if (parsed.data.status === 'PUBLISHED') await client.query(`UPDATE report_templates SET status='DRAFT' WHERE product_id=$1 AND status='PUBLISHED'`, [req.params.id]);
+    const template = await client.query(`INSERT INTO report_templates(product_id,version,name,status,config,created_by) VALUES($1,$2,$3,$4,$5::jsonb,$6) RETURNING id,product_id,version,name,status,config,created_at`, [req.params.id, version, parsed.data.name, parsed.data.status, JSON.stringify(parsed.data.config), req.user!.id]);
+    if (parsed.data.status === 'PUBLISHED') await client.query(`INSERT INTO product_report_configs(product_id,template_id,mode,formats,updated_by) VALUES($1,$2,'SNAPSHOT',ARRAY['JSON','HTML','PDF'],$3) ON CONFLICT(product_id) DO UPDATE SET template_id=EXCLUDED.template_id,updated_by=EXCLUDED.updated_by,updated_at=now()`, [req.params.id, template.rows[0].id, req.user!.id]);
+    return template.rows[0];
+  });
+  await audit(req.user!.id, 'CREATE_REPORT_TEMPLATE', 'REPORT_TEMPLATE', String(created.id), { productId: req.params.id, status: parsed.data.status, requestId: requestId(req) });
+  res.status(201).json({ id: created.id, productId: created.product_id, version: Number(created.version), name: created.name, status: created.status, config: created.config, createdAt: created.created_at });
+}));
+
+api.post('/admin/report-templates/:id/publish', auth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
+  const published = await tx(async (client) => {
+    const template = await client.query('SELECT id,product_id,version,name,config FROM report_templates WHERE id=$1', [req.params.id]);
+    if (!template.rowCount) throw appError('REPORT_TEMPLATE_NOT_FOUND', { code: 'REPORT_TEMPLATE_NOT_FOUND', http: 404, expose: true });
+    const row = template.rows[0];
+    await client.query(`UPDATE report_templates SET status='DRAFT' WHERE product_id=$1 AND status='PUBLISHED'`, [row.product_id]);
+    await client.query(`UPDATE report_templates SET status='PUBLISHED' WHERE id=$1`, [req.params.id]);
+    await client.query(`INSERT INTO product_report_configs(product_id,template_id,mode,formats,updated_by) VALUES($1,$2,'SNAPSHOT',ARRAY['JSON','HTML','PDF'],$3) ON CONFLICT(product_id) DO UPDATE SET template_id=EXCLUDED.template_id,updated_by=EXCLUDED.updated_by,updated_at=now()`, [row.product_id, row.id, req.user!.id]);
+    return row;
+  });
+  await audit(req.user!.id, 'PUBLISH_REPORT_TEMPLATE', 'REPORT_TEMPLATE', String(req.params.id), { productId: published.product_id, requestId: requestId(req) });
+  res.json({ id: published.id, productId: published.product_id, version: Number(published.version), name: published.name, status: 'PUBLISHED', config: published.config });
+}));
+
+api.get('/admin/organizations/:id/credit-package-prices', auth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
+  const prices = await pool.query(`SELECT x.id,x.organization_id,x.package_id,p.slug,p.name,p.price_cents AS base_price_cents,x.price_cents,x.active,x.starts_at,x.ends_at
+    FROM organization_credit_package_prices x JOIN credit_packages p ON p.id=x.package_id WHERE x.organization_id=$1 ORDER BY p.display_order,p.price_cents`, [req.params.id]);
+  res.json(prices.rows.map((row) => ({ id: row.id, organizationId: row.organization_id, packageId: row.package_id, packageSlug: row.slug, packageName: row.name, basePriceCents: Number(row.base_price_cents), priceCents: Number(row.price_cents), active: Boolean(row.active), startsAt: row.starts_at, endsAt: row.ends_at })));
+}));
+
+api.put('/admin/organizations/:id/credit-package-prices', auth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
+  const parsed = orgPackagePriceSchema.safeParse(req.body);
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const value = parsed.data;
+  const result = await tx(async (client) => {
+    const organization = await client.query('SELECT id FROM organizations WHERE id=$1', [req.params.id]);
+    if (!organization.rowCount) throw appError('ORGANIZATION_NOT_FOUND', { code: 'ORGANIZATION_NOT_FOUND', http: 404, expose: true });
+    const pack = await client.query('SELECT id,slug,price_cents FROM credit_packages WHERE slug=$1', [value.packageSlug]);
+    if (!pack.rowCount) throw appError('CREDIT_PACKAGE_NOT_FOUND', { code: 'CREDIT_PACKAGE_NOT_FOUND', http: 404, expose: true });
+    const saved = await client.query(`INSERT INTO organization_credit_package_prices(organization_id,package_id,price_cents,active,starts_at,ends_at,created_by)
+      VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(organization_id,package_id) DO UPDATE SET price_cents=EXCLUDED.price_cents,active=EXCLUDED.active,starts_at=EXCLUDED.starts_at,ends_at=EXCLUDED.ends_at,created_by=EXCLUDED.created_by,updated_at=now()
+      RETURNING id,organization_id,package_id,price_cents,active,starts_at,ends_at`, [req.params.id, pack.rows[0].id, value.priceCents, value.active, value.startsAt ?? null, value.endsAt ?? null, req.user!.id]);
+    return { row: saved.rows[0], basePriceCents: Number(pack.rows[0].price_cents), packageSlug: pack.rows[0].slug };
+  });
+  await audit(req.user!.id, 'UPSERT_ORGANIZATION_PACKAGE_PRICE', 'ORGANIZATION', String(req.params.id), { packageSlug: result.packageSlug, active: value.active, requestId: requestId(req) });
+  res.json({ id: result.row.id, organizationId: result.row.organization_id, packageId: result.row.package_id, packageSlug: result.packageSlug, basePriceCents: result.basePriceCents, priceCents: Number(result.row.price_cents), active: Boolean(result.row.active), startsAt: result.row.starts_at, endsAt: result.row.ends_at });
+}));
+
+api.delete('/admin/organizations/:id/credit-package-prices/:packageId', auth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
+  const result = await pool.query(`UPDATE organization_credit_package_prices SET active=false,updated_at=now() WHERE organization_id=$1 AND package_id=$2 RETURNING id`, [req.params.id, req.params.packageId]);
+  if (!result.rowCount) throw appError('ORGANIZATION_PRICE_NOT_FOUND', { code: 'ORGANIZATION_PRICE_NOT_FOUND', http: 404, expose: true });
+  await audit(req.user!.id, 'DEACTIVATE_ORGANIZATION_PACKAGE_PRICE', 'ORGANIZATION', String(req.params.id), { packageId: req.params.packageId, requestId: requestId(req) });
+  res.status(204).end();
 }));
 
 api.get('/admin/users', auth, requirePermission('MANAGE_USERS'), asyncRoute(async (_req, res) => {
@@ -1619,6 +1988,40 @@ api.get('/admin/payments', auth, requirePermission('MANAGE_BILLING'), asyncRoute
   const payments = await pool.query(`SELECT p.id,p.status,p.amount_cents,p.credits,p.provider,p.external_id,p.created_at,p.paid_at,u.name,u.email
     FROM payments p JOIN users u ON u.id=p.user_id ORDER BY p.created_at DESC LIMIT 200`);
   res.json(payments.rows.map((row) => ({ id: row.id, status: row.status, amountCents: Number(row.amount_cents), credits: Number(row.credits), provider: row.provider, externalId: row.external_id, createdAt: row.created_at, paidAt: row.paid_at, customer: { name: row.name, email: row.email } })));
+}));
+
+api.get('/admin/contact-messages', auth, requirePermission('VIEW_AUDIT'), asyncRoute(async (_req, res) => {
+  const messages = await pool.query(`SELECT id,user_id,name,email,subject,message,category,status,created_at,closed_at
+    FROM contact_messages ORDER BY created_at DESC LIMIT 200`);
+  res.json(messages.rows.map((row) => ({ id: row.id, userId: row.user_id, name: row.name, email: row.email, subject: row.subject, message: row.message, category: row.category, status: row.status, createdAt: row.created_at, closedAt: row.closed_at })));
+}));
+
+api.patch('/admin/contact-messages/:id', auth, requirePermission('MANAGE_USERS'), asyncRoute(async (req, res) => {
+  const parsed = contactStatusSchema.safeParse(req.body);
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const updated = await pool.query(`UPDATE contact_messages SET status=$2,closed_at=CASE WHEN $2='CLOSED' THEN now() ELSE NULL END WHERE id=$1 RETURNING id,status,closed_at`, [req.params.id, parsed.data.status]);
+  if (!updated.rowCount) throw appError('CONTACT_NOT_FOUND', { code: 'CONTACT_NOT_FOUND', http: 404, expose: true });
+  await audit(req.user!.id, 'UPDATE_CONTACT_TICKET', 'CONTACT', String(req.params.id), { status: parsed.data.status, requestId: requestId(req) });
+  res.json({ id: updated.rows[0].id, status: updated.rows[0].status, closedAt: updated.rows[0].closed_at });
+}));
+
+api.post('/admin/audit/retention', auth, requirePermission('ADMIN_SYSTEM'), asyncRoute(async (req, res) => {
+  const parsed = auditRetentionSchema.safeParse(req.body);
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const cutoff = new Date(Date.now() - parsed.data.olderThanDays * 24 * 60 * 60 * 1000);
+  const candidates = await pool.query('SELECT count(*)::int AS count FROM audit_logs WHERE created_at<$1', [cutoff]);
+  const candidateCount = Number(candidates.rows[0]?.count ?? 0);
+  if (!parsed.data.execute) {
+    res.json({ dryRun: true, cutoffAt: cutoff.toISOString(), candidateCount, retentionDays: parsed.data.olderThanDays });
+    return;
+  }
+  const deleted = await tx(async (client) => {
+    const removed = await client.query('DELETE FROM audit_logs WHERE created_at<$1', [cutoff]);
+    await client.query('INSERT INTO audit_retention_runs(cutoff_at,deleted_count,executed_by) VALUES($1,$2,$3)', [cutoff, removed.rowCount ?? 0, req.user!.id]);
+    return removed.rowCount ?? 0;
+  });
+  await audit(req.user!.id, 'AUDIT_RETENTION_EXECUTED', 'AUDIT_LOG', null, { cutoffAt: cutoff.toISOString(), deletedCount: deleted, retentionDays: parsed.data.olderThanDays, requestId: requestId(req) });
+  res.json({ dryRun: false, cutoffAt: cutoff.toISOString(), deletedCount: deleted, retentionDays: parsed.data.olderThanDays });
 }));
 
 api.get('/admin/audit', auth, requirePermission('VIEW_AUDIT'), asyncRoute(async (_req, res) => {

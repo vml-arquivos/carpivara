@@ -25,6 +25,34 @@ function escapeHtml(value: string): string {
   return value.replace(/[&<>'\"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '\"': '&quot;' })[character] ?? character);
 }
 
+export async function sendContactMessageEmail(input: { to: string; requesterName: string; requesterEmail: string; subject: string; message: string; category: string; ticketId: string }): Promise<void> {
+  const appName = env.APP_NAME || 'BUSCARR';
+  const safeAppName = escapeHtml(appName);
+  const safeName = escapeHtml(input.requesterName);
+  const safeEmail = escapeHtml(input.requesterEmail);
+  const safeSubject = escapeHtml(input.subject);
+  const safeMessage = escapeHtml(input.message).replace(/\n/g, '<br>');
+  await getTransporter().sendMail({
+    from: env.EMAIL_FROM,
+    to: input.to,
+    replyTo: input.requesterEmail,
+    subject: `[${input.category}] ${input.subject} | ${appName}`,
+    text: `Novo contato ${input.ticketId}\n\nNome: ${input.requesterName}\nE-mail: ${input.requesterEmail}\nCategoria: ${input.category}\nAssunto: ${input.subject}\n\n${input.message}`,
+    html: `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#17201d;max-width:680px;margin:auto"><h1 style="color:#166534">Novo contato | ${safeAppName}</h1><p><b>Ticket:</b> ${escapeHtml(input.ticketId)}</p><p><b>Nome:</b> ${safeName}<br><b>E-mail:</b> ${safeEmail}<br><b>Categoria:</b> ${escapeHtml(input.category)}<br><b>Assunto:</b> ${safeSubject}</p><p>${safeMessage}</p></div>`
+  });
+}
+
+export async function sendContactConfirmationEmail(input: { to: string; requesterName: string; subject: string; ticketId: string }): Promise<void> {
+  const appName = env.APP_NAME || 'BUSCARR';
+  await getTransporter().sendMail({
+    from: env.EMAIL_FROM,
+    to: input.to,
+    subject: `Recebemos sua solicitação ${input.ticketId} | ${appName}`,
+    text: `Olá, ${input.requesterName}. Recebemos sua solicitação sobre "${input.subject}". O protocolo é ${input.ticketId}. Nossa equipe retornará pelo e-mail informado quando o canal estiver disponível.`,
+    html: `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#17201d;max-width:680px;margin:auto"><h1 style="color:#166534">Solicitação recebida</h1><p>Olá, ${escapeHtml(input.requesterName)}.</p><p>Recebemos sua solicitação sobre <b>${escapeHtml(input.subject)}</b>.</p><p>Protocolo: <b>${escapeHtml(input.ticketId)}</b></p><p>Responderemos pelo e-mail informado.</p></div>`
+  });
+}
+
 export async function sendPasswordResetEmail(input: { to: string; name: string; token: string }): Promise<void> {
   const resetUrl = `${publicAppUrl()}/?reset_token=${encodeURIComponent(input.token)}`;
   const appName = env.APP_NAME || 'BUSCARR';

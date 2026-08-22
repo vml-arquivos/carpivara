@@ -449,6 +449,151 @@ const migrations: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_organization_members_org_user ON organization_members(organization_id, user_id);
       `);
     }
+  },
+  {
+    id: '008_configurable_reports_org_pricing_security',
+    name: 'Configurable reports, organization pricing and security controls',
+    async up(client) {
+      await client.query(`
+        ALTER TABLE query_products ADD COLUMN IF NOT EXISTS reference_price_cents integer;
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'query_products_reference_price_cents_check') THEN
+            ALTER TABLE query_products ADD CONSTRAINT query_products_reference_price_cents_check CHECK (reference_price_cents IS NULL OR reference_price_cents >= 0);
+          END IF;
+        END $$;
+        CREATE TABLE IF NOT EXISTS report_templates (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          product_id text NOT NULL REFERENCES query_products(id) ON DELETE CASCADE,
+          version integer NOT NULL CHECK (version > 0),
+          name text NOT NULL,
+          status text NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT','PUBLISHED')),
+          config jsonb NOT NULL CHECK (jsonb_typeof(config) = 'object' AND config::text !~* '"(owner|ownername|ownerdocument|cpf|cnpj|document|address|phone|email)"'),
+          created_by uuid REFERENCES users(id),
+          created_at timestamptz NOT NULL DEFAULT now(),
+          UNIQUE(product_id, version)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_report_templates_published_product ON report_templates(product_id) WHERE status = 'PUBLISHED';
+        CREATE INDEX IF NOT EXISTS idx_report_templates_product_status ON report_templates(product_id, status, version DESC);
+        CREATE TABLE IF NOT EXISTS product_report_configs (
+          product_id text PRIMARY KEY REFERENCES query_products(id) ON DELETE CASCADE,
+          template_id uuid NOT NULL REFERENCES report_templates(id),
+          mode text NOT NULL DEFAULT 'SNAPSHOT' CHECK (mode IN ('SNAPSHOT','LIVE')),
+          formats text[] NOT NULL DEFAULT ARRAY['JSON','HTML','PDF'],
+          updated_by uuid REFERENCES users(id),
+          updated_at timestamptz NOT NULL DEFAULT now()
+        );
+        ALTER TABLE report_documents ADD COLUMN IF NOT EXISTS product_id text;
+        ALTER TABLE report_documents ADD COLUMN IF NOT EXISTS template_id uuid;
+        ALTER TABLE report_documents ADD COLUMN IF NOT EXISTS template_version integer;
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'report_documents_product_id_fkey') THEN
+            ALTER TABLE report_documents ADD CONSTRAINT report_documents_product_id_fkey FOREIGN KEY (product_id) REFERENCES query_products(id);
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'report_documents_template_id_fkey') THEN
+            ALTER TABLE report_documents ADD CONSTRAINT report_documents_template_id_fkey FOREIGN KEY (template_id) REFERENCES report_templates(id);
+          END IF;
+        END $$;
+        CREATE INDEX IF NOT EXISTS idx_report_documents_product_created ON report_documents(product_id, created_at DESC);
+
+        INSERT INTO report_templates(product_id,version,name,status,config)
+        SELECT p.id,1,p.name || ' — relatório padrão','PUBLISHED',jsonb_build_object(
+          'title',p.name,
+          'subtitle','Relatório veicular BUSCARR',
+          'sections',jsonb_build_array(
+            jsonb_build_object('key','identification','label','Identificação do veículo','order',10,'visible',true,'fields',jsonb_build_array(
+              jsonb_build_object('key','identification.plate','label','Placa','visible',true),
+              jsonb_build_object('key','identification.brand','label','Marca','visible',true),
+              jsonb_build_object('key','identification.model','label','Modelo','visible',true),
+              jsonb_build_object('key','characteristics.modelYear','label','Ano do modelo','visible',true),
+              jsonb_build_object('key','characteristics.color','label','Cor','visible',true),
+              jsonb_build_object('key','characteristics.fuel','label','Combustível','visible',true)
+            )),
+            jsonb_build_object('key','registration','label','Registro e situação','order',20,'visible',true,'fields',jsonb_build_array(
+              jsonb_build_object('key','registration.city','label','Município','visible',true),
+              jsonb_build_object('key','registration.state','label','UF','visible',true),
+              jsonb_build_object('key','registration.status','label','Situação','visible',true),
+              jsonb_build_object('key','registration.licensingYear','label','Ano de licenciamento','visible',true)
+            )),
+            jsonb_build_object('key','coverage','label','Cobertura contratada','order',30,'visible',true,'fields',jsonb_build_array(
+              jsonb_build_object('key','coverage','label','Cobertura','visible',true),
+              jsonb_build_object('key','debts','label','Débitos','visible',true),
+              jsonb_build_object('key','restrictions','label','Restrições','visible',true),
+              jsonb_build_object('key','recall','label','Recall','visible',true)
+            ))
+          )
+        )
+        FROM query_products p
+        WHERE NOT EXISTS (SELECT 1 FROM report_templates t WHERE t.product_id=p.id AND t.version=1);
+
+        INSERT INTO product_report_configs(product_id,template_id,mode,formats)
+        SELECT p.id,t.id,'SNAPSHOT',ARRAY['JSON','HTML','PDF']
+        FROM query_products p JOIN report_templates t ON t.product_id=p.id AND t.version=1 AND t.status='PUBLISHED'
+        WHERE NOT EXISTS (SELECT 1 FROM product_report_configs c WHERE c.product_id=p.id);
+
+        CREATE TABLE IF NOT EXISTS organization_credit_package_prices (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+          package_id uuid NOT NULL REFERENCES credit_packages(id) ON DELETE CASCADE,
+          price_cents integer NOT NULL CHECK (price_cents > 0),
+          active boolean NOT NULL DEFAULT true,
+          starts_at timestamptz,
+          ends_at timestamptz,
+          created_by uuid REFERENCES users(id),
+          created_at timestamptz NOT NULL DEFAULT now(),
+          updated_at timestamptz NOT NULL DEFAULT now(),
+          UNIQUE(organization_id, package_id),
+          CHECK (ends_at IS NULL OR starts_at IS NULL OR ends_at > starts_at)
+        );
+        CREATE INDEX IF NOT EXISTS idx_org_credit_package_prices_window ON organization_credit_package_prices(organization_id, package_id, active, starts_at, ends_at);
+        CREATE TABLE IF NOT EXISTS team_totp (
+          user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+          encrypted_secret text NOT NULL,
+          enabled_at timestamptz,
+          last_verified_at timestamptz,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          updated_at timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE TABLE IF NOT EXISTS team_totp_recovery_codes (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          code_hash text NOT NULL,
+          used_at timestamptz,
+          created_at timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_team_totp_recovery_user_active ON team_totp_recovery_codes(user_id) WHERE used_at IS NULL;
+        CREATE TABLE IF NOT EXISTS auth_challenges (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          kind text NOT NULL CHECK (kind IN ('TOTP_LOGIN','TOTP_ENROLL')),
+          token_hash text NOT NULL UNIQUE,
+          expires_at timestamptz NOT NULL,
+          used_at timestamptz,
+          ip_hash text,
+          created_at timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_auth_challenges_active ON auth_challenges(token_hash, expires_at) WHERE used_at IS NULL;
+        CREATE TABLE IF NOT EXISTS contact_messages (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id uuid REFERENCES users(id) ON DELETE SET NULL,
+          name text NOT NULL,
+          email text NOT NULL,
+          subject text NOT NULL,
+          message text NOT NULL,
+          category text NOT NULL DEFAULT 'SUPPORT' CHECK (category IN ('SUPPORT','PRIVACY','LGPD','COMMERCIAL')),
+          status text NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN','IN_PROGRESS','CLOSED')),
+          created_at timestamptz NOT NULL DEFAULT now(),
+          closed_at timestamptz
+        );
+        CREATE INDEX IF NOT EXISTS idx_contact_messages_status_created ON contact_messages(status, created_at DESC);
+        CREATE TABLE IF NOT EXISTS audit_retention_runs (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          cutoff_at timestamptz NOT NULL,
+          deleted_count integer NOT NULL DEFAULT 0 CHECK (deleted_count >= 0),
+          executed_by uuid REFERENCES users(id),
+          created_at timestamptz NOT NULL DEFAULT now()
+        );
+      `);
+    }
   }
 ];
 
