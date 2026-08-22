@@ -1013,6 +1013,34 @@ api.get('/payments/orders', auth, requirePermission('BUY_CREDITS'), asyncRoute(a
   res.json(orders.rows.map((item) => ({ id: item.id, status: item.status, amountCents: Number(item.amount_cents), credits: Number(item.credits), provider: item.provider, checkoutUrl: item.checkout_url, createdAt: item.created_at, paidAt: item.paid_at })));
 }));
 
+api.post('/payments/quote', auth, requirePermission('BUY_CREDITS'), asyncRoute(async (req, res) => {
+  const parsed = checkoutSchema.safeParse(req.body);
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const quote = await tx(async (client) => {
+    const pack = await client.query('SELECT slug,name,credits,price_cents FROM credit_packages WHERE slug=$1 AND active=true', [parsed.data.packageSlug]);
+    if (!pack.rowCount) throw appError('CREDIT_PACKAGE_NOT_FOUND', { code: 'CREDIT_PACKAGE_NOT_FOUND', http: 404, expose: true });
+    const packRow = pack.rows[0] as Record<string, unknown>;
+    const subtotalCents = Number(packRow.price_cents);
+    let discountCents = 0;
+    let couponCode: string | null = null;
+    if (parsed.data.couponCode) {
+      const coupon = await client.query(`SELECT id,code,discount_type,discount_value,max_redemptions,redeemed_count,active,starts_at,expires_at
+        FROM coupons WHERE upper(code)=upper($1) FOR SHARE`, [parsed.data.couponCode]);
+      if (!coupon.rowCount) throw appError('COUPON_INVALID', { code: 'COUPON_INVALID', http: 400, expose: true });
+      const couponRow = coupon.rows[0] as Record<string, unknown>;
+      const reservations = await client.query(`SELECT count(*)::int AS reserved_count FROM coupon_redemptions WHERE coupon_id=$1 AND status='RESERVED'`, [couponRow.id]);
+      if (!couponWindowIsOpen({ active: Boolean(couponRow.active), startsAt: couponRow.starts_at as string | Date | null, expiresAt: couponRow.expires_at as string | Date | null }) || !couponHasCapacity(couponRow.max_redemptions == null ? null : Number(couponRow.max_redemptions), Number(couponRow.redeemed_count), Number(reservations.rows[0]?.reserved_count ?? 0))) {
+        throw appError('COUPON_UNAVAILABLE', { code: 'COUPON_UNAVAILABLE', http: 400, expose: true });
+      }
+      couponCode = String(couponRow.code);
+      discountCents = calculateCouponDiscount(subtotalCents, String(couponRow.discount_type) as 'PERCENT' | 'FIXED', Number(couponRow.discount_value));
+      if (discountCents >= subtotalCents) throw appError('COUPON_ZERO_TOTAL_UNSUPPORTED', { code: 'COUPON_ZERO_TOTAL_UNSUPPORTED', http: 400, expose: true });
+    }
+    return { packageSlug: String(packRow.slug), packageName: String(packRow.name), credits: Number(packRow.credits), couponCode, affiliateCode: parsed.data.affiliateCode ?? null, subtotalCents, discountCents, amountCents: Math.max(0, subtotalCents - discountCents) };
+  });
+  res.json({ ...quote, paymentProviderConfigured: getPaymentProvider().isConfigured(), usageCountChangesOnlyAfterPaid: true });
+}));
+
 api.post('/payments/checkout', auth, requirePermission('BUY_CREDITS'), asyncRoute(async (req, res) => {
   const parsed = checkoutSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
