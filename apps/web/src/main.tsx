@@ -83,9 +83,43 @@ function Landing({ theme, setTheme, onAccess }: { theme: Theme; setTheme: (value
   const [interestEmail, setInterestEmail] = useState('');
   const [interestSaved, setInterestSaved] = useState(false);
   const [interestError, setInterestError] = useState('');
+  const [heroPlate, setHeroPlate] = useState('');
+  const [heroPlateError, setHeroPlateError] = useState('');
+  const [publicStats, setPublicStats] = useState<number | null>(null);
+  const [publicOffers, setPublicOffers] = useState<FipeOffer[]>([]);
   function openPlan(plan: MatrixPlan) {
     if (plan.id === 'PREMIUM' || plan.id === 'RISK') { setInterestPlan(plan); setInterestSaved(false); setInterestError(''); return; }
     onAccess('register');
+  }
+  useEffect(() => {
+    let active = true;
+    void fetch(`${API}/stats`, { cache: 'no-store' })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('stats_unavailable');
+        return await response.json() as { totalQueries?: number };
+      })
+      .then((body) => { if (active && typeof body.totalQueries === 'number') setPublicStats(body.totalQueries); })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    let active = true;
+    void fetch(`${API}/fipe/offers`, { cache: 'no-store' })
+      .then(async (response) => response.ok ? await response.json() as { offers?: FipeOffer[] } : { offers: [] })
+      .then((body) => { if (active) setPublicOffers(body.offers ?? []); })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, []);
+  function submitHeroPlate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const normalized = heroPlate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+    if (normalized.length !== 7) { setHeroPlateError('Informe uma placa com 7 caracteres.'); return; }
+    setHeroPlateError('');
+    window.location.assign(`/fipe?plate=${encodeURIComponent(normalized)}`);
+  }
+  function publicPrice(planId: string) {
+    const offer = publicOffers.find((item) => item.id === planId || (planId === 'BASIC' && item.id === 'CADASTRAL'));
+    return offer ? `${formatCredits(offer.creditCost)} créditos` : 'Preço disponível na carteira';
   }
   async function saveInterest(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -103,10 +137,16 @@ function Landing({ theme, setTheme, onAccess }: { theme: Theme; setTheme: (value
       <section className="hero">
         <div className="heroContent">
           <p className="kicker">Consulta veicular inteligente</p>
-          <h1>Puxe os fatos.<br /><em>Descubra a verdade.</em></h1>
+          <h1>Busque os fatos.<br /><em>Decida com segurança.</em></h1>
           <p className="heroLead">A BUSCARR é sua central de consulta veicular: crie uma conta gratuita, acesse o dashboard, compre créditos somente quando precisar e mantenha cada relatório organizado em um único lugar.</p>
+          <form className="heroPlateSearch" onSubmit={submitHeroPlate} aria-label="Buscar veículo pela placa">
+            <label htmlFor="hero-plate">Comece pela placa</label>
+            <div><input id="hero-plate" value={heroPlate} onChange={(event) => { setHeroPlate(event.target.value.toUpperCase().slice(0, 8)); setHeroPlateError(''); }} placeholder="ABC1D23" maxLength={8} autoComplete="off" aria-describedby="hero-plate-help" /><button className="primaryButton" type="submit">Buscar placa <span>→</span></button></div>
+            <small id="hero-plate-help">Você será levado à consulta gratuita da FIPE para continuar.</small>
+            {heroPlateError && <small className="plateError" role="alert">{heroPlateError}</small>}
+          </form>
           <div className="heroActions"><button className="primaryButton" onClick={() => onAccess('register')}>Criar conta gratuita <span>→</span></button><a className="secondaryButton" href="/fipe">Consultar FIPE grátis</a><a className="secondaryButton" href="#como-funciona">Entender como funciona</a></div>
-          <div className="heroTrust"><span><b>Dashboard pessoal</b> desde o primeiro acesso</span><span><b>Pagamento somente</b> ao comprar créditos</span><span><b>Relatórios protegidos</b> na sua conta</span></div>
+          <div className="heroTrust"><span><b>Dashboard pessoal</b> desde o primeiro acesso</span><span><b>Pagamento somente</b> ao comprar créditos</span><span><b>Relatórios protegidos</b> na sua conta</span>{publicStats !== null && <span className="heroSocialProof" aria-live="polite"><b>{formatCredits(publicStats)}</b> consultas concluídas</span>}</div>
         </div>
         <div className="vehicleCard" aria-label="Experiência BUSCARR com imagem de veículo premium">
           <img className="vehiclePhoto" src="/images/hero-luxury-night.jpeg" alt="Automóvel premium em movimento durante a noite" />
@@ -116,9 +156,21 @@ function Landing({ theme, setTheme, onAccess }: { theme: Theme; setTheme: (value
           <div className="reportPreview"><div><small>Identificação</small><strong>Origem e dados-chave</strong></div><div><small>Ocorrências</small><strong>Sinais de atenção</strong></div><div><small>Histórico</small><strong>Na sua conta</strong></div></div>
         </div>
       </section>
-      <section className="featureStrip" id="beneficios"><div><span>01</span><strong>Crie sua conta</strong><p>Cadastre-se sem cobrança e acesse seu dashboard pessoal.</p></div><div><span>02</span><strong>Compre créditos quando precisar</strong><p>O pagamento acontece apenas ao escolher um pacote de consultas.</p></div><div><span>03</span><strong>Consulte e acompanhe</strong><p>Veja relatórios, carteira e histórico organizados na sua conta.</p></div></section>
       <section className="howItWorks" id="como-funciona"><div><p className="kicker">Como funciona</p><h2>Uma conta. Uma carteira. Decisões mais seguras.</h2><p className="sectionLead">O acesso ao dashboard é gratuito. Você só realiza pagamento se decidir comprar créditos para uma consulta; depois, cada relatório fica salvo em seu histórico.</p></div><ol><li><b>01</b><div><strong>Crie e acesse sua conta</strong><p>Cadastre-se com e-mail e senha para entrar no seu dashboard pessoal, sem pagamento inicial.</p></div></li><li><b>02</b><div><strong>Escolha créditos quando for consultar</strong><p>Na carteira, selecione um pacote e conclua a compra pelo checkout seguro somente quando precisar.</p></div></li><li><b>03</b><div><strong>Consulte e acompanhe</strong><p>Informe a placa, receba o retorno da consulta e mantenha o relatório no seu histórico.</p></div></li></ol></section>
-      <section className="plansSection" id="planos"><div className="sectionHeading"><p className="kicker">Composição das consultas</p><h2>Escolha o nível de informação para cada decisão.</h2><p>Compare a cobertura de cada plano antes de criar sua conta. Os itens marcados como em validação com fornecedor não são prometidos até que estejam disponíveis.</p></div><div className="planMatrixIntro"><strong>Todos os planos são contratados com créditos.</strong><span>O cadastro é gratuito e nenhum pagamento é feito nesta página.</span></div><div className="planMatrix" role="table" aria-label="Matriz comparativa dos planos de consulta"><div className="planMatrixGrid" role="rowgroup"><div className="matrixCorner" role="columnheader">Cobertura</div>{matrixPlans.map((plan) => <div className={`matrixPlanHead ${plan.featured ? 'featuredPlan' : ''} ${plan.disabled ? 'planDisabled' : ''}`} role="columnheader" key={plan.id}><span>{plan.eyebrow}</span><h3>{plan.name}</h3><p>{plan.description}</p><button className={plan.featured ? 'primaryButton' : 'secondaryButton'} onClick={() => openPlan(plan)}>{plan.disabled ? 'Deixar meu e-mail' : plan.id === 'PREMIUM' ? 'Quero ser avisado' : 'Criar conta'}{!plan.disabled && plan.id !== 'PREMIUM' && <span>→</span>}</button></div>)}{matrixFeatures.map(([key, label]) => <Fragment key={key}><div className="matrixFeatureLabel" role="rowheader">{label}</div>{matrixPlans.map((plan) => <div className={`matrixCell ${plan.disabled ? 'planDisabled' : ''}`} role="cell" key={`${plan.id}-${key}`}><span className={`matrixStatus ${plan.cells[key]}`} title={plan.cells[key] === 'pending' ? 'Em validação com fornecedor' : undefined}>{plan.cells[key] === 'included' ? '✓' : plan.cells[key] === 'pending' ? '⚠' : '✗'}</span>{plan.cells[key] === 'pending' && <small>Em validação</small>}</div>)}</Fragment>)}</div><div className="planMatrixLegend"><span><b className="matrixStatus included">✓</b> Incluído</span><span><b className="matrixStatus excluded">✗</b> Não incluído neste plano</span><span><b className="matrixStatus pending">⚠</b> Em validação com fornecedor</span></div></div>{interestPlan && <section className="planInterest" role="dialog" aria-live="polite" aria-label="Interesse em plano"><div><p className="kicker">{interestPlan.name} · em evolução</p><h3>{interestSaved ? 'Interesse registrado.' : `Ainda não prometa o que não está disponível.`}</h3><p>{interestSaved ? 'Avisaremos quando houver uma atualização desta cobertura.' : 'Leilão, sinistro e gravame detalhado dependem de validação. Deixe seu e-mail para receber novidades quando o produto estiver pronto.'}</p></div>{interestSaved ? <button className="secondaryButton" onClick={() => setInterestPlan(null)}>Fechar</button> : <form onSubmit={saveInterest}><label>E-mail<input type="email" value={interestEmail} onChange={(event) => setInterestEmail(event.target.value)} required placeholder="voce@empresa.com" /></label><div><button className="primaryButton" type="submit">Deixar meu e-mail <span>→</span></button><button className="textButton" type="button" onClick={() => setInterestPlan(null)}>Agora não</button></div>{interestError && <p className="interestError" role="alert">{interestError}</p>}</form>}</section>}</section>
+      <section className="plansSection" id="planos">
+        <div className="sectionHeading"><p className="kicker">Planos para cada decisão</p><h2>Escolha o nível de informação que você precisa.</h2><p>Comece com clareza, consulte com créditos e avance para uma análise mais completa quando a negociação exigir.</p></div>
+        <div className="featuredPlans" aria-label="Planos destacados">
+          {matrixPlans.filter((plan) => ['BASIC', 'COMPLETE', 'PREMIUM'].includes(plan.id)).map((plan) => <article key={plan.id} className={`publicPlanCard ${plan.id === 'COMPLETE' ? 'featured' : ''}`}>
+            <div className="planTop"><span>{plan.id === 'COMPLETE' ? 'Mais escolhida' : plan.eyebrow}</span><b className="planPrice">{publicPrice(plan.id)}</b></div>
+            <h3>{plan.name}</h3><p>{plan.description}</p>
+            <ul>{matrixFeatures.slice(0, plan.id === 'BASIC' ? 2 : plan.id === 'COMPLETE' ? 4 : 5).map(([key, label]) => <li key={key}>{label}</li>)}</ul>
+            <button className={plan.id === 'COMPLETE' ? 'primaryButton' : 'secondaryButton'} onClick={() => openPlan(plan)}>{plan.id === 'PREMIUM' ? 'Quero ser avisado' : 'Criar conta'}{plan.id !== 'PREMIUM' && <span>→</span>}</button>
+          </article>)}
+        </div>
+        <a className="comparisonLink" href="#comparacao-completa">Ver comparação completa <span aria-hidden="true">↓</span></a>
+        <div className="fullComparison" id="comparacao-completa"><h3>Comparação completa</h3><div className="planMatrixIntro"><strong>Todos os planos são contratados com créditos.</strong><span>O cadastro é gratuito e nenhum pagamento é feito nesta página.</span></div><div className="planMatrix" role="table" aria-label="Matriz comparativa dos planos de consulta"><div className="planMatrixGrid" role="rowgroup"><div className="matrixCorner" role="columnheader">Cobertura</div>{matrixPlans.map((plan) => <div className={`matrixPlanHead ${plan.featured ? 'featuredPlan' : ''} ${plan.disabled ? 'planDisabled' : ''}`} role="columnheader" key={plan.id}><span>{plan.eyebrow}</span><h3>{plan.name}</h3><p>{plan.description}</p><button className={plan.featured ? 'primaryButton' : 'secondaryButton'} onClick={() => openPlan(plan)}>{plan.disabled ? 'Deixar meu e-mail' : plan.id === 'PREMIUM' ? 'Quero ser avisado' : 'Criar conta'}{!plan.disabled && plan.id !== 'PREMIUM' && <span>→</span>}</button></div>)}{matrixFeatures.map(([key, label]) => <Fragment key={key}><div className="matrixFeatureLabel" role="rowheader">{label}</div>{matrixPlans.map((plan) => <div className={`matrixCell ${plan.disabled ? 'planDisabled' : ''}`} role="cell" key={`${plan.id}-${key}`}><span className={`matrixStatus ${plan.cells[key]}`} title={plan.cells[key] === 'pending' ? 'Em validação com fornecedor' : undefined}>{plan.cells[key] === 'included' ? '✓' : plan.cells[key] === 'pending' ? '⚠' : '✗'}</span>{plan.cells[key] === 'pending' && <small>Em validação</small>}</div>)}</Fragment>)}</div><div className="planMatrixLegend"><span><b className="matrixStatus included">✓</b> Incluído</span><span><b className="matrixStatus excluded">✗</b> Não incluído neste plano</span><span><b className="matrixStatus pending">⚠</b> Em validação com fornecedor</span></div></div></div>
+        {interestPlan && <section className="planInterest" role="dialog" aria-live="polite" aria-label="Interesse em plano"><div><p className="kicker">{interestPlan.name} · em evolução</p><h3>{interestSaved ? 'Interesse registrado.' : 'Ainda não prometa o que não está disponível.'}</h3><p>{interestSaved ? 'Avisaremos quando houver uma atualização desta cobertura.' : 'Leilão, sinistro e gravame detalhado dependem de validação. Deixe seu e-mail para receber novidades quando o produto estiver pronto.'}</p></div>{interestSaved ? <button className="secondaryButton" onClick={() => setInterestPlan(null)}>Fechar</button> : <form onSubmit={saveInterest}><label>E-mail<input type="email" value={interestEmail} onChange={(event) => setInterestEmail(event.target.value)} required placeholder="voce@empresa.com" /></label><div><button className="primaryButton" type="submit">Deixar meu e-mail <span>→</span></button><button className="textButton" type="button" onClick={() => setInterestPlan(null)}>Agora não</button></div>{interestError && <p className="interestError" role="alert">{interestError}</p>}</form>}</section>}
+      </section>
       <section className="contentSection" id="conteudos"><div className="sectionHeading"><p className="kicker">Conteúdo para decidir melhor</p><h2>O que observar antes de fechar negócio.</h2></div><div className="articleGrid"><article><span>GUIA</span><h3>Como consultar a placa de um veículo antes de comprar</h3><p>Entenda quais dados ajudam a reduzir incertezas em uma negociação.</p><a href="#faq">Ler orientação →</a></article><article><span>SEGURANÇA</span><h3>Por que histórico e documentação merecem atenção</h3><p>Uma decisão responsável considera dados técnicos, contexto e verificações oficiais.</p><a href="#faq">Ler orientação →</a></article><article><span>CARTEIRA</span><h3>Como funcionam os créditos de consulta</h3><p>Veja como a carteira registra compras, consultas e eventuais estornos.</p><a href="#faq">Ler orientação →</a></article></div></section>
       <section className="faqSection" id="faq"><div className="sectionHeading"><p className="kicker">Dúvidas frequentes</p><h2>Transparência antes de cada consulta.</h2></div><div className="faqGrid"><article><h3>O que eu recebo ao consultar?</h3><p>Você recebe um relatório com os dados disponibilizados pela consulta e pelo produto escolhido.</p></article><article><h3>Quando meus créditos são consumidos?</h3><p>O consumo ocorre ao iniciar a consulta. Se houver falha técnica na integração, a carteira registra o estorno de acordo com a regra operacional.</p></article><article><h3>Meus relatórios ficam salvos?</h3><p>Sim. Os relatórios concluídos ficam vinculados à sua conta para consulta posterior, respeitando as regras de acesso e privacidade.</p></article></div></section>
       <section className="publicCta"><div><p className="kicker">A sua próxima decisão começa aqui</p><h2>Crie sua conta e tenha sua central de consulta veicular.</h2><p>Sem cobrança para acessar o dashboard. Você compra créditos apenas quando quiser consultar.</p></div><button className="primaryButton" onClick={() => onAccess('register')}>Criar minha conta <span>→</span></button></section>
@@ -276,7 +328,7 @@ function AuthScreen({ onAuthenticated, onBack, externalError = '', initialMode =
 
 function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem('carpivara_token') ?? '');
-  const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('carpivara_theme') as Theme) || 'system');
+  const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('carpivara_theme') as Theme) || 'light');
   const [publicPage, setPublicPage] = useState<'landing' | 'auth' | 'fipe' | 'validation' | 'terms' | 'privacy'>(() => { const url = new URL(window.location.href); return url.searchParams.has('reset_token') ? 'auth' : window.location.pathname === '/fipe' ? 'fipe' : window.location.pathname === '/termos' ? 'terms' : window.location.pathname === '/privacidade' ? 'privacy' : window.location.pathname.startsWith('/validar-relatorio/') ? 'validation' : 'landing'; });
   const [showPublicSite, setShowPublicSite] = useState(() => new URL(window.location.href).searchParams.get('site') === '1');
   const [resetToken, setResetToken] = useState(() => new URL(window.location.href).searchParams.get('reset_token') ?? '');

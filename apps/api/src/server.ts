@@ -789,6 +789,11 @@ api.get('/fipe/reports/:code/print', auth, asyncRoute(async (req, res) => {
   res.type('html').send(fipePrintHtml(quote));
 }));
 
+api.get('/stats', asyncRoute(async (_req, res) => {
+  const result = await pool.query("SELECT count(*) AS total_queries FROM vehicle_queries WHERE status='SUCCESS'");
+  res.json({ totalQueries: Number(result.rows[0].total_queries) });
+}));
+
 api.post('/plan-interest', asyncRoute(async (req, res) => {
   const parsed = planInterestSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
