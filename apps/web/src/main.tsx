@@ -115,7 +115,8 @@ function Landing({ theme, setTheme, onAccess }: { theme: Theme; setTheme: (value
     const normalized = heroPlate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
     if (normalized.length !== 7) { setHeroPlateError('Informe uma placa com 7 caracteres.'); return; }
     setHeroPlateError('');
-    window.location.assign(`/fipe?plate=${encodeURIComponent(normalized)}`);
+    sessionStorage.setItem('carpivara_signup_plate', normalized);
+    onAccess('register');
   }
   function publicPrice(planId: string) {
     const offer = publicOffers.find((item) => item.id === planId || (planId === 'BASIC' && item.id === 'CADASTRAL'));
@@ -139,10 +140,10 @@ function Landing({ theme, setTheme, onAccess }: { theme: Theme; setTheme: (value
           <p className="kicker">Consulta veicular inteligente</p>
           <h1>Busque os fatos.<br /><em>Decida com segurança.</em></h1>
           <p className="heroLead">A BUSCARR é sua central de consulta veicular: crie uma conta gratuita, acesse o dashboard, compre créditos somente quando precisar e mantenha cada relatório organizado em um único lugar.</p>
-          <form className="heroPlateSearch" onSubmit={submitHeroPlate} aria-label="Buscar veículo pela placa">
-            <label htmlFor="hero-plate">Comece pela placa</label>
-            <div><input id="hero-plate" value={heroPlate} onChange={(event) => { setHeroPlate(event.target.value.toUpperCase().slice(0, 8)); setHeroPlateError(''); }} placeholder="ABC1D23" maxLength={8} autoComplete="off" aria-describedby="hero-plate-help" /><button className="primaryButton" type="submit">Buscar placa <span>→</span></button></div>
-            <small id="hero-plate-help">Você será levado à consulta gratuita da FIPE para continuar.</small>
+          <form className="heroPlateSearch" onSubmit={submitHeroPlate} aria-label="Começar cadastro com a placa do veículo">
+            <label htmlFor="hero-plate">Informe a placa para começar</label>
+            <div><input id="hero-plate" value={heroPlate} onChange={(event) => { setHeroPlate(event.target.value.toUpperCase().slice(0, 8)); setHeroPlateError(''); }} placeholder="ABC1D23" maxLength={8} autoComplete="off" aria-describedby="hero-plate-help" /><button className="primaryButton" type="submit">Criar conta e continuar <span>→</span></button></div>
+            <small id="hero-plate-help">A placa fica pronta para sua primeira consulta após o cadastro. A FIPE manual continua gratuita.</small>
             {heroPlateError && <small className="plateError" role="alert">{heroPlateError}</small>}
           </form>
           <div className="heroActions"><button className="primaryButton" onClick={() => onAccess('register')}>Criar conta gratuita <span>→</span></button><a className="secondaryButton" href="/fipe">Consultar FIPE grátis</a><a className="secondaryButton" href="#como-funciona">Entender como funciona</a></div>
