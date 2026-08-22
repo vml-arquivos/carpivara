@@ -381,13 +381,12 @@ api.post('/auth/forgot-password', passwordResetRateLimit, asyncRoute(async (req,
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
   const email = parsed.data.email.toLowerCase();
   const genericMessage = 'Se o e-mail estiver cadastrado, enviaremos as instruções para redefinir sua senha.';
+  if (!isEmailConfigured()) {
+    log('warn', 'password_reset_email_not_configured', { requestId: requestId(req) });
+    throw passwordResetUnavailable();
+  }
   const result = await pool.query('SELECT id,email,name FROM users WHERE lower(email)=lower($1) AND active=true', [email]);
   if (!result.rowCount) {
-    res.status(202).json({ message: genericMessage });
-    return;
-  }
-  if (!isEmailConfigured()) {
-    log('warn', 'password_reset_email_not_configured', { requestId: requestId(req), userId: String(result.rows[0].id) });
     res.status(202).json({ message: genericMessage });
     return;
   }
@@ -1412,9 +1411,12 @@ api.get('/affiliate/stats', auth, asyncRoute(async (req, res) => {
   if (!affiliate.rowCount) { res.json({ affiliate: null, totals: { pendingCents: 0, paidCents: 0, commissions: 0 } }); return; }
   const totals = await pool.query(`SELECT count(*)::int AS commissions,
       coalesce(sum(amount_cents) FILTER (WHERE status='PENDING'),0)::int AS pending_cents,
-      coalesce(sum(amount_cents) FILTER (WHERE status='PAID'),0)::int AS paid_cents
+      coalesce(sum(amount_cents) FILTER (WHERE status='PAID'),0)::int AS paid_cents,
+      (SELECT count(*)::int FROM users WHERE affiliate_id=$1) AS referred_users
     FROM affiliate_commissions WHERE affiliate_id=$1`, [affiliate.rows[0].id]);
-  res.json({ affiliate: { id: affiliate.rows[0].id, code: affiliate.rows[0].code }, totals: { commissions: Number(totals.rows[0].commissions), pendingCents: Number(totals.rows[0].pending_cents), paidCents: Number(totals.rows[0].paid_cents) } });
+  const code = String(affiliate.rows[0].code);
+  const shareUrl = new URL('/?ref=' + encodeURIComponent(code), env.APP_URL).toString();
+  res.json({ affiliate: { id: affiliate.rows[0].id, code }, shareUrl, totals: { commissions: Number(totals.rows[0].commissions), pendingCents: Number(totals.rows[0].pending_cents), paidCents: Number(totals.rows[0].paid_cents), referredUsers: Number(totals.rows[0].referred_users) } });
 }));
 
 api.get('/admin/affiliate-commissions', auth, requirePermission('MANAGE_BILLING'), asyncRoute(async (_req, res) => {
@@ -1636,6 +1638,7 @@ function humanMessage(code: string): string {
     OAUTH_PROVIDER_UNSUPPORTED: 'Este provedor de acesso não é suportado.',
     OAUTH_PROVIDER_NOT_CONFIGURED: 'Este provedor de acesso ainda não foi configurado pela plataforma.',
     OAUTH_TICKET_INVALID: 'Esta solicitação de acesso expirou. Tente entrar novamente.',
+    PASSWORD_RESET_UNAVAILABLE: 'A recuperação por e-mail está temporariamente indisponível porque o envio de e-mail ainda não foi configurado. Tente novamente mais tarde ou fale com o suporte.',
     USER_NOT_FOUND: 'O usuário solicitado não foi encontrado.',
     ADMIN_SELF_CHANGE_FORBIDDEN: 'Para segurança, use outro administrador para alterar o próprio acesso.',
     WALLET_BALANCE_INVALID: 'Este ajuste deixaria a carteira com saldo negativo.',

@@ -53,3 +53,12 @@ assert.equal(typeof calculateCouponDiscount, 'function');
 assert.equal(typeof couponWindowIsOpen, 'function');
 assert.equal(typeof couponHasCapacity, 'function');
 assert.equal(typeof calculateAffiliateCommission, 'function');
+
+test('aceita cupom dentro da janela e rejeita expirado ou esgotado antes do pagamento', () => {
+  const now = new Date('2026-08-22T12:00:00.000Z');
+  const activeCoupon = { active: true, startsAt: '2026-08-22T00:00:00.000Z', expiresAt: '2026-08-23T00:00:00.000Z' };
+  assert.equal(couponWindowIsOpen({ ...activeCoupon, now }), true);
+  assert.equal(calculateCouponDiscount(2000, 'PERCENT', 10), 200);
+  assert.equal(couponWindowIsOpen({ active: true, expiresAt: '2026-08-21T23:59:59.000Z', now }), false);
+  assert.equal(couponHasCapacity(10, 10, 0), false);
+});

@@ -12,7 +12,7 @@ const optionalString = z.preprocess((value) => value === '' ? undefined : value,
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(4000),
-  APP_NAME: z.string().trim().min(1).default('Carpivara'),
+  APP_NAME: z.string().trim().min(1).default('BUSCARR'),
   APP_URL: optionalUrl,
   WEB_ORIGIN: z.string().url().default('http://localhost:5173'),
   EMAIL_PROVIDER: z.enum(['disabled', 'smtp']).default('disabled'),

@@ -1,7 +1,7 @@
 {
   "name": "buscarr-platform",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.1",
   "workspaces": ["apps/api", "apps/web"],
   "scripts": {
     "dev": "npm-run-all --parallel dev:api dev:web",
