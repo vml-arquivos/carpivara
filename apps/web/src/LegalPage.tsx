@@ -4,9 +4,9 @@ type LegalKind = 'terms' | 'privacy';
 
 const sections: Record<LegalKind, Array<{ title: string; text: string }>> = {
   terms: [
-    { title: '1. Objeto', text: 'A BUSCARR organiza consultas veiculares e relatórios conforme o produto escolhido e as informações efetivamente disponibilizadas pelas fontes contratadas. O cadastro e a Consulta Zero não obrigam a compra de créditos.' },
+    { title: '1. Objeto', text: 'A BUSCARR organiza consultas veiculares e relatórios conforme o produto escolhido e as informações efetivamente disponibilizadas pelas fontes contratadas. O cadastro e a Consulta Zero não obrigam a compra de uma consulta paga.' },
     { title: '2. Limites da consulta', text: 'Cada produto informa sua cobertura antes da confirmação. Informação não consultada, indisponível ou parcial não equivale a “nada consta”. O relatório apoia a decisão, mas não substitui vistoria, certidões ou verificações oficiais exigidas no negócio.' },
-    { title: '3. Créditos e pagamentos', text: 'Créditos são liberados somente após confirmação do parceiro de pagamento. Em falha técnica da consulta, o sistema registra o estorno aplicável. Cancelamentos, reembolsos e chargebacks podem gerar reversão dos créditos correspondentes.' },
+    { title: '3. Preços e pagamentos', text: 'Cada consulta paga informa seu preço em reais antes do checkout. O saldo pré-pago em reais e os entitlements de consulta são disponibilizados somente após confirmação do parceiro de pagamento. Em falha técnica da consulta, o sistema registra o estorno aplicável. Cancelamentos, reembolsos e chargebacks podem gerar reversões conforme o caso.' },
     { title: '4. Uso responsável', text: 'O usuário deve utilizar as informações para finalidade legítima, respeitar a legislação e não tentar acessar, compartilhar ou explorar dados fora das permissões concedidas.' },
     { title: '5. Disponibilidade', text: 'Fontes externas podem apresentar indisponibilidade ou alteração de cobertura. Produtos sem fonte real homologada permanecem indisponíveis e não devem ser vendidos como consulta concluída.' },
     { title: '6. Contato', text: `Dúvidas sobre a plataforma podem ser enviadas para ${BRAND.supportEmail}.` }

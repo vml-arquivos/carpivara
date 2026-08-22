@@ -15,7 +15,7 @@ test('hardening fixa CSP e origem CORS sem reflexão ampla', () => {
 });
 
 test('retenção exige prévia por padrão e só permite execução administrativa explícita', () => {
-  assert.match(server, /olderThanDays: z\.number\(\)\.int\(\)\.min\(30\)\.max\(3650\)\.default\(180\)/);
+  assert.match(server, /olderThanDays: z\.number\(\)\.int\(\)\.min\(180\)\.max\(3650\)\.default\(180\)/);
   assert.match(server, /if \(!parsed\.data\.execute\)/);
   assert.match(server, /dryRun: true/);
   assert.match(server, /requirePermission\('ADMIN_SYSTEM'\)/);

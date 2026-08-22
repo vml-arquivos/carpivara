@@ -218,9 +218,9 @@ const migrations: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_payment_webhook_events_order ON payment_webhook_events(order_id,received_at DESC);
       `);
       const packages = [
-        ['essencial','Pacote Essencial','Créditos para consultas pontuais.',10,1990,10],
-        ['completo','Pacote Completo','Créditos para uma decisão de compra mais informada.',30,4990,20],
-        ['profissional','Pacote Profissional','Créditos para uso recorrente e operações.',100,13990,30]
+        ['essencial','Pacote Essencial','Saldo pré-pago para consultas pontuais.',10,1990,10],
+        ['completo','Pacote Completo','Saldo pré-pago para uma decisão de compra mais informada.',30,4990,20],
+        ['profissional','Pacote Profissional','Saldo pré-pago para uso recorrente e operações.',100,13990,30]
       ];
       for (const [slug, name, description, credits, priceCents, displayOrder] of packages) {
         await client.query(`INSERT INTO credit_packages(slug,name,description,credits,price_cents,display_order)
@@ -592,6 +592,137 @@ const migrations: Migration[] = [
           executed_by uuid REFERENCES users(id),
           created_at timestamptz NOT NULL DEFAULT now()
         );
+      `);
+    }
+  },
+  {
+    id: '009_query_money_pricing_migration',
+    name: 'Monetary query pricing, audited wallet conversion and direct query orders',
+    async up(client) {
+      await client.query(`
+        ALTER TABLE query_products ADD COLUMN IF NOT EXISTS price_cents integer;
+        UPDATE query_products
+        SET price_cents = CASE
+          WHEN COALESCE(is_free, false) THEN 0
+          ELSE COALESCE(reference_price_cents, GREATEST(credit_cost, 1) * 100)
+        END
+        WHERE price_cents IS NULL;
+        ALTER TABLE query_products ALTER COLUMN price_cents SET DEFAULT 0;
+        ALTER TABLE query_products ALTER COLUMN price_cents SET NOT NULL;
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='query_products_price_cents_check') THEN
+            ALTER TABLE query_products ADD CONSTRAINT query_products_price_cents_check CHECK (price_cents >= 0);
+          END IF;
+        END $$;
+
+        ALTER TABLE wallets ADD COLUMN IF NOT EXISTS balance_cents integer NOT NULL DEFAULT 0 CHECK (balance_cents >= 0);
+        ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS amount_cents integer NOT NULL DEFAULT 0;
+        ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS balance_before_cents integer NOT NULL DEFAULT 0;
+        ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS balance_after_cents integer NOT NULL DEFAULT 0;
+        UPDATE wallet_transactions SET amount_cents = amount * 100, balance_before_cents = balance_before * 100, balance_after_cents = balance_after * 100 WHERE amount_cents = 0 AND (amount <> 0 OR balance_before <> 0 OR balance_after <> 0);
+        ALTER TABLE vehicle_queries ADD COLUMN IF NOT EXISTS price_cents integer NOT NULL DEFAULT 0;
+        ALTER TABLE vehicle_queries ADD COLUMN IF NOT EXISTS charge_source text NOT NULL DEFAULT 'LEGACY_CREDIT';
+        ALTER TABLE vehicle_queries ADD COLUMN IF NOT EXISTS payment_order_id uuid;
+        ALTER TABLE payments ALTER COLUMN credits SET DEFAULT 0;
+        ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS purchase_type text NOT NULL DEFAULT 'CREDIT_PACKAGE';
+        ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS product_id text;
+        ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS query_plate text;
+        ALTER TABLE payment_orders ALTER COLUMN package_id DROP NOT NULL;
+        ALTER TABLE payment_orders ALTER COLUMN credits DROP NOT NULL;
+        ALTER TABLE payment_orders ALTER COLUMN credits SET DEFAULT 0;
+        DO $$ DECLARE constraint_name text; BEGIN
+          FOR constraint_name IN
+            SELECT c.conname FROM pg_constraint c
+            JOIN pg_class t ON t.oid=c.conrelid
+            WHERE t.relname='payment_orders' AND c.contype='c' AND pg_get_constraintdef(c.oid) ILIKE '%credits%'
+          LOOP
+            EXECUTE format('ALTER TABLE payment_orders DROP CONSTRAINT IF EXISTS %I', constraint_name);
+          END LOOP;
+        END $$;
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='payment_orders_credits_nonnegative_check') THEN
+            ALTER TABLE payment_orders ADD CONSTRAINT payment_orders_credits_nonnegative_check CHECK (credits >= 0);
+          END IF;
+        END $$;
+        ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS subtotal_cents integer;
+        ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS amount_cents integer;
+        ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS affiliate_code text;
+        ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS discount_cents integer NOT NULL DEFAULT 0;
+        CREATE TABLE IF NOT EXISTS organization_query_prices (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+          product_id text NOT NULL REFERENCES query_products(id) ON DELETE CASCADE,
+          price_cents integer NOT NULL CHECK (price_cents >= 0),
+          active boolean NOT NULL DEFAULT true,
+          starts_at timestamptz,
+          ends_at timestamptz,
+          created_by uuid REFERENCES users(id),
+          created_at timestamptz NOT NULL DEFAULT now(),
+          updated_at timestamptz NOT NULL DEFAULT now(),
+          UNIQUE(organization_id, product_id),
+          CHECK (ends_at IS NULL OR starts_at IS NULL OR ends_at > starts_at)
+        );
+        CREATE INDEX IF NOT EXISTS idx_org_query_prices_window ON organization_query_prices(organization_id, product_id, active, starts_at, ends_at);
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='payment_orders_purchase_type_check') THEN
+            ALTER TABLE payment_orders ADD CONSTRAINT payment_orders_purchase_type_check CHECK (purchase_type IN ('CREDIT_PACKAGE','QUERY'));
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='payment_orders_product_id_fkey') THEN
+            ALTER TABLE payment_orders ADD CONSTRAINT payment_orders_product_id_fkey FOREIGN KEY (product_id) REFERENCES query_products(id);
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='vehicle_queries_payment_order_id_fkey') THEN
+            ALTER TABLE vehicle_queries ADD CONSTRAINT vehicle_queries_payment_order_id_fkey FOREIGN KEY (payment_order_id) REFERENCES payment_orders(id);
+          END IF;
+        END $$;
+
+        CREATE TABLE IF NOT EXISTS wallet_money_conversions (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id uuid NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+          legacy_credit_balance integer NOT NULL CHECK (legacy_credit_balance >= 0),
+          converted_balance_cents integer NOT NULL CHECK (converted_balance_cents >= 0),
+          conversion_rate_cents integer NOT NULL DEFAULT 100 CHECK (conversion_rate_cents > 0),
+          audit_log_id bigint REFERENCES audit_logs(id),
+          created_at timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE TABLE IF NOT EXISTS query_payment_entitlements (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          order_id uuid NOT NULL UNIQUE REFERENCES payment_orders(id) ON DELETE CASCADE,
+          user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          product_id text NOT NULL REFERENCES query_products(id),
+          plate text NOT NULL,
+          status text NOT NULL DEFAULT 'READY' CHECK (status IN ('READY','CONSUMED','FAILED')),
+          query_id uuid REFERENCES vehicle_queries(id),
+          created_at timestamptz NOT NULL DEFAULT now(),
+          consumed_at timestamptz
+        );
+        CREATE INDEX IF NOT EXISTS idx_query_entitlements_user_status ON query_payment_entitlements(user_id, status, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_payment_orders_query_product ON payment_orders(product_id, purchase_type, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_vehicle_queries_payment_order ON vehicle_queries(payment_order_id) WHERE payment_order_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_payment_orders_user_query ON payment_orders(user_id, purchase_type, product_id, created_at DESC);
+
+        INSERT INTO wallet_money_conversions(user_id,legacy_credit_balance,converted_balance_cents)
+        SELECT w.user_id,w.balance,w.balance * 100
+        FROM wallets w
+        ON CONFLICT(user_id) DO NOTHING;
+        UPDATE wallets w
+        SET balance_cents = c.converted_balance_cents,
+            balance = 0,
+            updated_at = now()
+        FROM wallet_money_conversions c
+        WHERE c.user_id=w.user_id;
+        INSERT INTO audit_logs(user_id,action,entity,entity_id,metadata)
+        SELECT c.user_id,'CONVERT_LEGACY_CREDITS_TO_CENTS','WALLET',c.user_id::text,
+          jsonb_build_object('legacyCreditBalance',c.legacy_credit_balance,'convertedBalanceCents',c.converted_balance_cents,'conversionRateCents',c.conversion_rate_cents,'migration','009_query_money_pricing_migration')
+        FROM wallet_money_conversions c
+        WHERE c.audit_log_id IS NULL;
+        UPDATE wallet_money_conversions c
+        SET audit_log_id = a.id
+        FROM audit_logs a
+        WHERE c.audit_log_id IS NULL
+          AND a.user_id=c.user_id
+          AND a.action='CONVERT_LEGACY_CREDITS_TO_CENTS'
+          AND a.entity_id=c.user_id::text
+          AND a.metadata->>'migration'='009_query_money_pricing_migration';
       `);
     }
   }

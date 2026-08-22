@@ -4,7 +4,9 @@ import {
   calculateAffiliateCommission,
   calculateCouponDiscount,
   couponHasCapacity,
-  couponWindowIsOpen
+  couponWindowIsOpen,
+  effectiveQueryPriceCents,
+  queryAmountAfterCoupon
 } from '../dist/commercial.js';
 
 test('calcula desconto percentual com arredondamento para baixo', () => {
@@ -53,6 +55,8 @@ assert.equal(typeof calculateCouponDiscount, 'function');
 assert.equal(typeof couponWindowIsOpen, 'function');
 assert.equal(typeof couponHasCapacity, 'function');
 assert.equal(typeof calculateAffiliateCommission, 'function');
+assert.equal(typeof effectiveQueryPriceCents, 'function');
+assert.equal(typeof queryAmountAfterCoupon, 'function');
 
 test('aceita cupom dentro da janela e rejeita expirado ou esgotado antes do pagamento', () => {
   const now = new Date('2026-08-22T12:00:00.000Z');
@@ -74,4 +78,17 @@ test('mantém o INSERT de payment_orders com colunas e expressões alinhadas', a
   assert.equal(columns.length, expressions.length);
   assert.equal(expressions.filter((item) => item === "'CREATED'").length, 1);
   assert.equal(expressions.includes('$12'), false);
+});
+
+
+test('resolve preço monetário gratuito, negociado e base', () => {
+  assert.equal(effectiveQueryPriceCents({ priceCents: 2500, isFree: true }), 0);
+  assert.equal(effectiveQueryPriceCents({ priceCents: 2500, negotiatedPriceCents: 1900 }), 1900);
+  assert.equal(effectiveQueryPriceCents({ priceCents: 2500, negotiatedPriceCents: null }), 2500);
+});
+
+test('calcula total monetário da consulta e rejeita cupom que zera produto pago', () => {
+  assert.deepEqual(queryAmountAfterCoupon(2500, 'PERCENT', 10), { subtotalCents: 2500, discountCents: 250, amountCents: 2250 });
+  assert.deepEqual(queryAmountAfterCoupon(0, 'FIXED', 100), { subtotalCents: 0, discountCents: 0, amountCents: 0 });
+  assert.throws(() => queryAmountAfterCoupon(1000, 'PERCENT', 100), /COUPON_ZERO_TOTAL_UNSUPPORTED/);
 });
