@@ -184,3 +184,69 @@
 .planMatrix,.planCompositionGrid{filter:drop-shadow(0 12px 24px rgba(8,35,63,.045))}
 @media(max-width:820px){.hero:before{right:-220px;opacity:.4}.hero:after{right:-80px;opacity:.45}.publicHeader:after{width:72px}}
 @media(prefers-reduced-motion:no-preference){primaryButton,.secondaryButton{transition:transform .18s cubic-bezier(.23,1,.32,1),box-shadow .18s ease,background .18s ease}}
+
+/* BUSCARR — passe premium do tema claro: contraste, ritmo e conversão. */
+:root:not([data-theme="dark"]) .landing{background:linear-gradient(180deg,#fff9ef 0%,#fffefa 45%,#f4f8f4 100%);color:var(--ink)}
+:root:not([data-theme="dark"]) .landing main{background:linear-gradient(180deg,rgba(255,255,255,.06) 0%,rgba(255,255,255,.34) 38%,rgba(231,240,239,.2) 100%)}
+:root:not([data-theme="dark"]) .landing .publicHeader{background:rgba(255,254,250,.72);border-bottom-color:#cbdcd7;backdrop-filter:blur(14px)}
+:root:not([data-theme="dark"]) .landing .publicHeader nav a{color:#153b45}
+:root:not([data-theme="dark"]) .landing .publicHeader nav a:hover{color:#0b2d3a}
+:root:not([data-theme="dark"]) .landing .themeControl{border-color:#cbdcd7;background:#fffefa;box-shadow:0 5px 14px rgba(11,45,58,.05)}
+:root:not([data-theme="dark"]) .landing .themeControl button{color:#52666b}
+:root:not([data-theme="dark"]) .landing .themeControl button.selected{background:#e7f0ef;color:#0b2d3a}
+:root:not([data-theme="dark"]) .landing .hero{padding-top:88px;padding-bottom:128px}
+:root:not([data-theme="dark"]) .landing .heroLead, :root:not([data-theme="dark"]) .landing .heroTrust{color:#52666b}
+:root:not([data-theme="dark"]) .landing .heroLead{max-width:600px}
+:root:not([data-theme="dark"]) .landing .heroTrust b{color:#0b2d3a}
+:root:not([data-theme="dark"]) .landing .heroPlateSearch{border-color:#b9d7d0;background:#fffefa;box-shadow:0 16px 34px rgba(11,45,58,.08),inset 0 1px rgba(255,255,255,.9)}
+:root:not([data-theme="dark"]) .landing .heroPlateSearch label{color:#0b2d3a}
+:root:not([data-theme="dark"]) .landing .heroPlateSearch small{color:#52666b}
+:root:not([data-theme="dark"]) .landing .heroPlateSearch input{border-color:#cbdcd7;background:#fffefa;color:#0b2d3a}
+:root:not([data-theme="dark"]) .landing .heroPlateSearch input::placeholder{color:#6a7c7f}
+:root:not([data-theme="dark"]) .landing .heroPlateSearch input:focus{border-color:#168579;box-shadow:0 0 0 4px rgba(22,133,121,.12)}
+:root:not([data-theme="dark"]) .landing .primaryButton{border-color:#c18c17;background:linear-gradient(135deg,#f8c95c 0%,#f4b63d 58%,#dda229 100%);color:#102b36;box-shadow:0 12px 24px rgba(180,130,24,.22)}
+:root:not([data-theme="dark"]) .landing .primaryButton:hover:not(:disabled){box-shadow:0 16px 30px rgba(180,130,24,.3)}
+:root:not([data-theme="dark"]) .landing .secondaryButton{border-color:#cbdcd7;background:#fffefa;color:#0b2d3a;box-shadow:0 6px 16px rgba(11,45,58,.04)}
+:root:not([data-theme="dark"]) .landing .secondaryButton:hover{border-color:#9fc6bd;background:#f8fbf8}
+:root:not([data-theme="dark"]) .landing .vehicleCard{border-color:rgba(11,45,58,.2);box-shadow:0 34px 76px rgba(3,15,30,.3)}
+:root:not([data-theme="dark"]) .landing .howItWorks{padding-top:132px;padding-bottom:132px}
+:root:not([data-theme="dark"]) .landing .howItWorks li{border-top-color:#d6e2de}
+:root:not([data-theme="dark"]) .landing .howItWorks li strong{color:#0b2d3a}
+:root:not([data-theme="dark"]) .landing .howItWorks li p,.landing .sectionLead{color:#52666b}
+:root:not([data-theme="dark"]) .landing .howItWorks li b{border-color:#e5c56b;background:#fffefa;color:#a96d00;box-shadow:0 4px 12px rgba(180,130,24,.08)}
+:root:not([data-theme="dark"]) .landing .plansSection,:root:not([data-theme="dark"]) .landing .contentSection,:root:not([data-theme="dark"]) .landing .faqSection{padding-top:52px}
+:root:not([data-theme="dark"]) .landing .sectionHeading h2{color:#0b2d3a}
+:root:not([data-theme="dark"]) .landing .sectionHeading>p:not(.kicker){color:#52666b}
+:root:not([data-theme="dark"]) .landing .publicPlanCard{border-color:#d2e0db;background:rgba(255,254,250,.94);box-shadow:0 18px 38px rgba(11,45,58,.08)}
+:root:not([data-theme="dark"]) .landing .publicPlanCard:not(.featured):hover{transform:translateY(-5px);border-color:#a9ccc2;box-shadow:0 24px 44px rgba(11,45,58,.12)}
+:root:not([data-theme="dark"]) .landing .publicPlanCard:not(.featured) .planTop>span{color:#9a6200}
+:root:not([data-theme="dark"]) .landing .publicPlanCard:not(.featured) p,:root:not([data-theme="dark"]) .landing .publicPlanCard:not(.featured) ul{color:#52666b}
+:root:not([data-theme="dark"]) .landing .publicPlanCard.featured{border-color:#f4b63d;background:linear-gradient(145deg,#123d4b 0%,#0b2d3a 74%,#082630 100%);box-shadow:0 24px 48px rgba(11,45,58,.22)}
+:root:not([data-theme="dark"]) .landing .publicPlanCard.featured:hover{transform:translateY(-9px)}
+:root:not([data-theme="dark"]) .landing .publicPlanCard.featured .primaryButton{background:linear-gradient(135deg,#ffd66d,#f4b63d);color:#102b36}
+:root:not([data-theme="dark"]) .landing .comparisonLink{color:#936000}
+:root:not([data-theme="dark"]) .landing .comparisonLink:hover{color:#168579}
+:root:not([data-theme="dark"]) .landing .fullComparison{border-top-color:#cbdcd7}
+:root:not([data-theme="dark"]) .landing .planMatrixIntro{border-color:#e3c96e;background:#fff7dc;color:#0b2d3a}
+:root:not([data-theme="dark"]) .landing .planMatrixIntro span{color:#52666b}
+:root:not([data-theme="dark"]) .landing .planMatrixGrid{border-color:#d2e0db;background:#fffefa;box-shadow:0 18px 38px rgba(11,45,58,.07)}
+:root:not([data-theme="dark"]) .landing .matrixCorner,:root:not([data-theme="dark"]) .landing .matrixFeatureLabel{background:#f1f6f2;color:#455d62}
+:root:not([data-theme="dark"]) .landing .matrixPlanHead{border-left-color:#d2e0db;background:#fffefa}
+:root:not([data-theme="dark"]) .landing .matrixPlanHead p{color:#52666b}
+:root:not([data-theme="dark"]) .landing .matrixFeatureLabel,:root:not([data-theme="dark"]) .landing .matrixCell{border-top-color:#dbe5e1}
+:root:not([data-theme="dark"]) .landing .matrixCell{border-left-color:#dbe5e1}
+:root:not([data-theme="dark"]) .landing .matrixStatus.excluded{background:#f1f5f2;color:#66777a}
+:root:not([data-theme="dark"]) .landing .planMatrixLegend{color:#52666b}
+:root:not([data-theme="dark"]) .landing .articleGrid article{border:1px solid #d6e2de;border-top:3px solid #e4ad2f;border-radius:0 0 20px 20px;background:rgba(255,254,250,.9);box-shadow:0 14px 30px rgba(11,45,58,.055)}
+:root:not([data-theme="dark"]) .landing .articleGrid article:hover{transform:translateY(-4px);box-shadow:0 20px 36px rgba(11,45,58,.09)}
+:root:not([data-theme="dark"]) .landing .articleGrid article>span{color:#936000}
+:root:not([data-theme="dark"]) .landing .articleGrid p,:root:not([data-theme="dark"]) .landing .faqGrid p{color:#52666b}
+:root:not([data-theme="dark"]) .landing .articleGrid a{color:#936000}
+:root:not([data-theme="dark"]) .landing .articleGrid a:hover{color:#168579}
+:root:not([data-theme="dark"]) .landing .faqGrid article{border:1px solid #d6e2de;border-top:3px solid #b9d7d0;border-radius:0 0 20px 20px;background:rgba(255,254,250,.92);box-shadow:0 14px 30px rgba(11,45,58,.05)}
+:root:not([data-theme="dark"]) .landing .faqGrid h3{color:#0b2d3a}
+:root:not([data-theme="dark"]) .landing .publicCta{border:1px solid #1e5260;background:linear-gradient(135deg,#071d35 0%,#0b2d3a 66%,#123d4b 100%);box-shadow:0 24px 48px rgba(3,15,30,.2)}
+:root:not([data-theme="dark"]) .landing .publicCta>div>p:last-child{color:#c7d7d4}
+:root:not([data-theme="dark"]) .landing footer a,:root:not([data-theme="dark"]) .landing footer>span{color:#c7d7d4}
+:root:not([data-theme="dark"]) .landing footer a:hover{color:#f4b63d}
+@media(max-width:820px){:root:not([data-theme="dark"]) .landing .hero{padding-top:62px;padding-bottom:88px}}
