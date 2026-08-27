@@ -28,6 +28,8 @@ const envSchema = z.object({
   DATABASE_SSL: booleanFromEnv.default(false),
   JWT_SECRET: z.string().min(32),
   JWT_EXPIRES_IN: z.string().default('2h'),
+  // Equipe usa somente e-mail e senha por padrão; TOTP pode ser reativado explicitamente.
+  TEAM_TOTP_REQUIRED: booleanFromEnv.default(false),
 
   // Dados veiculares: o modo real só pode operar com contrato e credenciais válidos.
   DATA_PROVIDER: z.enum(['mock', 'real']).default('mock'),

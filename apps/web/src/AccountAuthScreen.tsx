@@ -12,6 +12,12 @@ type AuthBody = ApiError & {
   setup?: { secret: string; otpauthUrl: string };
   recoveryCodes?: string[];
 };
+async function readJson<T>(response: Response): Promise<T | undefined> {
+  if (response.status === 204 || response.status === 304) return undefined;
+  const raw = await response.text();
+  if (!raw.trim()) return undefined;
+  try { return JSON.parse(raw) as T; } catch { return undefined; }
+}
 
 type Props = {
   onAuthenticated: (token: string) => void;
@@ -34,7 +40,7 @@ export default function AccountAuthScreen({ onAuthenticated, onBack, externalErr
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
 
   useEffect(() => { setMode(resetToken ? 'reset' : initialMode); setError(''); setNotice(''); }, [initialMode, resetToken]);
-  useEffect(() => { void fetch(`${API}/auth/providers`).then((response) => response.ok ? response.json() : { providers: [] }).then((body: { providers?: OAuthProviderStatus[] }) => setProviders(body.providers ?? [])).catch(() => setProviders([])); }, []);
+  useEffect(() => { void fetch(`${API}/auth/providers`, { cache: 'no-store' }).then((response) => response.ok ? readJson<{ providers?: OAuthProviderStatus[] }>(response) : { providers: [] }).then((body) => setProviders(body?.providers ?? [])).catch(() => setProviders([])); }, []);
 
   function selectMode(next: AuthMode) { setMode(next); setError(''); setNotice(''); }
   function saveToken(token: string) { sessionStorage.setItem('carpivara_token', token); onAuthenticated(token); }
@@ -59,9 +65,9 @@ export default function AccountAuthScreen({ onAuthenticated, onBack, externalErr
     const email = String(form.get('email') ?? '').trim();
     try {
       if (mode === 'forgot') {
-        const response = await fetch(`${API}/auth/forgot-password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
-        const body = await response.json() as ApiError & { message?: string };
-        if (!response.ok) throw new Error(body.message ?? 'Não foi possível solicitar a recuperação agora.');
+        const response = await fetch(`${API}/auth/forgot-password`, { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
+        const body = await readJson<ApiError & { message?: string }>(response) ?? {};
+        if (!response.ok) throw new Error(body.message ?? body.error ?? 'Não foi possível solicitar a recuperação agora.');
         setNotice(body.message ?? 'Se o e-mail estiver cadastrado, enviaremos as instruções para redefinir sua senha.');
         return;
       }
@@ -70,9 +76,9 @@ export default function AccountAuthScreen({ onAuthenticated, onBack, externalErr
         const confirmation = String(form.get('passwordConfirmation') ?? '');
         if (password.length < 10) throw new Error('Crie uma senha com pelo menos 10 caracteres.');
         if (password !== confirmation) throw new Error('As senhas precisam ser iguais.');
-        const response = await fetch(`${API}/auth/reset-password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: resetToken, newPassword: password }) });
-        const body = await response.json() as AuthBody;
-        if (!response.ok || (!body.token && !body.totpRequired)) throw new Error(body.message ?? 'O link de redefinição expirou ou já foi utilizado.');
+        const response = await fetch(`${API}/auth/reset-password`, { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: resetToken, newPassword: password }) });
+        const body = await readJson<AuthBody>(response) ?? {};
+        if (!response.ok || (!body.token && !body.totpRequired)) throw new Error(body.message ?? body.error ?? 'O link de redefinição expirou ou já foi utilizado.');
         if (!processAuthBody(body)) throw new Error('Não foi possível concluir a autenticação.');
         return;
       }
@@ -84,9 +90,9 @@ export default function AccountAuthScreen({ onAuthenticated, onBack, externalErr
       const payload = mode === 'login'
         ? { email, password }
         : { name: String(form.get('name') ?? ''), email, password, acceptTerms: form.get('acceptTerms') === 'on', acceptPrivacy: form.get('acceptPrivacy') === 'on', marketingOptIn: form.get('marketingOptIn') === 'on', ...(affiliateCode ? { affiliateCode } : {}) };
-      const response = await fetch(`${API}/auth/${mode === 'login' ? 'login' : 'register'}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      const body = await response.json() as AuthBody;
-      if (!response.ok) throw new Error(body.message ?? 'Não foi possível acessar sua conta.');
+      const response = await fetch(`${API}/auth/${mode === 'login' ? 'login' : 'register'}`, { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const body = await readJson<AuthBody>(response) ?? {};
+      if (!response.ok) throw new Error(body.message ?? body.error ?? 'Não foi possível acessar sua conta.');
       if (!processAuthBody(body)) throw new Error('Não foi possível concluir a autenticação.');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Não foi possível concluir a operação.');
@@ -100,9 +106,9 @@ export default function AccountAuthScreen({ onAuthenticated, onBack, externalErr
     const code = String(form.get('totpCode') ?? '').trim();
     try {
       const endpoint = totpStep === 'ENROLL' ? '/auth/totp/enroll/confirm' : '/auth/totp/verify';
-      const response = await fetch(`${API}${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ challenge: totpChallenge, code }) });
-      const body = await response.json() as AuthBody;
-      if (!response.ok || !body.token) throw new Error(body.message ?? 'Código inválido ou expirado.');
+      const response = await fetch(`${API}${endpoint}`, { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ challenge: totpChallenge, code }) });
+      const body = await readJson<AuthBody>(response) ?? {};
+      if (!response.ok || !body.token) throw new Error(body.message ?? body.error ?? 'Código inválido ou expirado.');
       if (body.recoveryCodes?.length) setRecoveryCodes(body.recoveryCodes);
       saveToken(body.token);
     } catch (reason) {

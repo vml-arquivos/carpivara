@@ -4,6 +4,8 @@ import { readFile } from 'node:fs/promises';
 
 const server = await readFile(new URL('../src/server.ts', import.meta.url), 'utf8');
 const auth = await readFile(new URL('../src/auth.ts', import.meta.url), 'utf8');
+const config = await readFile(new URL('../src/config.ts', import.meta.url), 'utf8');
+const frontend = await readFile(new URL('../../web/src/main.tsx', import.meta.url), 'utf8');
 
 test('hardening fixa CSP e origem CORS sem reflexão ampla', () => {
   assert.match(server, /contentSecurityPolicy:\s*\{/);
@@ -32,4 +34,26 @@ test('rotas de contato não expõem conteúdo sem permissão de auditoria', () =
   assert.match(server, /api\.patch\('\/admin\/contact-messages\/:id', auth, requirePermission\('MANAGE_USERS'\)/);
   assert.match(server, /api\.post\('\/contact', contactRateLimit/);
   assert.match(server, /api\.post\('\/account\/contact', auth, contactRateLimit/);
+});
+
+test('TOTP da equipe fica desligado por padrão e só é exigido quando explicitamente habilitado', () => {
+  assert.match(config, /TEAM_TOTP_REQUIRED: booleanFromEnv\.default\(false\)/);
+  assert.match(auth, /env\.TEAM_TOTP_REQUIRED && \['OPERADOR', 'ADMIN', 'SUPER_ADMIN'\]\.includes\(String\(claims\.role\)\)/);
+  assert.match(server, /!isTeamRole\(user\.role\) \|\| !env\.TEAM_TOTP_REQUIRED/);
+  assert.match(server, /totpRequired: isTeamRole\(user\.role\) && env\.TEAM_TOTP_REQUIRED/);
+});
+
+test('API impede cache condicional e o dashboard não transforma falha parcial em logout', () => {
+  assert.match(server, /api\.use\(\(_req, res, next\) =>/);
+  assert.match(server, /res\.setHeader\('Cache-Control', 'no-store'\)/);
+  assert.match(frontend, /cache: 'no-store'/);
+  assert.match(frontend, /Promise\.allSettled/);
+  assert.match(frontend, /isAuthenticationFailure\(profileResult\.reason\)/);
+  assert.match(frontend, /adminLoadErrors/);
+  assert.match(frontend, /Tentar novamente/);
+});
+
+test('visão administrativa calcula receita de consulta pela ordem de pagamento', () => {
+  assert.match(server, /FROM payments p JOIN payment_orders o ON o\.id=p\.order_id WHERE p\.status='PAID' AND o\.purchase_type='QUERY'/);
+  assert.doesNotMatch(server, /FROM payments WHERE status='PAID' AND purchase_type='QUERY'/);
 });

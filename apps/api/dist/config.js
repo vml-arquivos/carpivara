@@ -10,7 +10,7 @@ const optionalString = z.preprocess((value) => value === '' ? undefined : value,
 const envSchema = z.object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     PORT: z.coerce.number().int().positive().default(4000),
-    APP_NAME: z.string().trim().min(1).default('Carpivara'),
+    APP_NAME: z.string().trim().min(1).default('BUSCARR'),
     APP_URL: optionalUrl,
     WEB_ORIGIN: z.string().url().default('http://localhost:5173'),
     EMAIL_PROVIDER: z.enum(['disabled', 'smtp']).default('disabled'),
@@ -26,6 +26,8 @@ const envSchema = z.object({
     DATABASE_SSL: booleanFromEnv.default(false),
     JWT_SECRET: z.string().min(32),
     JWT_EXPIRES_IN: z.string().default('2h'),
+    // Equipe usa somente e-mail e senha por padrão; TOTP pode ser reativado explicitamente.
+    TEAM_TOTP_REQUIRED: booleanFromEnv.default(false),
     // Dados veiculares: o modo real só pode operar com contrato e credenciais válidos.
     DATA_PROVIDER: z.enum(['mock', 'real']).default('mock'),
     // FIPE: feature desligada por padrão; os tokens são exclusivos do backend.

@@ -35,6 +35,7 @@ DATABASE_URL=postgresql://USUARIO:SENHA@HOST_INTERNO:5432/NOME_BANCO
 DATABASE_SSL=false
 JWT_SECRET=GERAR_UM_SEGREDO_ALEATORIO_COM_64_OU_MAIS_CARACTERES
 JWT_EXPIRES_IN=2h
+TEAM_TOTP_REQUIRED=false
 
 DATA_PROVIDER=mock
 QUERY_REQUEST_TIMEOUT_MS=20000
@@ -67,7 +68,7 @@ Não use `DATA_PROVIDER=real` até a implementação do adapter ser baseada na d
 | Sintoma | Verificação |
 | --- | --- |
 | Healthcheck falha | Confirme `DATABASE_URL`, acesso de rede ao PostgreSQL e logs de migration. |
-| Login falha | Confirme segredo JWT, usuários provisionados e limite de login. |
+| Login falha | Confirme `DATABASE_URL`, usuários provisionados, `TEAM_TOTP_REQUIRED` e limite de login. |
 | Recuperação não envia e-mail | Confirme `EMAIL_PROVIDER=smtp`, host, porta, usuário, senha, remetente autorizado e os logs de entrega do provedor. |
 | Frontend abre sem API | Confirme o domínio único e proxy para a porta `4000`. |
 | Consulta falha em sandbox | Confirme `DATA_PROVIDER=mock` e `SANDBOX_SEED_ENABLED=true` somente em ambiente de demonstração. |

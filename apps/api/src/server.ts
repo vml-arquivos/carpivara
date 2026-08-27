@@ -35,6 +35,13 @@ await ensureSchema();
 
 const app = express();
 const api = express.Router();
+api.use((_req, res, next) => {
+  // API responses are not cacheable: authenticated clients must never receive a conditional 304 without a body.
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+});
 const plateSchema = z.string().trim().min(7).max(16).transform((value) => value.toUpperCase().replace(/[^A-Z0-9]/g, '')).refine((value) => /^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/.test(value), 'INVALID_PLATE');
 const registerSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -191,8 +198,8 @@ async function createAuthChallenge(userId: string, kind: 'TOTP_LOGIN' | 'TOTP_EN
 }
 
 async function authResultForUser(user: AuthUser, flow: string, req: Request): Promise<Record<string, unknown>> {
-  if (!isTeamRole(user.role)) {
-    const issued = await issueSession(user, { flow, requestId: requestId(req), totpVerified: false });
+  if (!isTeamRole(user.role) || !env.TEAM_TOTP_REQUIRED) {
+    const issued = await issueSession(user, { flow, requestId: requestId(req), totpVerified: !env.TEAM_TOTP_REQUIRED });
     return { token: issued.token, user };
   }
   const existing = await pool.query('SELECT enabled_at FROM team_totp WHERE user_id=$1', [user.id]);
@@ -421,7 +428,7 @@ api.post('/auth/oauth/consume', loginRateLimit, asyncRoute(async (req, res) => {
   if (!parsed.success) throw appError('OAUTH_TICKET_INVALID', { code: 'OAUTH_TICKET_INVALID', http: 401, expose: true });
   const user = await consumeLoginTicket(parsed.data.ticket);
   const result = await authResultForUser(user, 'social', req);
-  await audit(user.id, 'OAUTH_LOGIN', 'USER', user.id, { requestId: requestId(req), totpRequired: isTeamRole(user.role) });
+  await audit(user.id, 'OAUTH_LOGIN', 'USER', user.id, { requestId: requestId(req), totpRequired: isTeamRole(user.role) && env.TEAM_TOTP_REQUIRED });
   res.json(result);
 }));
 
@@ -444,7 +451,7 @@ api.post('/auth/totp/enroll/confirm', loginRateLimit, asyncRoute(async (req, res
 }));
 
 api.get('/auth/totp/status', auth, asyncRoute(async (req, res) => {
-  if (!isTeamRole(req.user!.role)) { res.json({ required: false, enabled: false }); return; }
+  if (!isTeamRole(req.user!.role) || !env.TEAM_TOTP_REQUIRED) { res.json({ required: false, enabled: false, recoveryCodesRemaining: 0 }); return; }
   const result = await pool.query(`SELECT t.enabled_at,(SELECT count(*) FROM team_totp_recovery_codes c WHERE c.user_id=t.user_id AND c.used_at IS NULL) AS recovery_codes
     FROM team_totp t WHERE t.user_id=$1`, [req.user!.id]);
   res.json({ required: true, enabled: Boolean(result.rows[0]?.enabled_at), recoveryCodesRemaining: Number(result.rows[0]?.recovery_codes ?? 0) });
@@ -502,7 +509,7 @@ api.post('/auth/login', loginRateLimit, asyncRoute(async (req, res) => {
   const user = publicUser({ id: String(account.id), email: String(account.email), name: String(account.name), role: String(account.role) });
   await pool.query('UPDATE users SET failed_login_attempts=0, locked_until=NULL, last_login_at=now() WHERE id=$1', [user.id]);
   const resultForUser = await authResultForUser(user, 'password', req);
-  await audit(user.id, 'LOGIN', 'USER', user.id, { requestId: requestId(req), totpRequired: isTeamRole(user.role) });
+  await audit(user.id, 'LOGIN', 'USER', user.id, { requestId: requestId(req), totpRequired: isTeamRole(user.role) && env.TEAM_TOTP_REQUIRED });
   res.json(resultForUser);
 }));
 
@@ -1650,8 +1657,8 @@ api.get('/admin/overview', auth, requirePermission('VIEW_AUDIT'), asyncRoute(asy
     (SELECT count(*) FROM vehicle_queries WHERE status='FAILED') AS failed_queries,
     (SELECT count(*) FROM vehicle_queries WHERE status='REFUNDED') AS refunds,
     (SELECT coalesce(sum(abs(amount_cents)),0) FROM wallet_transactions WHERE kind='QUERY') AS queries_billed_cents,
-    (SELECT coalesce(sum(amount_cents),0) FROM payments WHERE status='PAID' AND purchase_type='QUERY') AS query_revenue_cents,
-    (SELECT count(*) FROM payments WHERE status='PAID' AND purchase_type='QUERY') AS query_sales,
+    (SELECT coalesce(sum(p.amount_cents),0) FROM payments p JOIN payment_orders o ON o.id=p.order_id WHERE p.status='PAID' AND o.purchase_type='QUERY') AS query_revenue_cents,
+    (SELECT count(*) FROM payments p JOIN payment_orders o ON o.id=p.order_id WHERE p.status='PAID' AND o.purchase_type='QUERY') AS query_sales,
     (SELECT coalesce(sum(amount_cents),0) FROM payments WHERE status='PAID') AS confirmed_revenue_cents,
     (SELECT count(*) FROM payments WHERE status='PAID') AS confirmed_sales,
     (SELECT coalesce(round(avg(amount_cents)),0) FROM payments WHERE status='PAID') AS average_ticket_cents,
