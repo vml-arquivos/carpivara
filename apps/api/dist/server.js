@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
 import { isIP } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import cors from 'cors';
@@ -27,12 +28,13 @@ import { calculateAffiliateCommission, calculateCouponDiscount, couponHasCapacit
 import { publicVehicleResult } from './privacy.js';
 import { buildGenericReport, defaultReportTemplate, reportPdf, reportPrintHtml } from './reportEngine.js';
 import { decryptTotpSecret, encryptTotpSecret, generateRecoveryCodes, generateTotpSetup, hashRecoveryCode, verifyTotpCode } from './totp.js';
+import { renderSeoHtml } from './seo.js';
 await ensureSchema();
 const app = express();
 const api = express.Router();
 api.use((_req, res, next) => {
     // API responses are not cacheable: authenticated clients must never receive a conditional 304 without a body.
-    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Cache-Control', 'no-store, private');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
     next();
@@ -135,6 +137,16 @@ const affiliateActivationSchema = z.object({ code: z.string().trim().min(3).max(
 const organizationBrandingSchema = z.object({ name: z.string().trim().min(2).max(160), document: z.string().trim().max(30).optional().nullable(), slug: z.string().trim().min(2).max(80).regex(/^[a-z0-9-]+$/).optional().nullable(), primaryColor: z.string().trim().regex(/^#[0-9A-Fa-f]{6}$/).optional().nullable(), accentColor: z.string().trim().regex(/^#[0-9A-Fa-f]{6}$/).optional().nullable(), logoUrl: z.string().url().max(500).optional().nullable(), customDomain: z.string().trim().max(255).optional().nullable(), settings: z.record(z.string(), z.string().trim().max(280)).optional(), active: z.boolean().optional() });
 const organizationMemberSchema = z.object({ userId: z.string().uuid(), role: z.enum(['OWNER', 'ADMIN', 'MEMBER', 'VIEWER']).default('MEMBER') });
 const planInterestSchema = z.object({ email: z.string().trim().email().max(254), plan: z.enum(['PREMIUM', 'RISK']) });
+const funnelEventSchema = z.object({
+    event: z.enum(['HOME_PAGE_VIEW', 'SEO_PAGE_VIEW', 'FIPE_PAGE_VIEW', 'CTA_CLICKED', 'PLATE_CAPTURED', 'FIPE_FORM_SUBMITTED', 'FIPE_RESULT_VIEWED', 'FIPE_REPORT_ACTION', 'AUTH_VIEWED', 'AUTH_SUBMITTED', 'ACCOUNT_CREATED', 'AUTH_SUCCEEDED', 'CHECKOUT_QUOTE_VIEWED', 'CHECKOUT_STARTED']),
+    sessionId: z.string().regex(/^[a-zA-Z0-9-]{16,80}$/),
+    path: z.string().trim().regex(/^\/[a-zA-Z0-9/_-]*$/).max(180),
+    metadata: z.record(z.string().max(60), z.union([z.string().max(160), z.number().finite(), z.boolean(), z.null()])).optional().default({})
+}).strict();
+const publicFunnelMetadataKeys = new Set(['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'ref', 'referrer', 'landing', 'intent', 'placement', 'destination', 'vehicleType', 'hasVehicleDetails', 'referenceMonth', 'action', 'authenticated', 'plateFormat', 'productId', 'amountCents', 'paymentConfigured', 'hasCoupon', 'hasAffiliate']);
+function sanitizePublicFunnelMetadata(input) {
+    return Object.fromEntries(Object.entries(input).filter(([key]) => publicFunnelMetadataKeys.has(key)));
+}
 const safeSettingsSchema = z.object({
     siteTagline: z.string().trim().max(180).nullable().optional(),
     supportEmail: z.string().trim().email().max(254).nullable().optional(),
@@ -673,9 +685,9 @@ function requestSourceIp(req) {
         return cloudflareIp;
     return req.ip;
 }
-async function recordFunnelEvent(userId, req, eventType, metadata = {}) {
+async function recordFunnelEvent(userId, req, eventType, metadata = {}, clientSessionId) {
     try {
-        await pool.query('INSERT INTO funnel_events(user_id,session_key,event_type,metadata) VALUES($1,$2,$3,$4::jsonb)', [userId, hashIp(requestSourceIp(req)), eventType, JSON.stringify(metadata)]);
+        await pool.query('INSERT INTO funnel_events(user_id,session_key,event_type,metadata) VALUES($1,$2,$3,$4::jsonb)', [userId, hashIp(clientSessionId ?? requestSourceIp(req)), eventType, JSON.stringify(metadata)]);
     }
     catch {
         // Métricas são auxiliares: uma falha de telemetria não pode alterar a resposta do produto.
@@ -1155,8 +1167,16 @@ api.post('/plan-interest', asyncRoute(async (req, res) => {
     const parsed = planInterestSchema.safeParse(req.body);
     if (!parsed.success)
         throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
-    await recordFunnelEvent(null, req, parsed.data.plan === 'RISK' ? 'RISK_INTEREST' : 'PREMIUM_INTEREST', { email: parsed.data.email.toLowerCase(), plan: parsed.data.plan });
+    // O interesse comercial é aceito, mas analytics não recebe e-mail nem outro identificador direto.
+    await recordFunnelEvent(null, req, parsed.data.plan === 'RISK' ? 'RISK_INTEREST' : 'PREMIUM_INTEREST', { plan: parsed.data.plan });
     res.status(201).json({ ok: true });
+}));
+api.post('/funnel/events', asyncRoute(async (req, res) => {
+    const parsed = funnelEventSchema.safeParse(req.body);
+    if (!parsed.success)
+        throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+    await recordFunnelEvent(null, req, parsed.data.event, sanitizePublicFunnelMetadata({ path: parsed.data.path, ...parsed.data.metadata }), parsed.data.sessionId);
+    res.status(202).json({ accepted: true });
 }));
 api.get('/validar-relatorio/:code', asyncRoute(async (req, res) => {
     const document = await pool.query(`SELECT document_code,report_kind,report_version,provider,report_hash,snapshot,created_at,superseded_at
@@ -1748,6 +1768,11 @@ api.get('/admin/overview', auth, requirePermission('VIEW_AUDIT'), asyncRoute(asy
     (SELECT count(*) FROM funnel_events WHERE event_type='FREE_QUERY_COMPLETED') AS fipe_completed,
     (SELECT count(*) FROM funnel_events WHERE event_type='FREE_QUERY_SAVED') AS fipe_saved,
     (SELECT count(*) FROM funnel_events WHERE event_type='FREE_REPORT_DOWNLOADED') AS fipe_pdf_downloads,
+    (SELECT count(DISTINCT session_key) FROM funnel_events WHERE event_type IN ('HOME_PAGE_VIEW','SEO_PAGE_VIEW','FIPE_PAGE_VIEW') AND created_at >= now() - interval '30 days') AS funnel_visitors_30d,
+    (SELECT count(DISTINCT session_key) FROM funnel_events WHERE event_type='SEO_PAGE_VIEW' AND created_at >= now() - interval '30 days') AS seo_visitors_30d,
+    (SELECT count(DISTINCT session_key) FROM funnel_events WHERE event_type='CTA_CLICKED' AND created_at >= now() - interval '30 days') AS cta_visitors_30d,
+    (SELECT count(*) FROM funnel_events WHERE event_type='CHECKOUT_STARTED' AND created_at >= now() - interval '30 days') AS checkout_starts_30d,
+    (SELECT coalesce(round(100.0 * (SELECT count(*) FROM users WHERE active=true AND deleted_at IS NULL AND created_at >= now() - interval '30 days') / nullif((SELECT count(DISTINCT session_key) FROM funnel_events WHERE event_type IN ('HOME_PAGE_VIEW','SEO_PAGE_VIEW','FIPE_PAGE_VIEW') AND created_at >= now() - interval '30 days'),0),2),0)) AS visitor_registration_rate_pct,
     (SELECT count(*) FROM provider_health_events WHERE source_type='FIPE' AND status='FAILED' AND created_at >= now() - interval '24 hours') AS fipe_provider_failures_24h,
     (SELECT max(created_at) FROM provider_health_events WHERE source_type='FIPE' AND status='SUCCESS') AS fipe_provider_last_success,
     (SELECT coalesce(round(100.0 * (SELECT count(*) FROM funnel_events WHERE event_type='FREE_QUERY_SAVED') / nullif((SELECT count(*) FROM funnel_events WHERE event_type='FREE_QUERY_COMPLETED'),0),2),0)) AS fipe_save_rate_pct`);
@@ -2456,10 +2481,15 @@ function humanMessage(code) {
 }
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const webDist = path.resolve(__dirname, '../../web/dist');
+const indexHtmlPath = path.join(webDist, 'index.html');
+const indexHtmlTemplate = existsSync(indexHtmlPath) ? readFileSync(indexHtmlPath, 'utf8') : '';
 app.use(express.static(webDist, { index: false, maxAge: env.NODE_ENV === 'production' ? '1h' : 0, etag: true }));
 app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api/') || req.path === '/health')
         return next();
-    res.sendFile(path.join(webDist, 'index.html'));
+    if (!indexHtmlTemplate)
+        return next();
+    res.setHeader('Cache-Control', 'no-store');
+    res.type('html').send(renderSeoHtml(indexHtmlTemplate, req.path, env.APP_URL ?? env.WEB_ORIGIN));
 });
 app.listen(env.PORT, '0.0.0.0', () => log('info', 'server_started', { port: env.PORT, provider: env.DATA_PROVIDER, environment: env.NODE_ENV }));

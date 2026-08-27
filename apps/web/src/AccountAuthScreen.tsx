@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import Brand from './Brand';
+import { trackFunnel } from './funnel';
 
 const API = '/api';
 type AuthMode = 'login' | 'register' | 'forgot' | 'reset';
@@ -40,10 +41,11 @@ export default function AccountAuthScreen({ onAuthenticated, onBack, externalErr
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
 
   useEffect(() => { setMode(resetToken ? 'reset' : initialMode); setError(''); setNotice(''); }, [initialMode, resetToken]);
+  useEffect(() => { trackFunnel('AUTH_VIEWED', { mode }); }, [mode]);
   useEffect(() => { void fetch(`${API}/auth/providers`, { cache: 'no-store' }).then((response) => response.ok ? readJson<{ providers?: OAuthProviderStatus[] }>(response) : { providers: [] }).then((body) => setProviders(body?.providers ?? [])).catch(() => setProviders([])); }, []);
 
   function selectMode(next: AuthMode) { setMode(next); setError(''); setNotice(''); }
-  function saveToken(token: string) { sessionStorage.setItem('carpivara_token', token); onAuthenticated(token); }
+  function saveToken(token: string) { sessionStorage.setItem('carpivara_token', token); trackFunnel(mode === 'register' ? 'ACCOUNT_CREATED' : 'AUTH_SUCCEEDED', { mode }); onAuthenticated(token); }
 
   function processAuthBody(body: AuthBody): boolean {
     if (body.token) { saveToken(body.token); return true; }
@@ -63,6 +65,7 @@ export default function AccountAuthScreen({ onAuthenticated, onBack, externalErr
     setError(''); setNotice(''); setPending(true);
     const form = new FormData(event.currentTarget);
     const email = String(form.get('email') ?? '').trim();
+    trackFunnel('AUTH_SUBMITTED', { mode });
     try {
       if (mode === 'forgot') {
         const response = await fetch(`${API}/auth/forgot-password`, { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
