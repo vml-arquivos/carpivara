@@ -37,6 +37,7 @@ test('funil público aceita somente eventos conhecidos e não armazena PII diret
   assert.match(server, /res\.status\(202\)\.json\(\{ accepted: true \}\)/);
   assert.match(server, /publicFunnelMetadataKeys/);
   assert.match(server, /sanitizePublicFunnelMetadata/);
+  assert.match(server, /count\(DISTINCT session_key\) FROM funnel_events WHERE event_type='ACCOUNT_CREATED'/);
   assert.match(funnel, /keepalive: true/);
   assert.doesNotMatch(funnel, /plate\s*:/i);
   assert.match(web, /plateFormat:/);
