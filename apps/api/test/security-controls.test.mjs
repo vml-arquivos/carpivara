@@ -53,6 +53,14 @@ test('API impede cache condicional e o dashboard não transforma falha parcial e
   assert.match(frontend, /Tentar novamente/);
 });
 
+test('painel administrativo expõe alteração segura da senha da sessão atual', () => {
+  assert.match(frontend, /function AdminPasswordCard\(/);
+  assert.match(frontend, /onChangePassword=\{changePassword\}/);
+  assert.match(frontend, /Atualizar senha/);
+  assert.match(frontend, /auth\/change-password/);
+  assert.match(frontend, /As outras sessões serão encerradas após a alteração/);
+});
+
 test('visão administrativa calcula receita de consulta pela ordem de pagamento', () => {
   assert.match(server, /FROM payments p JOIN payment_orders o ON o\.id=p\.order_id WHERE p\.status='PAID' AND o\.purchase_type='QUERY'/);
   assert.doesNotMatch(server, /FROM payments WHERE status='PAID' AND purchase_type='QUERY'/);
