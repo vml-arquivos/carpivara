@@ -3,10 +3,10 @@ import { AsaasProvider } from './asaas.js';
 import { MercadoPagoProvider } from './mercadopago.js';
 import type { PaymentCheckoutProvider } from './types.js';
 
-export type PaymentProviderName = 'sandbox' | 'asaas' | 'mercadopago';
+export type PaymentProviderName = 'disabled' | 'sandbox' | 'asaas' | 'mercadopago';
 
-class DisabledSandboxProvider implements PaymentCheckoutProvider {
-  readonly name = 'sandbox';
+class DisabledPaymentProvider implements PaymentCheckoutProvider {
+  readonly name = 'disabled';
 
   isConfigured(): boolean { return false; }
 
@@ -23,9 +23,10 @@ class DisabledSandboxProvider implements PaymentCheckoutProvider {
 
 export function getPaymentProviderFor(name: PaymentProviderName): PaymentCheckoutProvider {
   switch (name) {
+    case 'disabled': return new DisabledPaymentProvider();
     case 'asaas': return new AsaasProvider();
     case 'mercadopago': return new MercadoPagoProvider();
-    case 'sandbox': return new DisabledSandboxProvider();
+    case 'sandbox': return new DisabledPaymentProvider();
   }
 }
 

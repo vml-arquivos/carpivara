@@ -1,8 +1,8 @@
 import { env } from '../config.js';
 import { AsaasProvider } from './asaas.js';
 import { MercadoPagoProvider } from './mercadopago.js';
-class DisabledSandboxProvider {
-    name = 'sandbox';
+class DisabledPaymentProvider {
+    name = 'disabled';
     isConfigured() { return false; }
     async createCheckout() {
         const error = new Error('PAYMENT_PROVIDER_NOT_CONFIGURED');
@@ -14,9 +14,10 @@ class DisabledSandboxProvider {
 }
 export function getPaymentProviderFor(name) {
     switch (name) {
+        case 'disabled': return new DisabledPaymentProvider();
         case 'asaas': return new AsaasProvider();
         case 'mercadopago': return new MercadoPagoProvider();
-        case 'sandbox': return new DisabledSandboxProvider();
+        case 'sandbox': return new DisabledPaymentProvider();
     }
 }
 export function getPaymentProvider() {

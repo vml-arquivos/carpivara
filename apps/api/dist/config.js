@@ -125,7 +125,7 @@ const envSchema = z.object({
     APIBRASIL_DEVICE_TOKEN: optionalString,
     VEHICLE_API_TIMEOUT_MS: z.coerce.number().int().positive().max(120000).default(15000),
     // Pagamentos: credenciais runtime-only; nunca disponibilizar no build ou frontend.
-    PAYMENT_PROVIDER: z.enum(['sandbox', 'asaas', 'mercadopago']).default('sandbox'),
+    PAYMENT_PROVIDER: z.enum(['disabled', 'sandbox', 'asaas', 'mercadopago']).default('sandbox'),
     PAYMENT_API_BASE_URL: optionalUrl,
     PAYMENT_API_KEY: optionalString,
     PAYMENT_WEBHOOK_SECRET: optionalString,

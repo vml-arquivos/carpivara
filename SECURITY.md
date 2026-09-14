@@ -2,7 +2,7 @@
 
 ## Controles implementados
 
-A aplicação exige segredos exclusivamente em runtime. `DATABASE_URL`, `JWT_SECRET`, credenciais de provider e chaves de pagamento não fazem parte do frontend, do Dockerfile ou de argumentos de build. A configuração é validada no startup; em produção, o segredo JWT deve ter pelo menos 64 caracteres, URLs públicas devem usar HTTPS, mocks/sandbox/seeds são recusados e providers habilitados precisam de credenciais e webhook completos.
+A aplicação exige segredos exclusivamente em runtime. `DATABASE_URL`, `JWT_SECRET`, credenciais de provider e chaves de pagamento não fazem parte do frontend, do Dockerfile ou de argumentos de build. A configuração é validada no startup; em produção, o segredo JWT deve ter pelo menos 64 caracteres, URLs públicas devem usar HTTPS, mocks/sandbox/seeds são recusados, providers habilitados precisam de credenciais e webhook completos e `PAYMENT_PROVIDER=disabled` mantém checkout e webhook indisponíveis até a homologação do gateway.
 
 | Controle | Aplicação |
 | --- | --- |
@@ -23,7 +23,7 @@ A produção precisa definir formalmente finalidade, base legal, prazo de reten�
 
 ## Configuração de produção
 
-TLS deve terminar no proxy reverso/Coolify. Use `NODE_ENV=production`, uma URL pública válida, segredo aleatório de alta entropia e `SANDBOX_SEED_ENABLED=false`. A compra sandbox também deve ficar desabilitada fora de demonstração.
+TLS deve terminar no proxy reverso/Coolify. Use `NODE_ENV=production`, uma URL pública válida, segredo aleatório de alta entropia e `SANDBOX_SEED_ENABLED=false`. A compra sandbox também deve ficar desabilitada fora de demonstração. Se não houver contrato e credenciais completas de Asaas ou Mercado Pago, use `PAYMENT_PROVIDER=disabled`; a interface informa indisponibilidade e a API responde sem criar pedido nem liberar saldo.
 
 ## Próximas camadas antes de pagamento real
 

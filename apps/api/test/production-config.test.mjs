@@ -47,3 +47,18 @@ test('produção aceita provider real e pagamento completo sem imprimir credenci
   assert.match(result.stdout, /CONFIG_OK/);
   assert.doesNotMatch(result.stdout + result.stderr, /vehicle-runtime-token|asaas-runtime-key|webhook-runtime-secret/);
 });
+
+test('produção aceita pagamento explicitamente desabilitado sem credenciais de gateway', () => {
+  const result = spawnSync(process.execPath, [probe], {
+    env: {
+      ...baseEnv,
+      PAYMENT_PROVIDER: 'disabled',
+      PAYMENT_API_BASE_URL: '',
+      PAYMENT_API_KEY: '',
+      PAYMENT_WEBHOOK_SECRET: ''
+    },
+    encoding: 'utf8'
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /CONFIG_OK/);
+});

@@ -45,10 +45,11 @@ VEHICLE_API_QUERY_METHOD=post
 VEHICLE_API_AUTH_SCHEME=bearer
 VEHICLE_API_TOKEN=SEGREDO_RUNTIME_DO_FORNECEDOR
 QUERY_REQUEST_TIMEOUT_MS=20000
-PAYMENT_PROVIDER=asaas
-PAYMENT_API_BASE_URL=https://api.asaas.com
-PAYMENT_API_KEY=SEGREDO_RUNTIME_ASAAS
-PAYMENT_WEBHOOK_SECRET=SEGREDO_RUNTIME_WEBHOOK
+# Use disabled até haver contrato e credenciais completas do gateway.
+PAYMENT_PROVIDER=disabled
+PAYMENT_API_BASE_URL=
+PAYMENT_API_KEY=
+PAYMENT_WEBHOOK_SECRET=
 SANDBOX_SEED_ENABLED=false
 SANDBOX_CREDIT_PURCHASE_ENABLED=false
 
@@ -62,7 +63,7 @@ AUDIT_LOG_ENABLED=true
 STORE_RAW_PROVIDER_RESPONSE=false
 ```
 
-O processo falha antes de abrir a porta se faltar banco, segredo forte, URL HTTPS, credencial do provider, configuração completa do gateway ou webhook. Os valores acima são nomes ilustrativos; nunca copie segredos reais para este arquivo.
+O processo falha antes de abrir a porta se faltar banco, segredo forte, URL HTTPS ou credencial de um provider habilitado. Com `PAYMENT_PROVIDER=disabled`, checkout e webhook permanecem indisponíveis de forma explícita e nenhum saldo é liberado. Os valores acima são nomes ilustrativos; nunca copie segredos reais para este arquivo.
 
 ## Homologação sandbox
 
