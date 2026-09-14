@@ -74,9 +74,9 @@ jobs:
           for attempt in {1..30}; do
             if curl --fail --silent http://127.0.0.1:4000/health; then
               echo
+              BASE_URL=http://127.0.0.1:4000 npm run test:integration
               exit 0
             fi
             sleep 2
           done
           exit 1
-      - run: npm run test:integration
