@@ -1,24 +1,26 @@
 # syntax=docker/dockerfile:1
-FROM node:22-alpine AS deps
+FROM node:22.14.0-alpine3.21 AS deps
 WORKDIR /app
 COPY package.json ./
+COPY package-lock.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json
-RUN npm install --include=dev
+RUN npm ci --include=dev
 
 FROM deps AS build
 WORKDIR /app
 COPY . .
 RUN npm run build
 
-FROM node:22-alpine AS production
+FROM node:22.14.0-alpine3.21 AS production
 WORKDIR /app
 ENV NODE_ENV=production
 RUN apk add --no-cache wget
 COPY package.json ./
+COPY package-lock.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json
-RUN npm install --omit=dev --workspace=apps/api && npm cache clean --force
+RUN npm ci --omit=dev --workspace=apps/api && npm cache clean --force
 COPY --from=build /app/apps/api/dist ./apps/api/dist
 COPY --from=build /app/apps/web/dist ./apps/web/dist
 COPY --from=build /app/README.md ./README.md

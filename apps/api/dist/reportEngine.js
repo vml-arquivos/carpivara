@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { redactPrivateFields } from './privacy.js';
-const privateKey = /^(owner|ownername|ownerdocument|ownerdocumenttype|propriet|nomeproprietario|cpfcnpjproprietario|cpf|cnpj|document|address|endereco|street|logradouro|phone|telefone|email)$/i;
+const privateKey = /^(owner|ownername|ownerdocument|ownerdocumenttype|propriet|nomeproprietario|cpfcnpjproprietario|cpf|cnpj|document|address|endereco|street|logradouro|phone|telefone|email|chassi|chassis|renavam|engine|motor)$/i;
 function escapeHtml(value) {
     return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 }

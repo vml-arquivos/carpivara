@@ -1,5 +1,6 @@
 import type { PoolClient } from 'pg';
 import { pool, tx } from './db.js';
+import { env } from './config.js';
 
 export type Migration = {
   id: string;
@@ -14,7 +15,7 @@ const rolePermissions: Record<string, string[]> = {
   SUPER_ADMIN: ['QUERY_VEHICLE', 'VIEW_HISTORY', 'BUY_CREDITS', 'VIEW_SENSITIVE_DATA', 'MANAGE_USERS', 'MANAGE_PRICING', 'MANAGE_PROVIDERS', 'MANAGE_BILLING', 'MANAGE_SUPPORT', 'VIEW_AUDIT', 'ADMIN_SYSTEM']
 };
 
-const migrations: Migration[] = [
+export const migrations: Migration[] = [
   {
     id: '001_security_and_product_hardening',
     name: 'Security controls, idempotency and configurable products',
@@ -735,16 +736,23 @@ export async function runMigrations(): Promise<void> {
     applied_at timestamptz NOT NULL DEFAULT now()
   )`);
 
-  for (const migration of migrations) {
-    const applied = await pool.query('SELECT 1 FROM schema_migrations WHERE id=$1', [migration.id]);
-    if (applied.rowCount) continue;
-    await tx(async (client) => {
-      const locked = await client.query('SELECT pg_try_advisory_xact_lock(8432026) AS locked');
-      if (!locked.rows[0]?.locked) throw new Error('MIGRATION_LOCK_UNAVAILABLE');
-      const duplicate = await client.query('SELECT 1 FROM schema_migrations WHERE id=$1', [migration.id]);
-      if (duplicate.rowCount) return;
-      await migration.up(client);
-      await client.query('INSERT INTO schema_migrations(id,name) VALUES($1,$2)', [migration.id, migration.name]);
-    });
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await tx(async (client) => {
+        await client.query(`SELECT set_config('lock_timeout', $1, true)`, [`${env.MIGRATION_LOCK_TIMEOUT_MS}ms`]);
+        await client.query('SELECT pg_advisory_xact_lock(8432026)');
+        for (const migration of migrations) {
+          const applied = await client.query('SELECT 1 FROM schema_migrations WHERE id=$1', [migration.id]);
+          if (applied.rowCount) continue;
+          await migration.up(client);
+          await client.query('INSERT INTO schema_migrations(id,name) VALUES($1,$2)', [migration.id, migration.name]);
+        }
+      });
+      return;
+    } catch (error) {
+      const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
+      if (code !== '55P03' || attempt === 3) throw error;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(1000 * attempt, 3000)));
+    }
   }
 }

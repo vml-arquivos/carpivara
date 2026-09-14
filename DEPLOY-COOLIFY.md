@@ -10,7 +10,7 @@ O Dockerfile é multi-stage, executa o build dos dois workspaces e roda como usu
 
 Crie um PostgreSQL separado no mesmo projeto/servidor e informe a connection string interna em `DATABASE_URL`. O startup executa o bootstrap compatível e migrations versionadas antes de abrir a aplicação.
 
-## Variáveis para a primeira demonstração sandbox
+## Variáveis obrigatórias de produção
 
 Cadastre as variáveis no painel do Coolify. Não use arquivo `.env` versionado e não reutilize nenhum segredo local.
 
@@ -33,15 +33,24 @@ EMAIL_FROM=no-reply@carpivara.casadf.com.br
 PASSWORD_RESET_TTL_MINUTES=30
 DATABASE_URL=postgresql://USUARIO:SENHA@HOST_INTERNO:5432/NOME_BANCO
 DATABASE_SSL=false
+MIGRATION_LOCK_TIMEOUT_MS=60000
 JWT_SECRET=GERAR_UM_SEGREDO_ALEATORIO_COM_64_OU_MAIS_CARACTERES
 JWT_EXPIRES_IN=2h
 TEAM_TOTP_REQUIRED=false
 
-DATA_PROVIDER=mock
+DATA_PROVIDER=real
+VEHICLE_API_BASE_URL=https://ENDPOINT_OFICIAL_DO_FORNECEDOR
+VEHICLE_API_QUERY_PATH=/CAMINHO_DOCUMENTADO
+VEHICLE_API_QUERY_METHOD=post
+VEHICLE_API_AUTH_SCHEME=bearer
+VEHICLE_API_TOKEN=SEGREDO_RUNTIME_DO_FORNECEDOR
 QUERY_REQUEST_TIMEOUT_MS=20000
-PAYMENT_PROVIDER=sandbox
-SANDBOX_SEED_ENABLED=true
-SANDBOX_CREDIT_PURCHASE_ENABLED=true
+PAYMENT_PROVIDER=asaas
+PAYMENT_API_BASE_URL=https://api.asaas.com
+PAYMENT_API_KEY=SEGREDO_RUNTIME_ASAAS
+PAYMENT_WEBHOOK_SECRET=SEGREDO_RUNTIME_WEBHOOK
+SANDBOX_SEED_ENABLED=false
+SANDBOX_CREDIT_PURCHASE_ENABLED=false
 
 RATE_LIMIT_ENABLED=true
 RATE_LIMIT_WINDOW_MS=60000
@@ -50,18 +59,18 @@ LOGIN_RATE_LIMIT_MAX=10
 LOG_LEVEL=info
 LOG_SENSITIVE_DATA=false
 AUDIT_LOG_ENABLED=true
-STORE_RAW_PROVIDER_RESPONSE=true
+STORE_RAW_PROVIDER_RESPONSE=false
 ```
 
-Depois do primeiro deploy, confirme `GET /health`, login sandbox, consulta `TST0A00`, abertura do histórico e cenário de estorno `TIM0E00`.
+O processo falha antes de abrir a porta se faltar banco, segredo forte, URL HTTPS, credencial do provider, configuração completa do gateway ou webhook. Os valores acima são nomes ilustrativos; nunca copie segredos reais para este arquivo.
 
-## Antes de expor ao público
+## Homologação sandbox
 
-Desative `SANDBOX_SEED_ENABLED` e `SANDBOX_CREDIT_PURCHASE_ENABLED`, remova contas fictícias criadas na demonstração e defina uma política de acesso, retenção e suporte. O provider mock pode permanecer apenas quando isso estiver claramente identificado como sandbox.
+Em ambiente separado e não público, use `NODE_ENV=development` ou `test`, `DATA_PROVIDER=mock`, `SANDBOX_SEED_ENABLED=true` e `SANDBOX_CREDIT_PURCHASE_ENABLED=true` para executar `scripts/integration-smoke.sh`. Nunca reutilize esse conjunto em produção.
 
 ## Provider e pagamentos reais
 
-Não use `DATA_PROVIDER=real` até a implementação do adapter ser baseada na documentação oficial. Da mesma forma, não ative gateway de pagamento real até haver webhook autenticado e idempotente; crédito nunca deve ser liberado somente por retorno de navegador.
+Ative `DATA_PROVIDER=real` e somente o gateway contratado após confirmar contrato, endpoint, token, webhook assinado e matriz de homologação. Crédito e entitlement dependem do webhook validado, não do retorno do navegador.
 
 ## Diagnóstico de deploy
 

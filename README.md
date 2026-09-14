@@ -22,7 +22,7 @@ Copie o arquivo de exemplo e **nunca** use o segredo de exemplo em produção.
 
 ```bash
 cp .env.example .env
-npm install
+npm ci
 docker compose up -d
 npm run dev
 ```
@@ -57,9 +57,12 @@ As credenciais acima são exclusivamente de sandbox. Desative o seed para qualqu
 ```bash
 npm run build
 npm test
+npm run db:migrate
+npm run db:verify
+npm run release:verify
 ```
 
-`npm test` compila os dois workspaces e executa os testes unitários. Para uma validação funcional completa, consulte [TESTING.md](TESTING.md). Para deploy no Coolify, consulte [DEPLOY-COOLIFY.md](DEPLOY-COOLIFY.md).
+`npm test` compila os dois workspaces e executa a suíte automatizada. `db:migrate` e `db:verify` exigem um PostgreSQL acessível e são separados do processo de release. Para uma validação funcional completa, consulte [TESTING.md](TESTING.md). Para deploy no Coolify, consulte [DEPLOY-COOLIFY.md](DEPLOY-COOLIFY.md).
 
 ## Limite intencional da versão
 

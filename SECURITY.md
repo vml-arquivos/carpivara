@@ -2,7 +2,7 @@
 
 ## Controles implementados
 
-A aplicação exige segredos exclusivamente em runtime. `DATABASE_URL`, `JWT_SECRET`, credenciais de provider e chaves de pagamento não fazem parte do frontend, do Dockerfile ou de argumentos de build. A configuração é validada no startup e `JWT_SECRET` exige comprimento mínimo de 32 caracteres.
+A aplicação exige segredos exclusivamente em runtime. `DATABASE_URL`, `JWT_SECRET`, credenciais de provider e chaves de pagamento não fazem parte do frontend, do Dockerfile ou de argumentos de build. A configuração é validada no startup; em produção, o segredo JWT deve ter pelo menos 64 caracteres, URLs públicas devem usar HTTPS, mocks/sandbox/seeds são recusados e providers habilitados precisam de credenciais e webhook completos.
 
 | Controle | Aplicação |
 | --- | --- |
@@ -17,7 +17,7 @@ A aplicação exige segredos exclusivamente em runtime. `DATABASE_URL`, `JWT_SEC
 
 ## Privacidade e LGPD
 
-O sistema foi estruturado para redução de exposição. Informações como renavam, chassi, motor e documento são mascaradas na interface quando apresentadas; dados brutos permanecem no backend para auditoria e podem ter o armazenamento desativado por `STORE_RAW_PROVIDER_RESPONSE=false`.
+O sistema foi estruturado para redução de exposição. Informações como renavam, chassi, motor e documento são mascaradas na interface quando apresentadas; relatórios e exportações removem campos pessoais inesperados. O armazenamento bruto do provider fica desativado por padrão e só pode ser habilitado conscientemente por `STORE_RAW_PROVIDER_RESPONSE=true`.
 
 A produção precisa definir formalmente finalidade, base legal, prazo de retenção, processos de exclusão e controles para o acesso de administradores a dados pessoais. O repositório não declara conformidade jurídica automática: a operação deve passar por validação jurídica e pelo contrato do fornecedor de dados.
 

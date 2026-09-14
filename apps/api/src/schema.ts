@@ -155,6 +155,17 @@ export async function ensureSchema() {
     CREATE INDEX IF NOT EXISTS idx_audit_logs_user_created ON audit_logs(user_id,created_at DESC);
   `);
 
+  const products = [
+    ['BASIC','Consulta Básica','Identificação e características principais do veículo',5,500],
+    ['DEBTS','Débitos e Restrições','Débitos, multas e principais restrições',8,800],
+    ['COMPLETE','Consulta Completa','Identificação, características, débitos, restrições e situação',12,1200],
+    ['PREMIUM','Consulta Premium','Todos os campos disponíveis no provedor',18,1800]
+  ];
+  for (const p of products) {
+    await pool.query(`INSERT INTO query_products(id,name,description,credit_cost) VALUES($1,$2,$3,$4)
+      ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, description=EXCLUDED.description, credit_cost=EXCLUDED.credit_cost`, p.slice(0, 4));
+  }
+
   await runMigrations();
 
   if (env.SUPER_ADMIN_BOOTSTRAP_ENABLED) {
@@ -168,12 +179,6 @@ export async function ensureSchema() {
       VALUES($1::uuid,'BOOTSTRAP_SUPER_ADMIN','USER',$2::text,$3::jsonb)`, [promoted.rows[0].id, promoted.rows[0].id, JSON.stringify({ email: promoted.rows[0].email, source: 'production_bootstrap' })]);
   }
 
-  const products = [
-    ['BASIC','Consulta Básica','Identificação e características principais do veículo',5,500],
-    ['DEBTS','Débitos e Restrições','Débitos, multas e principais restrições',8,800],
-    ['COMPLETE','Consulta Completa','Identificação, características, débitos, restrições e situação',12,1200],
-    ['PREMIUM','Consulta Premium','Todos os campos disponíveis no provedor',18,1800]
-  ];
   for (const p of products) {
     await pool.query(`INSERT INTO query_products(id,name,description,credit_cost,price_cents) VALUES($1,$2,$3,$4,$5)
       ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, description=EXCLUDED.description, credit_cost=EXCLUDED.credit_cost, price_cents=EXCLUDED.price_cents`, p);

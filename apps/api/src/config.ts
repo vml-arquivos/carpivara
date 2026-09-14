@@ -9,6 +9,81 @@ const booleanFromEnv = z.preprocess((value) => {
 const optionalUrl = z.preprocess((value) => value === '' ? undefined : value, z.string().url().optional());
 const optionalString = z.preprocess((value) => value === '' ? undefined : value, z.string().optional());
 
+type ParsedEnv = z.infer<typeof envSchema>;
+
+function isExampleValue(value: string | undefined): boolean {
+  if (!value) return false;
+  return /change[_ -]?me|replace[_ -]?me|your[_ -]?|example\.(com|test)|placeholder|dummy|sample|test-secret|demo-secret/i.test(value);
+}
+
+function requireProduction(condition: boolean, message: string, issues: string[]): void {
+  if (!condition) issues.push(message);
+}
+
+function isHttpsUrl(value: string | undefined): boolean {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && Boolean(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function validateProductionConfig(value: ParsedEnv): void {
+  const issues: string[] = [];
+  requireProduction(Boolean(value.DATABASE_URL), 'DATABASE_URL_REQUIRED', issues);
+  requireProduction(value.JWT_SECRET.length >= 64 && !isExampleValue(value.JWT_SECRET), 'JWT_SECRET_STRONG_AND_UNIQUE_REQUIRED', issues);
+  requireProduction(isHttpsUrl(value.APP_URL), 'APP_URL_HTTPS_REQUIRED', issues);
+  requireProduction(isHttpsUrl(value.WEB_ORIGIN), 'WEB_ORIGIN_HTTPS_REQUIRED', issues);
+  requireProduction(value.DATA_PROVIDER !== 'mock', 'DATA_PROVIDER_MOCK_FORBIDDEN', issues);
+  requireProduction(value.PAYMENT_PROVIDER !== 'sandbox', 'PAYMENT_PROVIDER_SANDBOX_FORBIDDEN', issues);
+  requireProduction(!value.SANDBOX_SEED_ENABLED, 'SANDBOX_SEED_FORBIDDEN', issues);
+  requireProduction(!value.SANDBOX_CREDIT_PURCHASE_ENABLED, 'SANDBOX_CREDIT_PURCHASE_FORBIDDEN', issues);
+
+  if (value.DATA_PROVIDER === 'real') {
+    requireProduction(Boolean(value.VEHICLE_API_BASE_URL && value.VEHICLE_API_QUERY_PATH), 'VEHICLE_PROVIDER_ENDPOINT_REQUIRED', issues);
+    if (value.VEHICLE_API_AUTH_SCHEME === 'bearer') {
+      requireProduction(Boolean(value.VEHICLE_API_TOKEN || value.APIBRASIL_BEARER_TOKEN), 'VEHICLE_PROVIDER_BEARER_REQUIRED', issues);
+    } else {
+      requireProduction(Boolean(value.VEHICLE_API_LOGIN && value.VEHICLE_API_PASSWORD), 'VEHICLE_PROVIDER_BASIC_AUTH_REQUIRED', issues);
+    }
+  }
+
+  if (value.PAYMENT_PROVIDER === 'asaas') {
+    requireProduction(Boolean(value.PAYMENT_API_BASE_URL && value.PAYMENT_API_KEY && value.PAYMENT_WEBHOOK_SECRET), 'ASAAS_CHECKOUT_AND_WEBHOOK_REQUIRED', issues);
+    requireProduction(value.PAYMENT_API_BASE_URL !== 'https://api-sandbox.asaas.com', 'ASAAS_SANDBOX_URL_FORBIDDEN', issues);
+  }
+  if (value.PAYMENT_PROVIDER === 'mercadopago') {
+    requireProduction(Boolean(value.MP_ACCESS_TOKEN && value.MP_WEBHOOK_SECRET), 'MERCADOPAGO_CHECKOUT_AND_WEBHOOK_REQUIRED', issues);
+  }
+  if (value.EMAIL_PROVIDER === 'smtp') {
+    requireProduction(Boolean(value.SMTP_HOST && value.SMTP_USER && value.SMTP_PASSWORD), 'SMTP_CREDENTIALS_REQUIRED', issues);
+  }
+  if (value.SUPER_ADMIN_BOOTSTRAP_ENABLED) {
+    requireProduction(Boolean(value.SUPER_ADMIN_BOOTSTRAP_EMAIL), 'SUPER_ADMIN_BOOTSTRAP_EMAIL_REQUIRED', issues);
+  }
+
+  const configuredSecrets = [
+    value.JWT_SECRET,
+    value.SMTP_PASSWORD,
+    value.VEHICLE_API_TOKEN,
+    value.APIBRASIL_BEARER_TOKEN,
+    value.APIBRASIL_DEVICE_TOKEN,
+    value.VEHICLE_API_DEVICE_TOKEN,
+    value.PAYMENT_API_KEY,
+    value.PAYMENT_WEBHOOK_SECRET,
+    value.MP_ACCESS_TOKEN,
+    value.MP_WEBHOOK_SECRET,
+    value.OAUTH_GOOGLE_CLIENT_SECRET,
+    value.OAUTH_MICROSOFT_CLIENT_SECRET,
+    value.OAUTH_APPLE_PRIVATE_KEY
+  ];
+  requireProduction(!configuredSecrets.some(isExampleValue), 'EXAMPLE_SECRET_FORBIDDEN', issues);
+
+  if (issues.length > 0) throw new Error(`PRODUCTION_CONFIGURATION_INVALID:${issues.join(',')}`);
+}
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(4000),
@@ -26,6 +101,7 @@ const envSchema = z.object({
   TRUST_PROXY: z.coerce.number().int().min(0).max(2).default(1),
   DATABASE_URL: z.string().min(1),
   DATABASE_SSL: booleanFromEnv.default(false),
+  MIGRATION_LOCK_TIMEOUT_MS: z.coerce.number().int().positive().max(300000).default(60000),
   JWT_SECRET: z.string().min(32),
   JWT_EXPIRES_IN: z.string().default('2h'),
   // Equipe usa somente e-mail e senha por padrão; TOTP pode ser reativado explicitamente.
@@ -78,7 +154,7 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   LOG_SENSITIVE_DATA: booleanFromEnv.default(false),
   AUDIT_LOG_ENABLED: booleanFromEnv.default(true),
-  STORE_RAW_PROVIDER_RESPONSE: booleanFromEnv.default(true),
+  STORE_RAW_PROVIDER_RESPONSE: booleanFromEnv.default(false),
 
   // Bootstrap administrativo: uso pontual, explicitamente habilitado e removido após a promoção auditada.
   SUPER_ADMIN_BOOTSTRAP_ENABLED: booleanFromEnv.default(false),
@@ -98,7 +174,11 @@ const envSchema = z.object({
   OAUTH_APPLE_PRIVATE_KEY: optionalString
 });
 
-export const env = envSchema.parse(process.env);
+const parsedEnv = envSchema.parse(process.env);
+if (parsedEnv.NODE_ENV === 'production') validateProductionConfig(parsedEnv);
+export const env = parsedEnv;
+
+export { validateProductionConfig };
 
 export function publicAppUrl(): string {
   return (env.APP_URL ?? env.WEB_ORIGIN).replace(/\/$/, '');

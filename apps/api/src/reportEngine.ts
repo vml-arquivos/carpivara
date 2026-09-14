@@ -46,7 +46,7 @@ export type GenericReport = {
   sections: Array<{ key: string; label: string; fields: Array<{ key: string; label: string; value: unknown }> }>;
 };
 
-const privateKey = /^(owner|ownername|ownerdocument|ownerdocumenttype|propriet|nomeproprietario|cpfcnpjproprietario|cpf|cnpj|document|address|endereco|street|logradouro|phone|telefone|email)$/i;
+const privateKey = /^(owner|ownername|ownerdocument|ownerdocumenttype|propriet|nomeproprietario|cpfcnpjproprietario|cpf|cnpj|document|address|endereco|street|logradouro|phone|telefone|email|chassi|chassis|renavam|engine|motor)$/i;
 
 function escapeHtml(value: unknown): string {
   return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');

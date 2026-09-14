@@ -1,6 +1,10 @@
 # Banco de dados
 
-A CARPIVARA utiliza PostgreSQL. A criação inicial permite bootstrap seguro em banco vazio e o histórico de evolução é controlado pela tabela `schema_migrations`. As migrations aplicadas são transacionais e protegidas por advisory lock.
+A CARPIVARA utiliza PostgreSQL. A criação inicial permite bootstrap seguro em banco vazio e o histórico de evolução é controlado pela tabela `schema_migrations`. As migrations aplicadas são transacionais e protegidas por advisory lock com `MIGRATION_LOCK_TIMEOUT_MS` e retry controlado, evitando que réplicas concorrentes executem a mesma alteração.
+
+## Comandos operacionais
+
+`npm run db:migrate` prepara o schema base e aplica todas as migrations pendentes. `npm run db:verify` confirma que todas as migrations presentes no código estão registradas e verifica tabelas centrais. O servidor mantém a inicialização compatível, mas o rollout recomendado executa o primeiro comando como job único antes de liberar novas réplicas.
 
 ## Tabelas centrais
 

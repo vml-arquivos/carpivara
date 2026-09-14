@@ -25,7 +25,7 @@ import { ensureSchema } from './schema.js';
 import { performAdminLookup } from './adminLookup.js';
 import { executeVehicleLookup } from './vehicleLookup.js';
 import { calculateAffiliateCommission, calculateCouponDiscount, couponHasCapacity, couponWindowIsOpen, effectiveQueryPriceCents, queryAmountAfterCoupon } from './commercial.js';
-import { publicVehicleResult } from './privacy.js';
+import { publicVehicleResult, sanitizeAuditMetadata } from './privacy.js';
 import { buildGenericReport, defaultReportTemplate, reportPdf, reportPrintHtml } from './reportEngine.js';
 import { decryptTotpSecret, encryptTotpSecret, generateRecoveryCodes, generateTotpSetup, hashRecoveryCode, verifyTotpCode } from './totp.js';
 import { renderSeoHtml } from './seo.js';
@@ -178,7 +178,7 @@ function log(level, event, metadata) {
 async function audit(userId, action, entity, entityId, metadata = {}) {
     if (!env.AUDIT_LOG_ENABLED)
         return;
-    await pool.query('INSERT INTO audit_logs(user_id,action,entity,entity_id,metadata) VALUES($1,$2,$3,$4,$5::jsonb)', [userId, action, entity, entityId, JSON.stringify(metadata)]);
+    await pool.query('INSERT INTO audit_logs(user_id,action,entity,entity_id,metadata) VALUES($1,$2,$3,$4,$5::jsonb)', [userId, action, entity, entityId, JSON.stringify(sanitizeAuditMetadata(metadata) ?? {})]);
 }
 function publicUser(row) {
     return { id: row.id, email: row.email, name: row.name, role: row.role };
@@ -2492,4 +2492,33 @@ app.get('*', (req, res, next) => {
     res.setHeader('Cache-Control', 'no-store');
     res.type('html').send(renderSeoHtml(indexHtmlTemplate, req.path, env.APP_URL ?? env.WEB_ORIGIN));
 });
-app.listen(env.PORT, '0.0.0.0', () => log('info', 'server_started', { port: env.PORT, provider: env.DATA_PROVIDER, environment: env.NODE_ENV }));
+const httpServer = app.listen(env.PORT, '0.0.0.0', () => log('info', 'server_started', { port: env.PORT, provider: env.DATA_PROVIDER, environment: env.NODE_ENV }));
+let shuttingDown = false;
+function shutdown(signal) {
+    if (shuttingDown)
+        return;
+    shuttingDown = true;
+    log('info', 'server_shutdown_started', { signal });
+    const forceExit = setTimeout(() => process.exit(1), 10000);
+    forceExit.unref();
+    httpServer.close(async (error) => {
+        try {
+            await pool.end();
+            clearTimeout(forceExit);
+            if (error) {
+                log('error', 'server_shutdown_failed', { signal, error: error.message });
+                process.exitCode = 1;
+            }
+            else {
+                log('info', 'server_shutdown_completed', { signal });
+            }
+        }
+        catch (closeError) {
+            clearTimeout(forceExit);
+            log('error', 'server_shutdown_failed', { signal, error: closeError instanceof Error ? closeError.message : 'unknown' });
+            process.exitCode = 1;
+        }
+    });
+}
+process.once('SIGTERM', () => shutdown('SIGTERM'));
+process.once('SIGINT', () => shutdown('SIGINT'));

@@ -8,7 +8,15 @@ A CARPIVARA possui testes unitários para o normalizador do provedor e um roteir
 npm test
 ```
 
-Esse comando compila API e frontend em modo de produção e executa `apps/api/test/core.test.mjs`.
+Esse comando compila API e frontend em modo de produção e executa todos os testes em `apps/api/test/`, incluindo segurança, privacidade, providers, pagamentos, migrations e configuração de produção.
+
+O gate completo de release é:
+```bash
+npm run release:verify
+```
+Ele exige build, testes, `npm audit --omit=dev --audit-level=high`, verificação de arquivos e `git diff --check` somente quando o diretório `.git` existe. O mesmo verificador pode ser executado em um pacote ZIP sem falhar por ausência de Git.
+
+Para banco isolado, execute `npm run db:migrate` e depois `npm run db:verify`. A validação integrada usa PostgreSQL real e deve ser executada com `npm run test:integration` após a aplicação estar disponível.
 
 ## Roteiro integrado
 
@@ -22,9 +30,9 @@ Com PostgreSQL iniciado e a aplicação em execução com as variáveis de sandb
 | --- | --- |
 | `GET /health` | API e banco retornam `ok: true`. |
 | Login sandbox | Token JWT é emitido para credenciais válidas. |
-| Consulta `TST0A00` | Retorno `SUCCESS`, resultado normalizado e débito de 12 créditos para `COMPLETE`. |
+| Consulta `TST0A00` | Retorno `SUCCESS`, resultado normalizado e débito de `R$ 12,00` para `COMPLETE`. |
 | Idempotência | Reenvio da mesma chave retorna o mesmo relatório sem novo débito. |
-| Abertura de histórico | Consulta salva abre sem consumir créditos. |
+| Abertura de histórico | Consulta salva abre sem consumir saldo. |
 | Timeout `TIM0E00` | HTTP 502 seguro, mensagem humana e estorno automático. |
 | Histórico filtrado | Consulta previamente concluída aparece no filtro de placa. |
 | Administração | Administrador sandbox acessa o resumo protegido por permissão. |

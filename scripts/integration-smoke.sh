@@ -24,8 +24,8 @@ AUTH=(-H "Authorization: Bearer $TOKEN")
 echo '✓ login sandbox'
 
 curl -fsS "$BASE_URL/api/me" "${AUTH[@]}" >"$TMP_DIR/me-before.json"
-assert_contains "$TMP_DIR/me-before.json" '"balance":100'
-echo '✓ saldo inicial de 100 créditos'
+assert_contains "$TMP_DIR/me-before.json" '"balanceCents":10000'
+echo '✓ saldo inicial de R$ 100,00'
 
 IDEMPOTENCY_KEY='integration-query-0001'
 curl -fsS -X POST "$BASE_URL/api/queries" "${AUTH[@]}" \
@@ -45,24 +45,24 @@ assert_contains "$TMP_DIR/idempotent.json" '"idempotent":true'
 echo '✓ idempotência sem cobrança duplicada'
 
 curl -fsS "$BASE_URL/api/me" "${AUTH[@]}" >"$TMP_DIR/me-after-query.json"
-assert_contains "$TMP_DIR/me-after-query.json" '"balance":88'
-echo '✓ débito de crédito correto'
+assert_contains "$TMP_DIR/me-after-query.json" '"balanceCents":8800'
+echo '✓ débito monetário correto'
 
 curl -fsS "$BASE_URL/api/queries/$QUERY_ID" "${AUTH[@]}" >"$TMP_DIR/saved.json"
 assert_contains "$TMP_DIR/saved.json" '"status":"SUCCESS"'
 curl -fsS "$BASE_URL/api/me" "${AUTH[@]}" >"$TMP_DIR/me-after-open.json"
-assert_contains "$TMP_DIR/me-after-open.json" '"balance":88'
+assert_contains "$TMP_DIR/me-after-open.json" '"balanceCents":8800'
 echo '✓ consulta salva aberta sem nova cobrança'
 
 TIMEOUT_STATUS="$(curl -sS -o "$TMP_DIR/timeout.json" -w '%{http_code}' -X POST "$BASE_URL/api/queries" "${AUTH[@]}" \
   -H 'Content-Type: application/json' -H 'Idempotency-Key: integration-timeout-0001' \
   --data '{"plate":"TIM0E00","productId":"COMPLETE"}')"
 [ "$TIMEOUT_STATUS" = '502' ] || fail "timeout retornou HTTP $TIMEOUT_STATUS"
-assert_contains "$TMP_DIR/timeout.json" '"error":"QUERY_REFUNDED"'
-assert_contains "$TMP_DIR/timeout.json" 'créditos foram devolvidos'
+assert_contains "$TMP_DIR/timeout.json" '"error":"QUERY_RETRY_AVAILABLE"'
+assert_contains "$TMP_DIR/timeout.json" 'saldo será estornado'
 curl -fsS "$BASE_URL/api/me" "${AUTH[@]}" >"$TMP_DIR/me-after-timeout.json"
-assert_contains "$TMP_DIR/me-after-timeout.json" '"balance":88'
-echo '✓ falha do provedor estorna créditos'
+assert_contains "$TMP_DIR/me-after-timeout.json" '"balanceCents":8800'
+echo '✓ falha do provedor estorna saldo'
 
 curl -fsS "$BASE_URL/api/queries?plate=TST" "${AUTH[@]}" >"$TMP_DIR/history.json"
 assert_contains "$TMP_DIR/history.json" '"plate":"TST0A00"'
@@ -84,7 +84,7 @@ REGISTER_TOKEN="$(cat "$TMP_DIR/register.json" | json_field token)"
 [ -n "$REGISTER_TOKEN" ] || fail 'token de cadastro não retornado'
 REGISTER_AUTH=(-H "Authorization: Bearer $REGISTER_TOKEN")
 curl -fsS "$BASE_URL/api/me" "${REGISTER_AUTH[@]}" >"$TMP_DIR/registered-me.json"
-assert_contains "$TMP_DIR/registered-me.json" '"balance":0'
+assert_contains "$TMP_DIR/registered-me.json" '"balanceCents":0'
 LOGOUT_STATUS="$(curl -sS -o "$TMP_DIR/logout.json" -w '%{http_code}' -X POST "$BASE_URL/api/auth/logout" "${REGISTER_AUTH[@]}")"
 [ "$LOGOUT_STATUS" = '204' ] || fail "logout retornou HTTP $LOGOUT_STATUS"
 REVOKED_STATUS="$(curl -sS -o "$TMP_DIR/revoked.json" -w '%{http_code}' "$BASE_URL/api/me" "${REGISTER_AUTH[@]}")"
