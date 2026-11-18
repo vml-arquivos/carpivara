@@ -1,7 +1,7 @@
 {
   "name": "bl-buscar",
   "private": true,
-  "version": "1.0.5",
+  "version": "1.0.6",
   "workspaces": [
     "apps/api",
     "apps/web"

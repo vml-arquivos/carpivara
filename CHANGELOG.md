@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.6 — Contraste e hierarquia na página inicial
+
+- Abertura em verde profundo com título branco, fotografia e ação de consulta em dourado fosco.
+- Temas claro e escuro com superfícies, textos e ações de contraste próprio. Ferramentas e catálogo reorganizados.
+
 ## 1.0.5 — Página inicial e SEO
 
 - Primeira dobra com fotografia automotiva, consulta em destaque, ferramentas abaixo e contraste adaptado ao tema.

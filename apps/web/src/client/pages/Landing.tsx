@@ -27,7 +27,8 @@ function HeroTitle() {
 
 const FREE_TOOLS: Array<{ to: string; icon: IconName; title: string; text: string }> = [
   { to: '/fipe', icon: 'trending-up', title: 'Tabela FIPE grátis', text: 'Veja o preço médio por marca, modelo e ano.' },
-  { to: '/simulador', icon: 'calculator', title: 'Simulador de financiamento', text: 'Calcule as parcelas e o custo total antes de pedir uma proposta.' },
+  { to: '/simulador', icon: 'calculator', title: 'Simular financiamento', text: 'Estime as parcelas e o custo total.' },
+  { to: '/validar', icon: 'shield-check', title: 'Validar relatório', text: 'Confira o código de um relatório emitido.' },
 ];
 
 export default function Landing() {
@@ -46,7 +47,10 @@ export default function Landing() {
               <div className="buscar-search-panel">
                 <strong>Qual é a placa do veículo?</strong>
                 <PlateSearch authed={status === 'authed'} placement="hero" />
-                <div className="row"><Link className="linkbtn" to="/demonstracao">Ver consulta de exemplo <Icon name="arrow-right" size={16} /></Link><a className="linkbtn" href="#consultas">Comparar consultas</a></div>
+              </div>
+              <div className="buscar-entry-actions">
+                <Link className="linkbtn" to="/demonstracao">Ver consulta de exemplo <Icon name="arrow-right" size={17} /></Link>
+                <a className="linkbtn" href="#consultas">Comparar consultas</a>
               </div>
             </div>
             <img className="buscar-hero-photo"
@@ -56,17 +60,19 @@ export default function Landing() {
               width={1200} height={800} fetchPriority="high" decoding="async"
               alt="Carro seminovo estacionado em frente a uma concessionária" />
           </div>
-          <aside className="container buscar-tools" id="ferramentas-gratis" aria-labelledby="tools-title">
-              <h2 id="tools-title">Ferramentas gratuitas</h2>
-              {FREE_TOOLS.map((tool) => (
-                <Link key={tool.to} to={tool.to} className="buscar-tool" onClick={() => trackFunnel('CTA_CLICKED', { placement: 'home_tools', target: tool.to, landing: '/' })}>
-                  <Icon name={tool.icon} size={23} />
-                  <span><strong>{tool.title}</strong><small>{tool.text}</small></span>
-                  <Icon name="arrow-right" size={18} />
-                </Link>
-              ))}
-              <Link to="/validar" className="buscar-validate"><Icon name="shield-check" size={19} /> Validar um relatório</Link>
-            </aside>
+        </section>
+
+        <section className="buscar-tools-section" aria-labelledby="tools-title">
+          <div className="container buscar-tools" id="ferramentas-gratis">
+            <h2 id="tools-title">Ferramentas para sua negociação</h2>
+            {FREE_TOOLS.map((tool) => (
+              <Link key={tool.to} to={tool.to} className="buscar-tool" onClick={() => trackFunnel('CTA_CLICKED', { placement: 'home_tools', target: tool.to, landing: '/' })}>
+                <Icon name={tool.icon} size={23} />
+                <span><strong>{tool.title}</strong><small>{tool.text}</small></span>
+                <Icon name="arrow-right" size={18} />
+              </Link>
+            ))}
+          </div>
         </section>
 
         <section className="section alt" id="consultas">
@@ -118,13 +124,6 @@ export default function Landing() {
           </div>
         </section>
 
-        <section className="section alt" id="blog">
-          <div className="container stack-lg">
-            <div className="row-between"><div className="section-head" style={{ marginBottom: 0 }}><span className="eyebrow">Blog</span><h2>O que conferir antes de negociar</h2></div><LinkButton to="/blog" iconRight="arrow-right">Ver todos</LinkButton></div>
-            <LatestPosts n={3} />
-          </div>
-        </section>
-
         <section className="section buscar-editorial" aria-labelledby="buying-title">
           <div className="container buscar-editorial-grid">
             <img src="/brand/landing/avaliacao-carro-usado.webp" width={960} height={540}
@@ -139,6 +138,13 @@ export default function Landing() {
                 <li><Link to="/historico-veicular">Guia de histórico veicular</Link></li>
               </ul>
             </div>
+          </div>
+        </section>
+
+        <section className="section alt" id="blog">
+          <div className="container stack-lg">
+            <div className="row-between"><div className="section-head" style={{ marginBottom: 0 }}><span className="eyebrow">Blog</span><h2>O que conferir antes de negociar</h2></div><LinkButton to="/blog" iconRight="arrow-right">Ver todos</LinkButton></div>
+            <LatestPosts n={3} />
           </div>
         </section>
 
