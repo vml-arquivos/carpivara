@@ -33,8 +33,10 @@ export function enrichmentExtras(upper: Record<string, unknown>, raw: unknown, n
   const years = [num(upper.VEIANOMODELO), num(upper.VEIANOFABR)].filter((n) => n > 1900);
 
   const chassis = decodeChassis(String(upper.CHASSI ?? ''), years);
-  out.set('EN_CHASSI_FABRICANTE', chassis.valid ? info(chassis.manufacturer) : NONE);
-  out.set('EN_CHASSI_ORIGEM', chassis.valid ? info(chassis.country) : NONE);
+  // Nunca parece dado do documento: é decodificação do chassi feita pelo sistema (item 11 da auditoria).
+  const decoded = (v: string) => `${v} — decodificação do chassi pelo BL Buscar, não informação do documento`;
+  out.set('EN_CHASSI_FABRICANTE', chassis.valid && chassis.manufacturer ? info(decoded(chassis.manufacturer)) : NONE);
+  out.set('EN_CHASSI_ORIGEM', chassis.valid && chassis.country ? info(decoded(chassis.country)) : NONE);
   if (chassis.valid && chassis.modelYear) {
     const same = years.includes(chassis.modelYear);
     out.set('EN_CHASSI_ANO', info(`${chassis.modelYear} — ${same ? 'confere com o ano do registro' : 'diferente do ano do registro (pode ocorrer conforme o critério do fabricante)'}`));

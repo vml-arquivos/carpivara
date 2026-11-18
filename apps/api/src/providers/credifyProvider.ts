@@ -527,7 +527,11 @@ export class CredifyVehicleProvider implements VehicleDataProvider {
         if (response.status === 401) { const again = await call(fresh, other(authStyle)); if (again.status !== 401) { authStyle = other(authStyle); response = again; } }
       }
     }
-    if (response.status === 404 || response.status === 410) throw fail('NOT_FOUND', await reason(response));
+    // HTTP 404/410 não é "placa não encontrada": é o endpoint fora do contrato da conta (não provisionado ou removido),
+    // ou seja, consulta indisponível (E5). Placa inexistente chega como CODIGO=2 no corpo, adiante, e só esse caminho
+    // (ou a frase própria da fonte) pode virar ausência confirmada no relatório. Antes, 404 virava NOT_FOUND e, numa
+    // peça complementar, era absorvido como "não consta em base de leilão / no histórico de roubo".
+    if (response.status === 404 || response.status === 410) throw fail('DATA_PROVIDER_UNAVAILABLE', `${await reason(response)} — endpoint ${c.path} fora do contrato da conta (HTTP ${response.status}); isso não é “placa não encontrada” nem “nada consta”.`);
     if (response.status === 401 || response.status === 403) throw fail('DATA_PROVIDER_AUTH_FAILED', `Consulta recusada (${await reason(response)}). Confira as Finalidades de Consumo, o plano e o IP autorizado na Credify.`);
     if (response.status === 408 || response.status === 429) throw fail('DATA_PROVIDER_RATE_LIMITED', await reason(response));
     if (response.status === 402) throw fail('DATA_PROVIDER_QUOTA_EXHAUSTED', await reason(response));

@@ -85,7 +85,11 @@ test('mapeia erros do fornecedor para códigos internos e nunca devolve segredo'
     const f = fakeFetch([{ body: { Success: true, Dados: jwt(Math.floor(Date.now() / 1000) + 86400) } }, { status, body }]);
     return new CredifyVehicleProvider({ ...base, fetchImpl: f }).queryByPlate('AAA0000');
   };
-  await assert.rejects(run(404), { code: 'NOT_FOUND' });
+  // Justificativa da mudança de expectativa (auditoria C item 5 + diretiva do dono do produto): HTTP 404/410 na Credify é o
+  // endpoint fora do contrato da conta (não provisionado/removido), não "placa não encontrada". Placa inexistente chega como
+  // CODIGO=2 no corpo. A expectativa antiga fazia uma falha de provisão ser lida como resultado da consulta ("nada consta").
+  await assert.rejects(run(404), { code: 'DATA_PROVIDER_UNAVAILABLE' });
+  await assert.rejects(run(410), { code: 'DATA_PROVIDER_UNAVAILABLE' });
   await assert.rejects(run(429), { code: 'DATA_PROVIDER_RATE_LIMITED' });
   await assert.rejects(run(402), { code: 'DATA_PROVIDER_QUOTA_EXHAUSTED' });
   await assert.rejects(run(500), { code: 'DATA_PROVIDER_UNAVAILABLE' });

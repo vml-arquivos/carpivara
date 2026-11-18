@@ -13,7 +13,7 @@ import { HIDDEN_FIELDS, labelFor, prettyValue } from './fieldLabels.js';
 import { formatDocument } from './mask.js';
 import { brlFromCents, sentenceCase } from './format.js';
 import { auctionRecords, auctionTable } from './leilao.js';
-import { FAROL_TEXT, parseFarol } from './layers.js';
+import { FAROL_TEXT, classifyText, layerStatesOf, parseFarol, STATE_LINE, type LayerStates, type SourceState } from './layers.js';
 
 export const VT_BLOCKS = ['INDICIOSINISTROVEICULAR', 'RECALL', 'HISTORICOROUBOFURTO', 'LEILAOCONJUGADO', 'HISTORICOPROPRIETARIO', 'VEICULARBNACIONAL', 'PRECIFICADORFIPE', 'VEICULOSBDRP'] as const;
 type BlockName = (typeof VT_BLOCKS)[number];
@@ -21,7 +21,12 @@ type Rec = Record<string, unknown>;
 
 /** Tabela de um item (gravame, leilão, restrição judicial): colunas e linhas de texto, para PDF, impressão e tela. */
 export interface ReportTable { columns: string[]; rows: string[][] }
-export interface VtValue { state: 'NOT_PROVIDED' | 'CLEAR' | 'ALERT' | 'INFO'; value: string | null; display?: string | null; masked?: boolean; table?: ReportTable }
+/**
+ * Valor de um item do relatório. `state` é o que a tela, o PDF e o JSON já conhecem (quatro valores, intocados);
+ * `sourceState` é o estado semântico do vocabulário de `layers.ts` (E1..E5) que explica o porquê — é ele que impede
+ * "sem retorno", "fora da cobertura" e "indisponível" de serem lidos como "nada consta".
+ */
+export interface VtValue { state: 'NOT_PROVIDED' | 'CLEAR' | 'ALERT' | 'INFO'; value: string | null; display?: string | null; masked?: boolean; table?: ReportTable; sourceState?: SourceState; farolOnly?: boolean }
 
 const isRec = (v: unknown): v is Rec => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 const fold = (v: string) => v.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/\s+/g, ' ').trim();
@@ -124,6 +129,17 @@ export function adaptVehicleTotal(raw: unknown): { flat: Rec } {
 }
 
 const NOT_PROVIDED: VtValue = { state: 'NOT_PROVIDED', value: null };
+/** Rastro legível para os campos de uma camada que não respondeu, com o estado da camada (E3/E4/E5). */
+const traceOf = (states: LayerStates, name: BlockName | 'RENAINF'): VtValue | undefined => {
+  const st = states[name];
+  if (!st || st === 'OCCURRENCE' || st === 'CONFIRMED_NONE') return undefined;
+  return { state: 'NOT_PROVIDED', value: null, display: STATE_LINE[st], sourceState: st };
+};
+/** Item sem dado ganha o rastro da camada (em vez de sumir do relatório sem explicar nada). */
+const withTrace = (v: VtValue, trace?: VtValue): VtValue => (v.state === 'NOT_PROVIDED' && !v.sourceState && trace ? trace : v);
+/** Lacuna com estado (E3/E4/E5) num item que continua no relatório dizendo por que não tem dado. */
+const gapItem = (state: SourceState): VtValue => ({ state: 'NOT_PROVIDED', value: null, display: STATE_LINE[state], sourceState: state });
+
 const MONTHS: Record<string, number> = { JAN: 1, FEV: 2, FEB: 2, MAR: 3, ABR: 4, APR: 4, MAI: 5, MAY: 5, JUN: 6, JUL: 7, AGO: 8, AUG: 8, SET: 9, SEP: 9, OUT: 10, OCT: 10, NOV: 11, DEZ: 12, DEC: 12 };
 /** "15-MAR-15", "2015-03-15" ou "15/03/2015" → "15/03/2015". Formato desconhecido volta como veio. */
 export function brDate(v: unknown): string {
@@ -142,26 +158,31 @@ const money = (v: unknown): number => {
 
 /**
  * Blocos "ocorrência" (roubo/furto, leilão, recall). Regra:
- *  código 3 ou bloco ausente → não informado; código 2 → a base não tem o veículo (roubo/leilão: nada consta);
- *  código 1 → há registro (alerta com o texto da fonte). Sem vetor de códigos, vale o texto.
+ *  código 3 ou bloco ausente → lacuna (com o estado da camada, quando houver);
+ *  código 2 → a base afirmou não ter o veículo (roubo/leilão: nada consta; recall: sem retorno, porque o texto da fonte é "não foi possível localizar");
+ *  código 1 → texto da fonte decide: ausência afirmada = nada consta; ocorrência afirmada ou registro = alerta;
+ *             texto que o sistema não reconhece ("CONSULTA EM ANDAMENTO", "LIMITE", "PLACA SEM CADASTRO") = sem retorno, NUNCA alerta.
  */
 function occurrence(r: Rec, name: BlockName, clearText: string, noneMeansClear: boolean, alertText = 'Consta registro'): VtValue {
   const b = block(r, name);
   if (!b) return NOT_PROVIDED;
   const c = blockCode(r, name);
   const desc = str(b.DESCRICAORETORNO);
-  const f = fold(desc);
-  if (c === '3') return NOT_PROVIDED;
-  const saysNone = /NAO FOI APRESENTAD|NADA CONSTA|NAO CONSTA|NAO POSSUI|SEM RECALL|NAO HA /.test(f);
-  const saysUnknown = /NAO FOI POSSIVEL|NAO LOCALIZAD|INDISPONIVEL|ERRO/.test(f);
+  if (c === '3') return { ...NOT_PROVIDED, sourceState: 'UNAVAILABLE' };
+  const st = classifyText(desc);
+  if (st === 'UNAVAILABLE' || st === 'NO_RETURN') return gapItem(st);
+  const hasRecords = records(b).length > 0;
+  const saysNone = st === 'CONFIRMED_NONE' || /SEM RECALL/.test(fold(desc));
   // A própria fonte escreve que não há ocorrência ("veículo não apresentado na base de leilão", "não possui recall pendente"),
   // mesmo com código 1 (consulta feita com sucesso): isso é "nada consta", nunca alerta.
-  if (saysNone && !records(b).length && c !== '3') return { state: 'CLEAR', value: desc || clearText, display: clearText };
-  if (c === '2' || (c === undefined && saysNone)) return noneMeansClear ? { state: 'CLEAR', value: desc || clearText, display: clearText } : NOT_PROVIDED;
-  if (c === undefined && (!desc || saysUnknown)) return NOT_PROVIDED;
-  // "Sucesso", "OK" e afins só dizem que a consulta rodou; o cliente precisa ler o que foi encontrado.
-  const generic = !desc || /^(SUCESSO|OK|CONSULTA (REALIZADA )?COM SUCESSO|REGISTRO(S)? ENCONTRADO(S)?|ENCONTRADO)\.?$/.test(f.trim());
-  return { state: 'ALERT', value: desc || 'CONSTA', display: generic ? alertText : sentenceCase(desc) };
+  if (saysNone && !hasRecords) return { state: 'CLEAR', value: desc || clearText, display: clearText, sourceState: 'CONFIRMED_NONE' };
+  // Código 2 = a própria base respondeu "dado não encontrado para esta placa" (E2). HTTP 404/410 nunca chega aqui: vira código 3.
+  if (c === '2' || (c === undefined && saysNone)) return noneMeansClear ? { state: 'CLEAR', value: desc || clearText, display: clearText, sourceState: 'CONFIRMED_NONE' } : gapItem(st ?? 'NO_RETURN');
+  if (!desc) return gapItem('NO_RETURN');
+  // Só é ocorrência o que a fonte afirma ou o que veio como registro; texto irreconhecível é lacuna, não alarme.
+  if (!hasRecords && st !== 'OCCURRENCE') return gapItem('NO_RETURN');
+  const generic = /^(SUCESSO|OK|CONSULTA (REALIZADA )?COM SUCESSO|REGISTRO(S)? ENCONTRADO(S)?|ENCONTRADO)\.?$/.test(fold(desc));
+  return { state: 'ALERT', value: desc || 'CONSTA', display: generic ? alertText : sentenceCase(desc), sourceState: 'OCCURRENCE' };
 }
 
 const LABELS: Record<string, string> = { DATA: 'Data', DT: 'Data', LEILOEIRO: 'Leiloeiro', LOTE: 'Lote', COMITENTE: 'Comitente', STATUS: 'Situação', SITUACAO: 'Situação', UF: 'UF', MUNICIPIO: 'Município', CIDADE: 'Cidade', DESCRICAO: 'Descrição', CAMPANHA: 'Campanha', FABRICANTE: 'Fabricante', RISCO: 'Risco', REMEDIO: 'Solução', TIPO: 'Tipo', OBSERVACAO: 'Observação', BO: 'Boletim de ocorrência', BOLETIM: 'Boletim de ocorrência', DELEGACIA: 'Delegacia' };
@@ -308,7 +329,8 @@ function auctionWithFarol(r: Rec, conjugated: VtValue): VtValue {
   const farol = parseFarol(r.FAROLLEILAO);
   if (!farol) return conjugated;
   if (conjugated.state === 'ALERT') return conjugated;
-  if (farol.level === 'GREEN') return conjugated.state === 'CLEAR' ? conjugated : { state: 'CLEAR', value: 'VERDE', display: 'Sem restrição de leilão (Farol verde)' };
+  // Verde do Farol é um INDÍCIO, não a confirmação de que não há leilão: sem o detalhe consultado, a frase diz isso.
+  if (farol.level === 'GREEN') return conjugated.state === 'CLEAR' ? conjugated : { state: 'CLEAR', value: 'VERDE', display: 'Sem restrição de leilão (Farol verde): indício favorável; o detalhe de leilão não foi consultado nesta consulta', farolOnly: true, ...(conjugated.sourceState ? { sourceState: conjugated.sourceState } : {}) };
   const text = `Farol de leilão ${farol.semaforo.toLowerCase()}: ${FAROL_TEXT[farol.level]}`;
   return { state: 'ALERT', value: farol.semaforo, display: conjugated.state === 'CLEAR' ? `${text}; sem registro detalhado de leilão` : `${text}; detalhes do leilão não incluídos` };
 }
@@ -317,41 +339,70 @@ function auctionWithFarol(r: Rec, conjugated: VtValue): VtValue {
 export function vehicleTotalExtras(raw: unknown): Map<string, VtValue> {
   const out = new Map<string, VtValue>();
   const r = findResposta(raw) ?? {};
+  // Estado de cada consulta (E1..E5) gravado pelo envelope em camadas: é o que permite explicar a lacuna de um campo.
+  const states = layerStatesOf(r);
+  const natTrace = traceOf(states, 'VEICULARBNACIONAL');
+  const sinTrace = traceOf(states, 'INDICIOSINISTROVEICULAR');
+  const recallTrace = traceOf(states, 'RECALL');
+  const theftTrace = traceOf(states, 'HISTORICOROUBOFURTO');
+  const auctionTrace = traceOf(states, 'LEILAOCONJUGADO');
+  const ownersTrace = traceOf(states, 'HISTORICOPROPRIETARIO');
+  const fipeTrace = traceOf(states, 'PRECIFICADORFIPE');
+  const renainfTrace = traceOf(states, 'RENAINF');
+  const bdrpTrace = traceOf(states, 'VEICULOSBDRP');
   const nat = records(block(r, 'VEICULARBNACIONAL'))[0];
-  out.set('VT_PLACA_MERCOSUL', textItem(nat?.PLACA_MODELO_NOVO));
-  out.set('VT_EMPLACAMENTO', textItem(brDate(nat?.DATA_EMPLACAMENTO)));
+  out.set('VT_PLACA_MERCOSUL', withTrace(textItem(nat?.PLACA_MODELO_NOVO), natTrace));
+  out.set('VT_EMPLACAMENTO', withTrace(textItem(brDate(nat?.DATA_EMPLACAMENTO)), natTrace));
 
   // Campos da base nacional que o BDRP não repete.
-  const flagged = (v: unknown): VtValue => { const t = str(v); if (!t || unknownText(t)) return NOT_PROVIDED; return /^(SEM |NADA|NAO |NORMAL|N$|0+$)/.test(fold(t)) ? { state: 'CLEAR', value: t, display: fold(t) === 'N' ? 'Normal' : sentenceCase(t) } : { state: 'ALERT', value: t, display: sentenceCase(t) }; };
-  for (let i = 1; i <= 4; i++) out.set(`VN_RESTRICAO_${i}`, flagged(nat?.[`RESTRICAO${i}`]));
-  out.set('VN_DATA_LIMITE_RESTRICAO', textItem(brDate(nat?.DATA_LIMITE_RESTRICAO) && !unknownText(str(nat?.DATA_LIMITE_RESTRICAO)) ? brDate(nat?.DATA_LIMITE_RESTRICAO) : ''));
-  out.set('VN_SITUACAO_CHASSI', flagged(nat?.SITUACAO_CHASSI));
+  const flagged = (v: unknown): VtValue => {
+    const t = str(v);
+    if (!t) return NOT_PROVIDED;
+    const st = classifyText(t);
+    // "NÃO INFORMADO", "NÃO DISPONÍVEL", "NÃO LOCALIZADO" e afins são E3/E5: não podem virar "Sem restrição" (item 2).
+    if (st === 'NO_RETURN' || st === 'UNAVAILABLE') return gapItem(st);
+    // Ausência afirmada pela fonte, ou valor negativo do domínio publicado da base nacional (NORMAL/REGULAR/N/0).
+    if (st === 'CONFIRMED_NONE' || /^(NORMAL|REGULAR|N)$/.test(fold(t)) || /^0+$/.test(fold(t))) return { state: 'CLEAR', value: t, display: fold(t) === 'N' ? 'Normal' : sentenceCase(t), sourceState: 'CONFIRMED_NONE' };
+    return { state: 'ALERT', value: t, display: sentenceCase(t), sourceState: 'OCCURRENCE' };
+  };
+  for (let i = 1; i <= 4; i++) out.set(`VN_RESTRICAO_${i}`, withTrace(flagged(nat?.[`RESTRICAO${i}`]), natTrace));
+  out.set('VN_DATA_LIMITE_RESTRICAO', withTrace(textItem(brDate(nat?.DATA_LIMITE_RESTRICAO) && !unknownText(str(nat?.DATA_LIMITE_RESTRICAO)) ? brDate(nat?.DATA_LIMITE_RESTRICAO) : ''), natTrace));
+  out.set('VN_SITUACAO_CHASSI', withTrace(flagged(nat?.SITUACAO_CHASSI), natTrace));
   out.set('VN_TIPO_MONTAGEM', textItem(unknownText(str(nat?.TIPO_MONTAGEM)) ? '' : nat?.TIPO_MONTAGEM));
   out.set('VN_LUGARES', textItem(nz(nat?.NUMERO_LUGAR)));
-  out.set('VN_ULTIMA_ATUALIZACAO', textItem(str(nat?.ULTIMA_ATUALIZACAO) ? brDate(nat?.ULTIMA_ATUALIZACAO) : ''));
+  out.set('VN_ULTIMA_ATUALIZACAO', withTrace(textItem(str(nat?.ULTIMA_ATUALIZACAO) ? brDate(nat?.ULTIMA_ATUALIZACAO) : ''), natTrace));
   const di = str(nat?.NUMERO_DI);
   const importer = digitsOnly(str(nat?.IDENTIFICACAO_IMPORTADORA));
-  out.set('AL_ALTERACOES', featureChanges(r));
-  out.set('RN_MULTAS', renainfFines(r));
-  out.set('VN_IMPORTACAO', di && !unknownText(di) && di !== '0' ? textItem([`DI nº ${di}`, str(nat?.DATA_REGISTRO_DI) ? `registrada em ${brDate(nat?.DATA_REGISTRO_DI)}` : '', str(nat?.UNIDADE_LOCAL_SRF) && !unknownText(str(nat?.UNIDADE_LOCAL_SRF)) ? `unidade da Receita ${str(nat?.UNIDADE_LOCAL_SRF)}` : '', importer && importer.length >= 11 ? `importador ${formatDocument(importer)}` : ''].filter(Boolean).join(' · ')) : NOT_PROVIDED);
+  out.set('AL_ALTERACOES', withTrace(featureChanges(r), natTrace));
+  out.set('RN_MULTAS', withTrace(renainfFines(r), renainfTrace));
+  out.set('VN_IMPORTACAO', di && !unknownText(di) && di !== '0' ? textItem([`DI nº ${di}`, str(nat?.DATA_REGISTRO_DI) ? `registrada em ${brDate(nat?.DATA_REGISTRO_DI)}` : '', str(nat?.UNIDADE_LOCAL_SRF) && !unknownText(str(nat?.UNIDADE_LOCAL_SRF)) ? `unidade da Receita ${str(nat?.UNIDADE_LOCAL_SRF)}` : '', importer && importer.length >= 11 ? `importador ${formatDocument(importer)}` : ''].filter(Boolean).join(' · ')) : withTrace(NOT_PROVIDED, natTrace));
 
   const sin = block(r, 'INDICIOSINISTROVEICULAR');
+  const sinCode = blockCode(r, 'INDICIOSINISTROVEICULAR');
   const ind = str(sin?.INDICIODESINISTRO);
-  out.set('VT_SINISTRO', !sin || blockCode(r, 'INDICIOSINISTROVEICULAR') === '3' || !ind
-    ? NOT_PROVIDED
-    : ind === '0' ? { state: 'CLEAR', value: 'SEM INDICIO', display: 'Sem indício de sinistro' } : { state: 'ALERT', value: str(sin.DESCRICAORETORNO) || 'INDICIO DE SINISTRO', display: 'Há indício de sinistro' });
+  // Item 8: só valor numericamente afirmativo (1, 2, ...) ou S/SIM gera alerta. "N", "0", vazio e texto são outra coisa.
+  const indDigits = digitsOnly(ind);
+  const indYes = Boolean(ind) && (indDigits ? Number(indDigits) > 0 : /^(S|SIM|TRUE)$/.test(fold(ind)));
+  const indNo = Boolean(ind) && (indDigits ? Number(indDigits) === 0 : /^(N|NAO|NADA|NENHUM|FALSE)$/.test(fold(ind)));
+  out.set('VT_SINISTRO', !sin || sinCode === '3'
+    ? withTrace(sinCode === '3' ? { ...NOT_PROVIDED, sourceState: 'UNAVAILABLE' as SourceState } : NOT_PROVIDED, sinTrace)
+    : indNo
+      ? { state: 'CLEAR', value: 'SEM INDICIO', display: 'Sem indício de sinistro', sourceState: 'CONFIRMED_NONE' }
+      : indYes
+        ? { state: 'ALERT', value: str(sin.DESCRICAORETORNO) || 'INDICIO DE SINISTRO', display: 'Há indício de sinistro', sourceState: 'OCCURRENCE' }
+        : (() => { const st = classifyText(ind); return withTrace(st === 'NO_RETURN' || st === 'UNAVAILABLE' ? gapItem(st) : { ...NOT_PROVIDED, sourceState: 'NO_RETURN' as SourceState }, sinTrace); })());
   const origem = isRec(r.ORIGEM) ? upperKeys(r.ORIGEM as Rec) : {};
   // Roubo/furto lido só do marcador do cadastro (Completa em camadas): a frase diz exatamente isso.
   const theft = occurrence(r, 'HISTORICOROUBOFURTO', origem.ROUBOFURTO === 'CADASTRO' ? 'Sem restrição de roubo ou furto no cadastro do veículo' : 'Não consta no histórico de roubo ou furto', true, 'Consta registro de roubo ou furto');
   const auction = auctionWithFarol(r, occurrence(r, 'LEILAOCONJUGADO', 'Não consta em base de leilão', true, 'Consta passagem por leilão'));
   const recall = occurrence(r, 'RECALL', 'Sem recall pendente', false, 'Consta recall do fabricante');
-  out.set('VT_ROUBOFURTO', theft); out.set('VT_ROUBOFURTO_DETALHES', occurrenceDetails(r, 'HISTORICOROUBOFURTO', theft));
-  out.set('VT_LEILAO', auction); out.set('VT_LEILAO_DETALHES', occurrenceDetails(r, 'LEILAOCONJUGADO', auction));
-  out.set('VT_RECALL', recall); out.set('VT_RECALL_DETALHES', occurrenceDetails(r, 'RECALL', recall));
+  out.set('VT_ROUBOFURTO', withTrace(theft, theftTrace)); out.set('VT_ROUBOFURTO_DETALHES', occurrenceDetails(r, 'HISTORICOROUBOFURTO', theft));
+  out.set('VT_LEILAO', withTrace(auction, auctionTrace)); out.set('VT_LEILAO_DETALHES', occurrenceDetails(r, 'LEILAOCONJUGADO', auction));
+  out.set('VT_RECALL', withTrace(recall, recallTrace)); out.set('VT_RECALL_DETALHES', occurrenceDetails(r, 'RECALL', recall));
 
   const owners = blockCode(r, 'HISTORICOPROPRIETARIO') === '3' ? [] : records(block(r, 'HISTORICOPROPRIETARIO'));
-  out.set('VT_PROPRIETARIOS_QTD', owners.length ? { state: 'INFO', value: String(owners.length), display: String(owners.length) } : NOT_PROVIDED);
-  out.set('VT_PROPRIETARIOS_HISTORICO', ownerHistory(owners));
+  out.set('VT_PROPRIETARIOS_QTD', owners.length ? { state: 'INFO', value: String(owners.length), display: String(owners.length) } : withTrace(NOT_PROVIDED, ownersTrace ?? bdrpTrace));
+  out.set('VT_PROPRIETARIOS_HISTORICO', withTrace(ownerHistory(owners), ownersTrace ?? bdrpTrace));
   // A lista completa já sai em VT_PROPRIETARIOS_HISTORICO, uma linha por proprietário.
   out.set('VT_PROPRIETARIOS_LISTA', NOT_PROVIDED);
 
@@ -360,11 +411,11 @@ export function vehicleTotalExtras(raw: unknown): Map<string, VtValue> {
   const fipeOk = Boolean(fr) && blockCode(r, 'PRECIFICADORFIPE') !== '3' && blockCode(r, 'PRECIFICADORFIPE') !== '2' && (!str(fr!.STATUS) || str(fr!.STATUS) === '1');
   const price = fipeOk ? money(fr!.PRECOFIPE) : 0;
   const avg = fipeOk ? money(fr!.PRECOMEDIO) : 0;
-  out.set('VT_FIPE_PRECO', price ? { state: 'INFO', value: str(fr!.PRECOFIPE), display: brlFromCents(price) } : NOT_PROVIDED);
-  out.set('VT_FIPE_PRECO_MEDIO', avg ? { state: 'INFO', value: str(fr!.PRECOMEDIO), display: brlFromCents(avg) } : NOT_PROVIDED);
-  out.set('VT_FIPE_CODIGO', fipeOk ? textItem(fr!.CODIGOFIPE) : NOT_PROVIDED);
-  out.set('VT_FIPE_MODELO', fipeOk ? textItem([str(fr!.FABRICANTEFIPE), str(fr!.MODELOFIPE)].filter(Boolean).join(' ')) : NOT_PROVIDED);
-  out.set('VT_FIPE_VIGENCIA', fipeOk ? textItem(fr!.VIGENCIA) : NOT_PROVIDED);
+  out.set('VT_FIPE_PRECO', price ? { state: 'INFO', value: str(fr!.PRECOFIPE), display: brlFromCents(price) } : withTrace(NOT_PROVIDED, fipeTrace));
+  out.set('VT_FIPE_PRECO_MEDIO', avg ? { state: 'INFO', value: str(fr!.PRECOMEDIO), display: brlFromCents(avg) } : withTrace(NOT_PROVIDED, fipeTrace));
+  out.set('VT_FIPE_CODIGO', withTrace(fipeOk ? textItem(fr!.CODIGOFIPE) : NOT_PROVIDED, fipeTrace));
+  out.set('VT_FIPE_MODELO', withTrace(fipeOk ? textItem([str(fr!.FABRICANTEFIPE), str(fr!.MODELOFIPE)].filter(Boolean).join(' ')) : NOT_PROVIDED, fipeTrace));
+  out.set('VT_FIPE_VIGENCIA', withTrace(fipeOk ? textItem(fr!.VIGENCIA) : NOT_PROVIDED, fipeTrace));
   return out;
 }
 

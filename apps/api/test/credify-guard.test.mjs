@@ -27,8 +27,10 @@ test('teto de segurança: ao atingir o limite a Credify nem é chamada', async (
   resetCredifyTokenCache();
   const f = fakeFetch([login(), { status: 404 }, { status: 404 }, { status: 404 }]);
   const p = new CredifyVehicleProvider({ ...base, fetchImpl: f, maxPerHour: 2, maxPerDay: 0 });
-  await assert.rejects(p.queryByPlate('AAA0000'), { code: 'NOT_FOUND' });
-  await assert.rejects(p.queryByPlate('AAA0000'), { code: 'NOT_FOUND' });
+  // Justificativa (auditoria C item 5): o que este teste mede é o teto de custo, não o código; 404 passou a ser
+  // "consulta indisponível" (endpoint fora do contrato) em vez de "placa não encontrada", para nunca virar "nada consta".
+  await assert.rejects(p.queryByPlate('AAA0000'), { code: 'DATA_PROVIDER_UNAVAILABLE' });
+  await assert.rejects(p.queryByPlate('AAA0000'), { code: 'DATA_PROVIDER_UNAVAILABLE' });
   await assert.rejects(p.queryByPlate('AAA0000'), (e) => e.code === 'PROVIDER_BUDGET_EXCEEDED' && /máximo 2/.test(e.detail));
   assert.equal(paid(f), 2, 'a terceira consulta não saiu');
   assert.equal(credifyBudgetUsage().lastHour, 2);

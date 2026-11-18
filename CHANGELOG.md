@@ -1,5 +1,10 @@
 # Changelog
  
+## 1.0.9 — Reabrir relatório deixou de cobrar
+- Reabrir relatório - JSON, PDF, impressão, dossiê, contestação, conferência de anúncio e a rota v1 de PDF por chave de API - deixou de completar o gravame de consultas legadas. É decisão de custo: essa completude gasta uma chamada paga ao fornecedor e não pode ser disparada por leitura.
+- A completude de gravame passou a ser ação administrativa, por ação explícita e auditada: `POST /admin/queries/:id/refresh-gravame` (uma consulta) e `POST /admin/queries/refresh-gravame` (em lote, com prévia de quantas consultas faltam).
+- O enriquecimento gratuito segue na leitura comum: valor e projeção da Tabela FIPE pública continuam sendo acrescentados às consultas Completa/Premium antigas, porque não passam pelo provedor pago.
+- Nenhuma rota, URL ou contrato de saída mudou; o cliente recebe o relatório guardado com o mesmo código de validação, e a cobrança da compra continua como era.
 ## 1.0.8 — Lojistas e comparação de anúncios
 
 - Página para lojistas com cadastro direcionado, solicitação de contratação e instruções para publicar a vitrine após liberação.
