@@ -87,7 +87,7 @@ function DetailModal({ id, onClose }: { id: string; onClose: (changed?: boolean)
         <div className="stack">
           <div><Badge tone={STATUS[c.status]?.tone}>{STATUS[c.status]?.label ?? c.status}</Badge> {c.expires_at && c.status === 'AGUARDANDO_ASSINATURA' && <span className="muted">Link válido até {dateTime(c.expires_at)}</span>}</div>
           {c.status === 'ASSINADO' && !c.applied_at && <Alert tone="info">Assinado. Os preços e a comissão só passam a valer depois de "Aplicar condições". Itens personalizados são configurados à mão.</Alert>}
-          <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', maxHeight: 320, overflow: 'auto', border: '1px solid var(--line, #d7ddd9)', borderRadius: 8, padding: 12 }}>{c.rendered_body}</pre>
+          <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', maxHeight: 320, overflow: 'auto', border: '1px solid var(--line, #e5e7eb)', borderRadius: 8, padding: 12 }}>{c.rendered_body}</pre>
           <span className="section-title">Assinante</span>
           {c.signers.map((s) => <div key={s.email}>{s.name} · {s.email} · <Badge tone={s.status === 'ASSINADO' ? 'ok' : 'warn'}>{s.status === 'ASSINADO' ? `Assinou em ${dateTime(s.signed_at)}` : 'Pendente'}</Badge></div>)}
           <span className="section-title">Histórico</span>
@@ -179,7 +179,7 @@ function CreateModal({ onClose }: { onClose: (id?: string) => void }) {
             <div style={{ display: 'flex', gap: 8 }}><Button variant="ghost" onClick={() => setItems((s) => [...s, blankItem('QUERY')])}>+ Consulta do catálogo</Button><Button variant="ghost" onClick={() => setItems((s) => [...s, blankItem('CUSTOM')])}>+ Pacote personalizado</Button></div>
           </div>
         )}
-        {preview && <><span className="section-title">Texto do contrato</span><pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', maxHeight: 280, overflow: 'auto', border: '1px solid var(--line, #d7ddd9)', borderRadius: 8, padding: 12 }}>{preview}</pre></>}
+        {preview && <><span className="section-title">Texto do contrato</span><pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', maxHeight: 280, overflow: 'auto', border: '1px solid var(--line, #e5e7eb)', borderRadius: 8, padding: 12 }}>{preview}</pre></>}
       </div>
     </Modal>
   );
@@ -256,7 +256,7 @@ function Models() {
             {edit.draft && <details open><summary>Variáveis disponíveis (clique para inserir)</summary>
               {['Partes', 'Valores e cálculos', 'Prazos', 'Comissão', 'Geral'].map((g) => <div key={g} style={{ margin: '8px 0' }}><b style={{ fontSize: 13 }}>{g}</b><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>{(vars.data?.items ?? []).filter((v) => v.group === g).map((v) => <button key={v.key} type="button" className="btn btn-sm" title={`${v.label}. Exemplo: ${v.example}`} onClick={() => insertVar(v.key)}>{`{{${v.key}}}`}</button>)}</div></div>)}
             </details>}
-            {preview && (preview.unknown.length ? <Alert tone="danger">Variáveis desconhecidas: {preview.unknown.join(', ')}</Alert> : <div><b>Pré-visualização (dados fictícios)</b><pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', maxHeight: 260, overflow: 'auto', border: '1px solid var(--line, #d7ddd9)', borderRadius: 8, padding: 12 }}>{preview.text}</pre></div>)}
+            {preview && (preview.unknown.length ? <Alert tone="danger">Variáveis desconhecidas: {preview.unknown.join(', ')}</Alert> : <div><b>Pré-visualização (dados fictícios)</b><pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', maxHeight: 260, overflow: 'auto', border: '1px solid var(--line, #e5e7eb)', borderRadius: 8, padding: 12 }}>{preview.text}</pre></div>)}
           </div>
         </Modal>
       )}

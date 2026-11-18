@@ -7,8 +7,8 @@
   "start_url": "/?origem=app",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#101F1B",
-  "theme_color": "#101F1B",
+  "background_color": "#111827",
+  "theme_color": "#111827",
   "icons": [
     {
       "src": "/brand/icon-192.png",

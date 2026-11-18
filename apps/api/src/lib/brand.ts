@@ -70,19 +70,19 @@ export const BRAND = {
 
   // ── Cores (o tokens.css do front segue estes valores; o teste `marca` confere) ──
   colors: {
-    primary: '#245A4B',
-    primaryHover: '#153E34',
-    primarySoft: '#E6EFEA',
-    primaryInk: '#1C493D',
-    accent: '#548674',
-    gold: '#A9C4B6',
-    night: '#101F1B',
-    ink: '#152D26',
-    text: '#152D26',
-    muted: '#53675F',
-    line: '#DBE5DE',
-    soft: '#F6F7F4',
-    onDark: '#CBDDD4'
+    primary: '#2563eb',
+    primaryHover: '#1e40af',
+    primarySoft: '#EFF6FF',
+    primaryInk: '#1e40af',
+    accent: '#60a5fa',
+    gold: '#93C5FD',
+    night: '#111827',
+    ink: '#1f2937',
+    text: '#1f2937',
+    muted: '#4b5563',
+    line: '#E5E7EB',
+    soft: '#FFFFFF',
+    onDark: '#E5E7EB'
   },
 
   // ── Artigos em português (ex.: "a equipe {of}" → "a equipe do BL Buscarr") ──
@@ -93,7 +93,7 @@ export const BRAND = {
   by: `${art.by} ${NAME}`, By: `${cap(art.by)} ${NAME}`
 } as const;
 
-/** "#245A4B" → [r,g,b] de 0 a 1 (para o pdf-lib: rgb(...hexToUnit(BRAND.colors.primary))). */
+/** "#2563eb" → [r,g,b] de 0 a 1 (para o pdf-lib: rgb(...hexToUnit(BRAND.colors.primary))). */
 export function hexToUnit(hex: string): [number, number, number] {
   const h = hex.replace('#', '');
   const n = parseInt(h.length === 3 ? h.split('').map((c) => c + c).join('') : h, 16);
