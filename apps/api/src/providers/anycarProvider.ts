@@ -49,7 +49,9 @@ export function toAuctionPiece(body: unknown): Piece {
     return { kind: 'data', resposta };
   }
   const message = fold([text(body.mensagem), text(body.message), text(body.erro), isRec(body.dados) ? text(body.dados.mensagem) : text(body.dados)].join(' '));
-  if (body.status === true || NOT_FOUND_TEXT.test(message)) return { kind: 'notFound' };
+  // `status: true` só diz que o pedido foi aceito; sem lista de leilões e sem frase de ausência isso não é "nada consta" (E3/E5).
+  // Só vira ausência confirmada (E2) o que a própria AnyCar publica como "nenhum registro de leilão encontrado".
+  if (NOT_FOUND_TEXT.test(message)) return { kind: 'notFound' };
   throw fail('DATA_PROVIDER_INVALID_RESPONSE', `AnyCar não confirmou a consulta${message ? `: ${message.slice(0, 120)}` : ''}.`);
 }
 
@@ -79,9 +81,20 @@ export async function queryAnycarAuction(plate: string, o: AnycarOptions = {}): 
   if (response.status === 401 || response.status === 403) throw fail('DATA_PROVIDER_AUTH_FAILED', 'AnyCar recusou a chave (ANYCAR_API_KEY).');
   if (response.status === 402) throw fail('DATA_PROVIDER_QUOTA_EXHAUSTED', 'AnyCar sem saldo.');
   if (response.status === 429) throw fail('DATA_PROVIDER_RATE_LIMITED', 'AnyCar limitou as chamadas.');
-  if (response.status === 404) return { kind: 'notFound' };
+  // HTTP 404/410 é endpoint fora do contrato/não provisionado, não "placa sem leilão": consulta indisponível (E5).
+  if (response.status === 404 || response.status === 410) throw fail('DATA_PROVIDER_UNAVAILABLE', `AnyCar respondeu HTTP ${response.status}: a consulta de leilão simples não está disponível nesta conta. Isso não é “nada consta”.`);
   if (response.status >= 500) throw fail('DATA_PROVIDER_UNAVAILABLE', `AnyCar indisponível (HTTP ${response.status}).`);
   const body = await response.json().catch(() => null);
   if (!response.ok && !isRec(body)) throw fail('DATA_PROVIDER_INVALID_RESPONSE', `AnyCar respondeu HTTP ${response.status}.`);
-  return toAuctionPiece(body);
+  // Resposta 200 que não é um objeto legível: a base não devolveu a informação, não é "respondeu sem este dado".
+  if (!isRec(body)) throw fail('DATA_PROVIDER_INVALID_RESPONSE', 'AnyCar respondeu sem um JSON legível.');
+  try {
+    return toAuctionPiece(body);
+  } catch (e) {
+    // Marca o que a exceção não consegue dizer sozinha: a fonte RESPONDEU e o corpo não afirma ausência (E3, sem retorno),
+    // em vez de não ter respondido (E5). É o que permite a um produto com outras fontes degradar para parcial sem
+    // inventar "nada consta" e sem derrubar a consulta inteira.
+    Object.assign(e as object, { answered: true });
+    throw e;
+  }
 }

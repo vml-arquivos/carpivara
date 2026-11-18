@@ -1890,16 +1890,21 @@ api.get('/queries/:id/export', auth, requirePermission('VIEW_HISTORY'), asyncRou
   res.type('application/json').send(JSON.stringify(serializeQuery(query.rows[0] as QueryRow & Record<string, unknown>), null, 2));
 }));
 
-async function vehicleReportForQuery(queryId: string, userId: string, enrich = true) {
+/**
+ * Monta o relatório só com o que já está guardado na consulta.
+ * Regra do produto: reabrir relatório, comparar relatórios ou baixar PDF não pode gerar cobrança.
+ * Por isso a chamada paga de gravame é opt-in por chamada e nenhuma rota de leitura do cliente a ativa.
+ */
+async function vehicleReportForQuery(queryId: string, userId: string, enrichPaidLien = false, enrichFreeFipe = true) {
   const load = () => pool.query(`SELECT q.id,q.plate,q.search_type,q.product_id,q.created_at,q.completed_at,q.result_hash,p.name AS product_name,r.normalized
     FROM vehicle_queries q JOIN query_products p ON p.id=q.product_id JOIN vehicle_query_results r ON r.query_id=q.id
     WHERE q.id=$1 AND q.user_id=$2 AND q.status='SUCCESS'`, [queryId, userId]);
   let query = await load();
   if (!query.rowCount) throw appError('REPORT_NOT_FOUND', { code: 'REPORT_NOT_FOUND', http: 404, expose: true });
-  // Consulta antiga com gravame sem banco/contrato/datas: completa com o /gravame uma única vez (só depois de confirmar que a consulta é do usuário).
-  try { if (enrich && await ensureLienDetail(queryId, getProvider())) query = await load(); } catch { /* fonte não configurada: segue com o que já está guardado */ }
+  // Completação de gravame é chamada paga: só a ação administrativa (POST /admin/queries/:id/refresh-gravame) pode ativá-la.
+  try { if (enrichPaidLien && await ensureLienDetail(queryId, getProvider())) query = await load(); } catch { /* fonte não configurada: segue com o que já está guardado */ }
   // Consulta Completa antiga sem FIPE: acrescenta valor e projeção (Tabela FIPE pública, sem custo no provedor).
-  try { if (enrich && SHEET_PRODUCTS.includes(String((query.rows[0] as Record<string, unknown>).product_id)) && await ensureFipeEnrichment(queryId)) query = await load(); } catch { /* segue com o que já está guardado */ }
+  try { if (enrichFreeFipe && SHEET_PRODUCTS.includes(String((query.rows[0] as Record<string, unknown>).product_id)) && await ensureFipeEnrichment(queryId)) query = await load(); } catch { /* segue com o que já está guardado */ }
   const row = query.rows[0] as Record<string, unknown>;
   const vehicle = row.normalized as NormalizedVehicle | null;
   if (!vehicle?.v2) throw appError('REPORT_UNAVAILABLE', { code: 'REPORT_UNAVAILABLE', http: 409, expose: true });
@@ -1919,14 +1924,16 @@ api.get('/queries/:id/report', auth, requirePermission('VIEW_HISTORY'), asyncRou
 
 const similarListingsLimit = rateLimit({ windowMs: 60_000, limit: 15, standardHeaders: true, legacyHeaders: false, skip: () => env.NODE_ENV === 'test' });
 api.get('/queries/:id/similar-listings', auth, requirePermission('VIEW_HISTORY'), similarListingsLimit, asyncRoute(async (req, res) => {
-  const { report } = await vehicleReportForQuery(String(req.params.id), req.user!.id, false);
+  // Sem enriquecimento aqui também: a listagem só reaproveita o relatório já salvo.
+  const { report } = await vehicleReportForQuery(String(req.params.id), req.user!.id, false, false);
   res.setHeader('Cache-Control', 'private, no-store');
   res.json({ items: await findSimilarListings(report.headline, report.plate) });
 }));
 
 const reportGuideLimit = rateLimit({ windowMs: 60_000, limit: 8, standardHeaders: true, legacyHeaders: false, skip: () => env.NODE_ENV === 'test' });
 api.post('/queries/:id/report/guide', auth, requirePermission('VIEW_HISTORY'), reportGuideLimit, asyncRoute(async (req, res) => {
-  const { report } = await vehicleReportForQuery(String(req.params.id), req.user!.id, false);
+  // Guia do relatório: mesma regra, nada de consulta ao fornecedor.
+  const { report } = await vehicleReportForQuery(String(req.params.id), req.user!.id, false, false);
   const guide = buildDecisionGuide(report);
   let findings = guide.findings;
   if (env.REPORT_LLM_ENABLED && findings.length > 1) {
@@ -2058,7 +2065,8 @@ const adCheckBody = z.object({
 api.post('/queries/:id/ad-check', auth, requirePermission('VIEW_HISTORY'), asyncRoute(async (req, res) => {
   const parsed = adCheckBody.safeParse(req.body ?? {});
   if (!parsed.success || !Object.values(parsed.data).some((v) => v !== undefined && v !== '')) throw appError('Informe o preço, o modelo, a cor ou o ano do anúncio.', { code: 'INVALID_INPUT', http: 400, expose: true });
-  const { report } = await vehicleReportForQuery(String(req.params.id), req.user!.id, req.query.snapshot !== '1');
+  // snapshot é um resultado já salvo: desliga só o enriquecimento gratuito de FIPE; a chamada paga nunca entra por aqui.
+  const { report } = await vehicleReportForQuery(String(req.params.id), req.user!.id, false, req.query.snapshot !== '1');
   await recordFunnelEvent(req.user!.id, req, 'AD_CHECKED', {});
   res.setHeader('Cache-Control', 'private, no-store');
   res.json(checkAd(report, parsed.data));

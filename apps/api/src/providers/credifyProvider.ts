@@ -322,16 +322,21 @@ export class CredifyVehicleProvider implements VehicleDataProvider {
   }
 
   /**
-   * Leilão simples (AnyCar): só o histórico de leilão. Falha vira "não informado" (o resultado não entra no cache),
-   * exceto no produto que só compra o leilão: ali a falha derruba a consulta para estornar o cliente.
+   * Leilão simples (AnyCar): só o histórico de leilão. A fonte que não respondeu (timeout, recusa, 5xx) vira peça
+   * indisponível (E5) com rastro do código, e a que respondeu sem trazer o dado nem afirmar ausência vira sem retorno (E3)
+   * — as duas deixam o resultado parcial, nunca "nada consta". Só no produto que compra exclusivamente o leilão a
+   * indisponibilidade derruba a consulta, para estornar o cliente; aí também não se entrega "sem retorno" como se fosse
+   * o resultado contratado.
    */
   private async simpleAuction(plate: string, strict: boolean): Promise<Piece> {
     try {
       return await queryAnycarAuction(plate);
     } catch (e) {
-      log('warn', 'anycar_auction_failed', { code: (e as { code?: string }).code ?? 'ERRO', strict });
-      if (strict) throw e;
-      return { kind: 'none' };
+      const code = (e as { code?: string }).code ?? 'ERRO';
+      const answered = (e as { answered?: boolean }).answered === true;
+      log('warn', 'anycar_auction_failed', { code, strict, answered });
+      if (strict && !answered) throw e;
+      return { kind: 'none', code, ...(answered ? { gap: 'NO_RETURN' as const } : {}) };
     }
   }
 
@@ -383,13 +388,19 @@ export class CredifyVehicleProvider implements VehicleDataProvider {
     if (farolId && !farol) log('warn', 'credify_farol_sem_semaforo', { kind: farolPiece.kind });
     // Verde dispensa o detalhe. Amarelo, vermelho ou Farol sem resposta pedem o leilão conjugado (se couber no teto de custo).
     let leilao: Piece = useSimpleAuction ? simpleAuction : none;
-    if (useCredifyAuction && !(farol?.level === 'GREEN') && (!farolId || spend.allow('/leilaoconjugado'))) leilao = await this.piece('/leilaoconjugado', plate, startedAt, spend, undefined, strict);
+    let wantAuctionDetail = false;
+    if (useCredifyAuction && !(farol?.level === 'GREEN') && (!farolId || spend.allow('/leilaoconjugado'))) {
+      wantAuctionDetail = true;
+      leilao = await this.piece('/leilaoconjugado', plate, startedAt, spend, undefined, strict);
+    }
 
     const consulta = (base.raw as { data?: { CONSULTA?: unknown } }).data?.CONSULTA;
     const envelope = buildLayeredEnvelope({ consulta, baseRaw: base.raw, sinistro, recall, recallFromFlag: recallFlag, theft, theftFromFlag: theftFlag, leilao, farol, national, owners, fipe, renainf, ownerPlate });
     log('info', 'credify_layers_done', { calls: spend.paths.length, paths: spend.paths.join(',') });
     // Peça que era para vir e não veio (falha ou sem tempo): o resultado vale para esta consulta, mas não entra no cache.
-    const attempted: Array<[boolean, Piece]> = [[wantSinistro, sinistro], [wantNational, national], [wantOwners, owners], [wantFipe, fipe], [wantRenainf, renainf], [wantOwnerPlate, ownerPlate], [Boolean(farolId) && useCredifyAuction, farolPiece], [wantRecall && recallFlag === undefined, recall], [wantTheft && (env.CREDIFY_COMPLETE_THEFT === 'always' || theftFlag === undefined), theft], [useSimpleAuction, simpleAuction]];
+    // O leilão conjugado é peça do resultado: se ele não respondeu (404, 5xx, teto de custo), a consulta é parcial.
+    // Sem isso, "endpoint fora do ar" saía com o relatório inteiro marcado como se a base de leilão tivesse respondido.
+    const attempted: Array<[boolean, Piece]> = [[wantSinistro, sinistro], [wantNational, national], [wantOwners, owners], [wantFipe, fipe], [wantRenainf, renainf], [wantOwnerPlate, ownerPlate], [Boolean(farolId) && useCredifyAuction, farolPiece], [wantAuctionDetail, leilao], [wantRecall && recallFlag === undefined, recall], [wantTheft && (env.CREDIFY_COMPLETE_THEFT === 'always' || theftFlag === undefined), theft], [useSimpleAuction, simpleAuction]];
     if (strict) {
       // Produto de contrato: toda base que o produto promete tem de ter respondido (dado ou "nada consta"); senão não entrega e estorna.
       const required: Array<[string, boolean, Piece]> = [
@@ -527,7 +538,11 @@ export class CredifyVehicleProvider implements VehicleDataProvider {
         if (response.status === 401) { const again = await call(fresh, other(authStyle)); if (again.status !== 401) { authStyle = other(authStyle); response = again; } }
       }
     }
-    if (response.status === 404 || response.status === 410) throw fail('NOT_FOUND', await reason(response));
+    // HTTP 404/410 não é "placa não encontrada": é o endpoint fora do contrato da conta (não provisionado ou removido),
+    // ou seja, consulta indisponível (E5). Placa inexistente chega como CODIGO=2 no corpo, adiante, e só esse caminho
+    // (ou a frase própria da fonte) pode virar ausência confirmada no relatório. Antes, 404 virava NOT_FOUND e, numa
+    // peça complementar, era absorvido como "não consta em base de leilão / no histórico de roubo".
+    if (response.status === 404 || response.status === 410) throw fail('DATA_PROVIDER_UNAVAILABLE', `${await reason(response)} — endpoint ${c.path} fora do contrato da conta (HTTP ${response.status}); isso não é “placa não encontrada” nem “nada consta”.`);
     if (response.status === 401 || response.status === 403) throw fail('DATA_PROVIDER_AUTH_FAILED', `Consulta recusada (${await reason(response)}). Confira as Finalidades de Consumo, o plano e o IP autorizado na Credify.`);
     if (response.status === 408 || response.status === 429) throw fail('DATA_PROVIDER_RATE_LIMITED', await reason(response));
     if (response.status === 402) throw fail('DATA_PROVIDER_QUOTA_EXHAUSTED', await reason(response));

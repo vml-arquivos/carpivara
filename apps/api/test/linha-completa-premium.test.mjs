@@ -209,7 +209,7 @@ for (const [forma, renainf] of [
   });
 }
 
-test('Renainf sem multa: diz que nada foi registrado; sem a fonte, não compra nem mostra', async () => {
+test('Renainf sem multa: diz que nada foi registrado; sem a fonte, não compra e explica a lacuna', async () => {
   resetCredifyTokenCache();
   const f = fakeFetch(camadas({ '/renainf': ok('536', { RENAINF: { PLACA: 'AAA0000' }, DEBITOS: {} }) }));
   const out = await new CredifyVehicleProvider(opts(f)).queryByPlate('AAA0000', { productId: 'PREMIUM', sources: [...BASE, 'RENAINF'] });
@@ -218,7 +218,21 @@ test('Renainf sem multa: diz que nada foi registrado; sem a fonte, não compra n
   const g = fakeFetch(camadas());
   const out2 = await new CredifyVehicleProvider(opts(g)).queryByPlate('AAA0000', { productId: 'PREMIUM', sources: BASE });
   assert.ok(!g.paid().includes('/renainf'));
-  assert.equal((await itemsOf(out2.raw)).get('RN_MULTAS'), undefined);
+  // Mudança de expectativa justificada (diretiva "ausência de um campo, erro ou timeout jamais deve aparecer como
+  // 'nada consta'"): o item continuava SUMINDO do relatório quando a fonte não era comprada, e campo apagado é lido
+  // como campo inexistente. Agora ele fica, marcado OUT_OF_SCOPE, dizendo que a base nem foi acionada. O que o teste
+  // sempre protegeu continua protegido, e mais explícito: nada é comprado (assert acima) e NADA se afirma sobre
+  // multas — nem "nada consta", nem "nenhuma multa".
+  const semFonte = (await itemsOf(out2.raw)).get('RN_MULTAS');
+  assert.ok(semFonte, 'o campo não some: aparece com o motivo de não ter dado');
+  assert.equal(semFonte.state, 'NOT_PROVIDED', 'sem dado, mas também sem quitação');
+  assert.equal(semFonte.value, null, 'nenhum valor de multa é inventado');
+  assert.equal(semFonte.sourceState, 'OUT_OF_SCOPE');
+  assert.match(String(semFonte.display), /não foi acionada \(fora da cobertura deste produto\)/);
+  assert.doesNotMatch(String(semFonte.display), /nada consta|nenhuma multa|sem multas|não possui/i, 'fora da cobertura nunca vira ausência afirmada');
+  // A frase diz "isso não significa que está tudo certo": nega a quitação em vez de afirmá-la, e é por isso que
+  // a checagem abaixo é de afirmação explícita de não verificação, e não a ausência da palavra "certo".
+  assert.match(String(semFonte.display), /Este item não foi verificado/, 'diz o que não foi verificado, em vez de tranquilizar');
 });
 
 test('Alterações de características: motor divergente entre cadastro e base nacional vira alerta; igual, não', async () => {

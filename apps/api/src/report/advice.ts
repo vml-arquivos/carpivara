@@ -1,6 +1,7 @@
 import { brlFromCents } from './format.js';
 import { CATALOG_BY_KEY } from './catalog.js';
 import type { ReportV2 } from './normalizeV2.js';
+import type { SourceState } from './layers.js';
 
 /**
  * Parecer de revenda/seguro e checklist "Antes de pagar".
@@ -21,6 +22,17 @@ export interface ReportAdvice {
 
 type Item = ReportV2['sections'][number]['items'][number];
 type Verdict = 'ALERT' | 'CLEAR' | 'UNKNOWN';
+/**
+ * Estados separados no "não consultado" (vocabulário de `layers.ts`): fora da cobertura ≠ sem retorno ≠ indisponível ≠
+ * campo que a fonte não devolveu. Antes uma única frase dizia "não consultado neste pacote OU a fonte não retornou",
+ * fundindo os estados e deixando o leitor sem saber o que faltou.
+ */
+const NOT_CHECKED_DETAIL: Record<'OUT_OF_SCOPE' | 'NO_RETURN' | 'UNAVAILABLE' | 'NO_ANSWER', string> = {
+  OUT_OF_SCOPE: 'Fora da cobertura desta consulta: a base que verifica este item não foi contratada nem acionada. Isso não significa que está tudo certo.',
+  NO_RETURN: 'Sem retorno: a fonte respondeu sem este dado. Isso não significa que está tudo certo.',
+  UNAVAILABLE: 'Consulta indisponível: a base responsável não respondeu (erro, recusa ou falta de tempo). Isso não significa que está tudo certo.',
+  NO_ANSWER: 'A fonte não devolveu este item na resposta desta consulta. Isso não significa que está tudo certo.'
+};
 
 const TO_DO = [
   'Confirme que quem vende é o proprietário que consta no documento (CRLV-e), com documento com foto.',
@@ -33,7 +45,14 @@ const TO_DO = [
 
 export function buildAdvice(report: ReportV2): ReportAdvice {
   const items = new Map<string, Item>();
-  for (const s of report.sections) for (const i of s.items) if (i.state !== 'NOT_PROVIDED') items.set(i.key, i);
+  /** Itens que explicam a própria lacuna (E3/E4/E5): é por aqui que o parecer diz POR QUE não consultou. */
+  const gaps = new Map<string, 'OUT_OF_SCOPE' | 'NO_RETURN' | 'UNAVAILABLE'>();
+  for (const s of report.sections) {
+    for (const i of s.items) {
+      if (i.state !== 'NOT_PROVIDED') items.set(i.key, i);
+      if (i.sourceState === 'OUT_OF_SCOPE' || i.sourceState === 'NO_RETURN' || i.sourceState === 'UNAVAILABLE') gaps.set(i.key, i.sourceState);
+    }
+  }
   const verdictOf = (...keys: string[]): Verdict => {
     let seen = false;
     for (const k of keys) {
@@ -67,7 +86,10 @@ export function buildAdvice(report: ReportV2): ReportAdvice {
   const checks: AdviceCheck[] = [];
   const add = (key: string, label: string, keys: readonly string[], v: Verdict, alert: { status: CheckStatus; detail: string }, ok: string) => {
     if (!covered(keys)) return;
-    if (v === 'UNKNOWN') checks.push({ key, label, status: 'NOT_CHECKED', detail: 'Não consultado neste pacote ou a fonte não retornou. Isso não significa que está tudo certo.' });
+    if (v === 'UNKNOWN') {
+      const st = keys.map((k) => gaps.get(k)).find((x) => x !== undefined);
+      checks.push({ key, label, status: 'NOT_CHECKED', detail: NOT_CHECKED_DETAIL[st ?? 'NO_ANSWER'] });
+    }
     else if (v === 'ALERT') checks.push({ key, label, ...alert });
     else checks.push({ key, label, status: 'OK', detail: ok });
   };

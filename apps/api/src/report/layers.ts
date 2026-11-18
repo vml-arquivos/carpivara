@@ -13,8 +13,127 @@ const upperKeys = (o: Rec): Rec => Object.fromEntries(Object.entries(o).map(([k,
 export const LAYER_ORDER = ['INDICIOSINISTROVEICULAR', 'RECALL', 'HISTORICOROUBOFURTO', 'LEILAOCONJUGADO', 'HISTORICOPROPRIETARIO', 'VEICULARBNACIONAL', 'PRECIFICADORFIPE', 'VEICULOSBDRP'] as const;
 export type LayerBlock = (typeof LAYER_ORDER)[number];
 
-/** Resultado de uma consulta avulsa: dados, "não encontrado" ou nada (falhou ou não foi chamada). */
-export type Piece = { kind: 'data'; resposta: Rec } | { kind: 'notFound' } | { kind: 'none'; code?: string };
+/**
+ * Resultado de uma consulta avulsa: dados, "não encontrado" ou nada (falhou ou não foi chamada).
+ * `gap` é o estado (E3/E4/E5) quando quem monta a peça já sabe qual é: uma fonte que respondeu HTTP 200 sem trazer o dado
+ * é sem retorno (E3), e não "fora da cobertura" (E4) nem "não respondeu" (E5). Sem `gap`, vale a dedução de sempre:
+ * sem código é fora da cobertura, com código é a base que não respondeu.
+ */
+export type GapState = Extract<SourceState, 'NO_RETURN' | 'OUT_OF_SCOPE' | 'UNAVAILABLE'>;
+export type Piece = { kind: 'data'; resposta: Rec } | { kind: 'notFound' } | { kind: 'none'; code?: string; gap?: GapState };
+
+/**
+ * Vocabulário único dos estados de uma informação (diretiva do dono do produto). Todo o resto do relatório deriva daqui;
+ * nenhum módulo decide sozinho o que é "nada consta".
+ *  - OCCURRENCE     (E1) a fonte achou algo;
+ *  - CONFIRMED_NONE (E2) a fonte afirmou, com todas as letras, que não há nada para esta placa;
+ *  - NO_RETURN      (E3) a fonte respondeu, mas sem este dado ("NÃO INFORMADO", "NÃO DISPONÍVEL", bloco vazio);
+ *  - OUT_OF_SCOPE   (E4) a base que verificaria este item não foi acionada nesta consulta (fora do contrato ou do teto de custo);
+ *  - UNAVAILABLE    (E5) a base não respondeu: erro, recusa, timeout, HTTP 404/410 do endpoint.
+ * E3, E4 e E5 nunca podem ser apresentados como "nada consta".
+ */
+export type SourceState = 'OCCURRENCE' | 'CONFIRMED_NONE' | 'NO_RETURN' | 'OUT_OF_SCOPE' | 'UNAVAILABLE';
+export const SOURCE_STATES: readonly SourceState[] = ['OCCURRENCE', 'CONFIRMED_NONE', 'NO_RETURN', 'OUT_OF_SCOPE', 'UNAVAILABLE'];
+export const STATE_LABEL: Record<SourceState, string> = {
+  OCCURRENCE: 'ocorrência encontrada',
+  CONFIRMED_NONE: 'nada consta confirmado pela fonte',
+  NO_RETURN: 'sem retorno da fonte',
+  OUT_OF_SCOPE: 'fora da cobertura do pacote',
+  UNAVAILABLE: 'consulta indisponível'
+};
+/** Frase colocada no lugar do dado que não veio. Começa com "Não informado" para que o documento do cliente (clientDoc) a retire, como já faz com os outros avisos de lacuna. */
+export const STATE_LINE: Record<SourceState, string> = {
+  OCCURRENCE: '',
+  CONFIRMED_NONE: '',
+  NO_RETURN: 'Não informado pela fonte: a consulta foi feita e respondeu sem este dado. Isso não equivale a “nada consta”.',
+  UNAVAILABLE: 'Não informado pela fonte: esta base não respondeu (indisponibilidade, recusa ou falta de tempo). Isso não equivale a “nada consta”.',
+  // Fora da cobertura, o texto não pode nem mencionar a expressão de quitação: o item é lido em tela e em PDF, e
+  // "nada consta" escrito até para negar ainda vira leitura de ausência. Aqui se diz o que não foi verificado.
+  OUT_OF_SCOPE: 'Não informado nesta consulta: a base que verifica este item não foi acionada (fora da cobertura deste produto). Este item não foi verificado — isso não significa que está tudo certo.'
+};
+
+/** Família 1 — igualdade exata do marcador normalizado (maiúsculas, sem acento, espaço colapsado). */
+const UNAVAILABLE_EXACT = /^(?:ERRO|FALHA|TIMEOUT|INDISPONIVEL|RECUSA|SEM TEMPO)$/;
+const NO_RETURN_EXACT = /^(?:N\/D|N\/A|NULL|-+|INDEFINID\w*|INCONCLUS\w*|EM ANDAMENTO|AGUARDE\w*|RESPOSTA PARCIAL|PLACA SEM CADASTRO|CONSULTA EM ANDAMENTO)$/;
+const CONFIRMED_NONE_EXACT = /^(?:N|NAO|NADA|NENHUM|NENHUMA|FALSE|0+)$/;
+const OCCURRENCE_EXACT = /^(?:S|SIM|TRUE|[1-9]\d*)$/;
+
+/** Família 2 — afixo semântico: em texto composto ("NAO INFORMADO PELO PROVEDOR"), quem abre ou fecha a frase decide. */
+const UNAVAILABLE_PREFIX = /^(?:ERRO|FALHA|TIMEOUT|INDISPONIVEL|LIMI(?:TE|T)|QUOTA|SALDO|RECUSAD|NAO AUTORIZAD|NAO PERMITID|SEM TEMPO|SEM CREDENCI)/;
+const UNAVAILABLE_SUFFIX = /(?:INDISPONIVEL|TIMEOUT|FORA DO AR|NAO RESPONDEU)$/;
+const NO_RETURN_PREFIX = /^(?:NAO INFORMAD|NAO DISPONIB|NAO LOCALIZAD|NAO IDENTIFICAD|NAO CADASTRAD|NAO FOI POSSIVEL|NAO CONSEGU|NAO DECODIF|EM ANDAMENTO|AGUARDE|SEM RETORNO|SEM DADOS|SEM INFORMAC|SEM RESPOSTA|RESPOSTA PARCIAL|PLACA SEM CADASTRO|INDEFINID|INCONCLUS)/;
+const NO_RETURN_SUFFIX = /(?:EM ANDAMENTO|SEM RETORNO|SEM DADOS|SEM INFORMAC\w*|SEM RESPOSTA|NAO INFORMAD\w*|NAO DISPONIVEL|NAO LOCALIZAD\w*)$/;
+const CONFIRMED_NONE_PREFIX = /^(?:NADA CONSTA|NADA CONS\w*|NAO CONSTA|NAO POSSUI|NAO HA|NAO EXISTE|NAO TEM|NAO (?:FOI )?APRESENTAD|SEM (?!INFORMAC|RETORNO|DADOS|RESPOSTA|TEMPO|CREDENCI))/;
+
+/** Família 3 — frase de quitação escrita no meio do texto ("O VEICULO NAO FOI APRESENTADO NA BASE DE LEILAO."). */
+const ABSENCE_PHRASE = /(?:^|\s)(?:NADA CONSTA|NAO CONSTA(?:M)?|NAO FOI APRESENTAD\w*|NAO APRESENTAD\w*|NAO POSSUI|NAO HA|NAO EXISTE|NAO TEM|SEM REGISTRO|SEM OCORRENCIA|SEM PENDENCIA|SEM SINAL|SEM VESTIGIO)(?:$|\s)/;
+/** Verbos que afirmam uma ocorrência: se algum aparecer fora do alcance de uma negação, a frase não é de quitação. */
+const ASSERTION_TOKENS = ['CONSTA', 'CONSTAM', 'EXISTE', 'EXISTEM', 'POSSUI', 'POSSUEM', 'HA', 'TEM', 'TENHA', 'HOUVE', 'REGISTROU', 'REGISTRAM', 'APRESENTOU', 'APRESENTA', 'CONSTATA'];
+/** Palavras de domínio do relatório; lidas por início de palavra, para "INEXISTENTE" não casar "EXISTE". */
+const OCCURRENCE_STEMS = ['REGISTRO', 'REGISTRAD', 'OCORRENCIA', 'CONSTA', 'EXISTE', 'POSSUI', 'LOCALIZAD', 'ALIENAC', 'APREENS', 'BLOQUE', 'RESTRICAO', 'RESTRICOES', 'LEILAO', 'LEILOES', 'SINISTRO', 'ROUBO', 'FURTO', 'RECALL', 'CAMPANHA', 'IRREGULAR', 'REMARCA', 'DENUNCIA', 'INQUERITO', 'GUINCHO', 'TRIBUTARI', 'ADMINISTRATIV', 'JUDICIAL', 'PENDENCIA', 'VENCID', 'ATIVA', 'INATIV', 'DESMONT', 'SUCATA', 'MULTA', 'DEBITO', 'BUSCA', 'APRESENTAD', 'INDICIO', 'EM ABERTO'];
+const NEGATION_TOKENS = ['NAO', 'NADA', 'SEM', 'NEM'];
+
+/** A palavra-chave aparece como palavra (ou começo de palavra) sem uma negação até três palavras antes dela. */
+function unnegated(t: string, keys: readonly string[], wholeWord: boolean): boolean {
+  for (const k of keys) {
+    let i = t.indexOf(k);
+    while (i !== -1) {
+      const before = t.slice(0, i);
+      const after = t[i + k.length] ?? '';
+      const startsWord = before === '' || !/[A-Z0-9]/.test(before[before.length - 1]!);
+      const endsWord = !/[A-Z0-9]/.test(after);
+      if (startsWord && (!wholeWord || endsWord)) {
+        const previous = before.split(' ').filter(Boolean).slice(-3);
+        if (!previous.some((w) => NEGATION_TOKENS.includes(w))) return true;
+      }
+      i = t.indexOf(k, i + 1);
+    }
+  }
+  return false;
+}
+
+/**
+ * Estado de um texto devolvido pela fonte. `undefined` = texto que ninguém pode interpretar como ausência.
+ * Três famílias, nesta ordem: (1) igualdade exata do marcador, (2) afixo semântico quando o texto é composto,
+ * (3) presença de expressão de ausência só quando não há marcador contraditório. Nunca é uma regex única com `^...$`.
+ * Dentro de cada família a checagem é E5 → E3 → E2 → E1, e E1 vem por último de propósito: "LEILAO", "RECALL" e
+ * "RESTRICAO" também são nomes do domínio, então ler a ocorrência antes da negação transformaria "SEM RECALL" e
+ * "O VEICULO NAO FOI APRESENTADO NA BASE DE LEILAO." em alerta — o falso alerta que a diretiva também proíbe.
+ */
+export function classifyText(value: unknown): SourceState | undefined {
+  const t = fold(scalar(value));
+  if (!t) return undefined;
+  if (UNAVAILABLE_EXACT.test(t)) return 'UNAVAILABLE';
+  if (NO_RETURN_EXACT.test(t)) return 'NO_RETURN';
+  if (CONFIRMED_NONE_EXACT.test(t)) return 'CONFIRMED_NONE';
+  if (OCCURRENCE_EXACT.test(t)) return 'OCCURRENCE';
+  if (UNAVAILABLE_PREFIX.test(t) || UNAVAILABLE_SUFFIX.test(t)) return 'UNAVAILABLE';
+  if (NO_RETURN_PREFIX.test(t) || NO_RETURN_SUFFIX.test(t)) return 'NO_RETURN';
+  if (CONFIRMED_NONE_PREFIX.test(t)) return 'CONFIRMED_NONE';
+  const affirms = unnegated(t, ASSERTION_TOKENS, true);
+  if (!affirms && ABSENCE_PHRASE.test(t)) return 'CONFIRMED_NONE';
+  if (affirms || unnegated(t, OCCURRENCE_STEMS, false)) return 'OCCURRENCE';
+  return undefined;
+}
+
+/** Estado de uma peça que não veio como dados: o estado dito por quem a monta manda; sem código é fora da cobertura; com código é a base que não respondeu. */
+export const missingPieceState = (piece: Piece): SourceState =>
+  piece.kind === 'none' ? (piece.gap ?? (piece.code ? 'UNAVAILABLE' : 'OUT_OF_SCOPE')) : piece.kind === 'notFound' ? 'CONFIRMED_NONE' : 'NO_RETURN';
+/** Linha legível do estado (vazia para E1/E2, que se mostram com o texto da própria fonte). */
+export const stateLine = (state: SourceState | undefined): string | undefined => (state && state !== 'OCCURRENCE' && state !== 'CONFIRMED_NONE' ? STATE_LINE[state] : undefined);
+
+/** Nome do bloco de controle que grava o estado de cada camada no envelope em camadas. */
+export const LAYER_STATE_KEY = 'ESTADO_CONSULTA';
+export type LayerStates = Partial<Record<LayerBlock | 'RENAINF', SourceState>>;
+
+/** Lê os estados por camada gravados por `buildLayeredEnvelope` (vazio no pacote Veículo Total, que não passa por aqui). */
+export function layerStatesOf(resposta: Rec | null | undefined): LayerStates {
+  if (!resposta || !isRec(resposta[LAYER_STATE_KEY])) return {};
+  const up = upperKeys(resposta[LAYER_STATE_KEY] as Rec);
+  const out: Rec = {};
+  for (const [k, v] of Object.entries(up)) if ((SOURCE_STATES as readonly string[]).includes(String(v))) out[k] = String(v);
+  return out as LayerStates;
+}
 
 /** RESPOSTA do envelope guardado ({ placa, data: envelope }), com as chaves em maiúsculas. */
 export function respostaOf(raw: unknown, depth = 0): Rec | null {
@@ -49,12 +168,13 @@ export function bdrpReturn(raw: unknown): Rec {
   return bdrp && isRec(bdrp.RETORNO) ? upperKeys(bdrp.RETORNO as Rec) : {};
 }
 
-const CLEAR_TEXT = /^(NADA CONSTA|NAO CONSTA|NAO POSSUI|SEM |NAO HA|NAO EXISTE|NENHUM|NAO)/;
-
-/** "Limpo" só quando o marcador diz com todas as letras que não há ocorrência. Vazio ou texto desconhecido = precisa consultar. */
+/**
+ * "Limpo" só quando o marcador diz com todas as letras que não há ocorrência (E2).
+ * "NÃO INFORMADO", "NÃO DISPONÍVEL", "NÃO LOCALIZADO", vazio ou texto desconhecido NÃO são limpos: são E3/E5 e por isso
+ * continuam comprando a consulta complementar (roubo/furto e recall), em vez de virar "nada consta" no relatório.
+ */
 export function flagIsClear(value: unknown): boolean {
-  const t = fold(scalar(value));
-  return t !== '' && CLEAR_TEXT.test(t);
+  return classifyText(value) === 'CONFIRMED_NONE';
 }
 export const flagText = (value: unknown): string => scalar(value);
 
@@ -85,7 +205,8 @@ function blockFrom(resposta: Rec): Rec {
   return out;
 }
 
-const NOT_PRESENTED: Partial<Record<LayerBlock, string>> = {
+/** Texto posto no lugar do bloco quando a própria fonte respondeu "dado não encontrado nesta base" (E2). */
+export const NOT_PRESENTED: Partial<Record<LayerBlock, string>> = {
   LEILAOCONJUGADO: 'O VEICULO NAO FOI APRESENTADO NA BASE DE LEILAO.',
   HISTORICOROUBOFURTO: 'O VEICULO NAO FOI APRESENTADO NO HISTORICO DE ROUBO OU FURTO.',
   RECALL: 'NAO FOI POSSIVEL LOCALIZAR O VEICULO.'
@@ -140,15 +261,20 @@ export function pieceIsEmpty(name: LayerBlock, resposta: Rec): boolean {
   return !Object.entries(inner).some(([k, v]) => !CONTROL_KEYS.test(k) && v !== null && v !== undefined && (typeof v === 'object' || String(v).trim() !== ''));
 }
 
-/** Peça → [código do bloco, bloco]. "Sem peça" vira código 3 (não consultado) e o bloco fica ausente. */
-function slot(name: LayerBlock, piece: Piece, flag?: string): { code: string; block?: Rec } {
-  if (flag !== undefined) return { code: '1', block: { DESCRICAORETORNO: flag } };
+/** Peça → [código do bloco, bloco, estado]. "Sem peça" vira código 3 e o bloco fica ausente, com o estado de por quê. */
+function slot(name: LayerBlock, piece: Piece, flag?: string): { code: string; block?: Rec; state: SourceState } {
+  // Marcador do cadastro no lugar da consulta: o estado vem do próprio texto (E2 quando afirma ausência, E3 quando não afirma).
+  if (flag !== undefined) return { code: '1', block: { DESCRICAORETORNO: flag }, state: classifyText(flag) ?? 'NO_RETURN' };
   if (piece.kind === 'data') {
     const resposta = unwrap(name, piece.resposta);
-    return { code: '1', block: name === 'VEICULARBNACIONAL' ? nationalBlock(resposta) : blockFrom(resposta) };
+    const block = name === 'VEICULARBNACIONAL' ? nationalBlock(resposta) : blockFrom(resposta);
+    const state: SourceState = pieceIsEmpty(name, piece.resposta) ? 'NO_RETURN' : classifyText(block.DESCRICAORETORNO) ?? 'OCCURRENCE';
+    return { code: '1', block, state };
   }
-  if (piece.kind === 'notFound') return { code: '2', block: { DESCRICAORETORNO: NOT_PRESENTED[name] ?? 'DADO NAO ENCONTRADO' } };
-  return { code: '3' };
+  // notFound só chega aqui quando a própria consulta respondeu CODIGO=2 ("dado não encontrado nesta base"): E2.
+  // HTTP 404/410 (endpoint fora do contrato) cai em `kind:'none'` com código, portanto E5 — nunca "nada consta".
+  if (piece.kind === 'notFound') return { code: '2', block: { DESCRICAORETORNO: NOT_PRESENTED[name] ?? 'DADO NAO ENCONTRADO NA BASE CONSULTADA' }, state: 'CONFIRMED_NONE' };
+  return { code: '3', state: missingPieceState(piece) };
 }
 
 /** A consulta de infrações pode vir direto ou dentro de RESPOSTA.RENAINF. */
@@ -197,19 +323,26 @@ export function buildLayeredEnvelope(input: LayerInput): Rec {
   const bdrpBase = base && isRec(base.VEICULOSBDRP) ? (base.VEICULOSBDRP as Rec) : undefined;
   if (!bdrpBase) throw new Error('Consulta base sem VEICULOSBDRP');
   const bdrp = mergeOwnerPlate(bdrpBase, input.ownerPlate);
-  const pieces: Record<LayerBlock, { code: string; block?: Rec }> = {
-    INDICIOSINISTROVEICULAR: input.sinistro.kind === 'notFound' ? { code: '2' } : slot('INDICIOSINISTROVEICULAR', input.sinistro),
+  const pieces: Record<LayerBlock, { code: string; block?: Rec; state: SourceState }> = {
+    INDICIOSINISTROVEICULAR: input.sinistro.kind === 'notFound' ? { code: '2', state: 'CONFIRMED_NONE' } : slot('INDICIOSINISTROVEICULAR', input.sinistro),
     RECALL: slot('RECALL', input.recall, input.recallFromFlag),
     HISTORICOROUBOFURTO: slot('HISTORICOROUBOFURTO', input.theft, input.theftFromFlag),
-    LEILAOCONJUGADO: input.leilao.kind === 'none' ? { code: input.farol ? '2' : '3' } : slot('LEILAOCONJUGADO', input.leilao),
-    HISTORICOPROPRIETARIO: input.owners && input.owners.kind !== 'none' ? slot('HISTORICOPROPRIETARIO', input.owners) : { code: '3' },
+    LEILAOCONJUGADO: input.leilao.kind === 'none' ? { code: input.farol ? '2' : '3', state: input.farol ? missingPieceState(input.leilao) : missingPieceState(input.leilao) } : slot('LEILAOCONJUGADO', input.leilao),
+    HISTORICOPROPRIETARIO: input.owners && input.owners.kind !== 'none' ? slot('HISTORICOPROPRIETARIO', input.owners) : { code: '3', state: missingPieceState(input.owners ?? { kind: 'none' }) },
     VEICULARBNACIONAL: slot('VEICULARBNACIONAL', input.national),
-    PRECIFICADORFIPE: input.fipe && input.fipe.kind !== 'none' ? slot('PRECIFICADORFIPE', input.fipe) : { code: '3' },
-    VEICULOSBDRP: { code: '1', block: bdrp }
+    PRECIFICADORFIPE: input.fipe && input.fipe.kind !== 'none' ? slot('PRECIFICADORFIPE', input.fipe) : { code: '3', state: missingPieceState(input.fipe ?? { kind: 'none' }) },
+    VEICULOSBDRP: { code: '1', block: bdrp, state: 'OCCURRENCE' }
   };
   const resposta: Rec = { CODIGO: LAYER_ORDER.map((n) => pieces[n].code) };
   for (const n of LAYER_ORDER) if (pieces[n].block) resposta[n] = pieces[n].block;
-  if (input.renainf?.kind === 'data') resposta.RENAINF = renainfBlock(unwrapRenainf(input.renainf.resposta));
+  // Estado de cada consulta (E1..E5): é o que permite a um campo sem dado dizer POR QUE não tem dado, em vez de sumir do relatório.
+  const states: Rec = {};
+  for (const n of LAYER_ORDER) states[n] = pieces[n].state;
+  if (input.renainf?.kind === 'data') {
+    resposta.RENAINF = renainfBlock(unwrapRenainf(input.renainf.resposta));
+    states.RENAINF = pieceIsEmpty('VEICULOSBDRP', input.renainf.resposta) ? 'NO_RETURN' : 'OCCURRENCE';
+  } else states.RENAINF = missingPieceState(input.renainf ?? { kind: 'none' });
+  resposta[LAYER_STATE_KEY] = states;
   if (input.farol) resposta.FAROLLEILAO = { PARECERTECNICO: String(input.farol.parecer), SEMAFORO: input.farol.semaforo };
   const origem: Rec = {};
   if (input.theftFromFlag !== undefined) origem.ROUBOFURTO = 'CADASTRO';

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import { after, before, describe, it } from 'node:test';
 import { integration, loadCore, uid, useTestEnv } from './helpers/db.mjs';
-import { hostRequest, startServer } from './helpers/server.mjs';
+import { adminSession, hostRequest, startServer } from './helpers/server.mjs';
 
 // Relatório antigo gravado com máscara é refeito em claro a partir do bruto cifrado.
 describe('relatórios antigos mascarados são refeitos em claro', integration, () => {
@@ -64,7 +65,7 @@ describe('relatórios antigos mascarados são refeitos em claro', integration, (
     assert.equal(await refreshQueryGravame('00000000-0000-0000-0000-000000000000', failing, null), 'NOT_ELIGIBLE');
   });
 
-  it('ao abrir o relatório, a consulta antiga com alienação sem banco é completada sozinha, uma vez', async () => {
+  it('ao abrir o relatório nada é cobrado; a completude de gravame só acontece pela rota do administrador', async () => {
     const { ensureLienDetail } = await import('../dist/lib/lienRefresh.js');
     const q2 = await hostRequest(server.base, '/api/queries', { method: 'POST', token, body: { plate: 'DEV1B11', productId: 'COMPLETE' } });
     assert.equal(q2.status, 201, q2.text);
@@ -76,12 +77,61 @@ describe('relatórios antigos mascarados são refeitos em claro', integration, (
     assert.equal(completeCalls, 0, 'abrir a Completa não gasta /gravame');
     await pool.query("UPDATE vehicle_queries SET product_id='PREMIUM' WHERE id=$1", [id2]);
     await pool.query(`UPDATE vehicle_query_results SET normalized=jsonb_set(normalized,'{v2,sections}','[{"key":"GRAVAME","label":"G","description":"","status":"ALERT","providedCount":1,"notProvidedCount":0,"items":[{"key":"RESTRICAOFINAN","label":"x","kind":"flag","state":"ALERT","value":"ALIENACAO FIDUCIARIA","sensitivity":"PUBLIC","tier":2}]}]'::jsonb) WHERE query_id=$1`, [id2]);
-    let calls = 0;
-    const source = { fetchSupplement: async () => { calls += 1; return { data: { CONSULTA: {}, RESPOSTA: { CODIGO: '1', GRAVAME: { GRAVAMES: { REGISTRO_1: { NUMERO_RESTRICAO: '5', DATA_RESTRICAO: '2022-02-02', NOME_AGENTE: 'BANCO DO BRASIL S.A.', DOCUMENTO_AGENTE: '00000000000191', NUMERO_CONTRATO: 'X9', STATUS: 'ATIVO' } } } } } }; } };
-    assert.equal(await ensureLienDetail(id2, source), true);
-    assert.equal(await ensureLienDetail(id2, source), false, 'segunda abertura não paga de novo');
-    assert.equal(calls, 1);
-    const n = (await pool.query('SELECT normalized::text AS n FROM vehicle_query_results WHERE query_id=$1', [id2])).rows[0].n;
-    assert.match(n, /BANCO DO BRASIL S\.A\./);
+
+    // Credify de mentira que conta cada chamada paga: com ela, o servidor tem mesmo como cobrar o /gravame.
+    const jwt = () => `h.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 86400 })).toString('base64url')}.s`;
+    const lienBody = { CONSULTA: {}, RESPOSTA: { CODIGO: '1', GRAVAME: { GRAVAMES: { REGISTRO_1: { NUMERO_RESTRICAO: '5', DATA_RESTRICAO: '2022-02-02', NOME_AGENTE: 'BANCO DO BRASIL S.A.', DOCUMENTO_AGENTE: '00000000000191', NUMERO_CONTRATO: 'X9', STATUS: 'ATIVO' } } } } };
+    const hits = [];
+    const paid = () => hits.filter((u) => u !== '/auth'); // login não é consulta paga
+    const credify = http.createServer((req, res) => {
+      req.on('data', () => {});
+      req.on('end', () => {
+        hits.push(String(req.url).split('?')[0]);
+        const send = (obj) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
+        if (req.url === '/auth') return send({ Success: true, Dados: jwt() });
+        if (req.url === '/gravame') return send(lienBody);
+        return send({ CONSULTA: {}, RESPOSTA: { CODIGO: '2', DESCRICAORETORNO: 'NAO USADO NESTE TESTE' } });
+      });
+    });
+    await new Promise((r) => credify.listen(0, '127.0.0.1', r));
+    const cobravel = await startServer({
+      DATA_PROVIDER: 'real', VEHICLE_API_PROVIDER: 'credify', CREDIFY_BASE_URL: `http://127.0.0.1:${credify.address().port}`,
+      CREDIFY_CLIENT_ID: 'cid', CREDIFY_CLIENT_SECRET: 'sec', CREDIFY_GRAVAME_BACKFILL: 'true', PLATE_CACHE_HOURS: '0',
+      FIPE_PRIMARY_BASE_URL: 'http://127.0.0.1:9', FIPE_SECONDARY_BASE_URL: 'http://127.0.0.1:9'
+    });
+    try {
+      // Reabrir o relatório, o PDF e a impressão não dispara mais nenhuma consulta cobrada.
+      hits.length = 0;
+      const opened = await hostRequest(cobravel.base, `/api/queries/${id2}/report`, { token });
+      assert.equal(opened.status, 200, opened.text);
+      const printed = await hostRequest(cobravel.base, `/api/queries/${id2}/report/print`, { token });
+      assert.equal(printed.status, 200, printed.text);
+      const pdf = await cobravel.request(`/api/queries/${id2}/report/pdf`, { token });
+      const pdfBytes = Buffer.from(await pdf.arrayBuffer());
+      assert.equal(pdf.status, 200, `pdf ${pdf.status}`);
+      assert.equal(pdfBytes.subarray(0, 5).toString('latin1'), '%PDF-', 'a entrega de PDF continua a mesma');
+      assert.deepEqual(paid(), [], 'abrir o relatório deixou de completar gravame: regra de custo');
+      const guardado = (await pool.query('SELECT normalized::text AS n FROM vehicle_query_results WHERE query_id=$1', [id2])).rows[0].n;
+      assert.ok(!guardado.includes('BANCO DO BRASIL'), 'o relatório segue como estava guardado');
+
+      // A completude continua existindo, mas só por ação explícita e auditada da equipe.
+      const sa = await adminSession({ server: cobravel, pool, role: 'SUPER_ADMIN' });
+      const done = await sa.call(`/api/admin/queries/${id2}/refresh-gravame`, { method: 'POST' });
+      assert.equal(done.status, 200, done.text);
+      assert.equal(done.json.result, 'UPDATED');
+      assert.deepEqual(paid(), ['/gravame'], 'uma única chamada paga, e só quando o administrador aciona');
+      const completo = (await pool.query('SELECT normalized::text AS n FROM vehicle_query_results WHERE query_id=$1', [id2])).rows[0].n;
+      assert.match(completo, /BANCO DO BRASIL S\.A\./, 'o banco da alienação entrou pela via administrativa');
+      assert.match(completo, /X9/);
+
+      hits.length = 0;
+      const reaberto = await hostRequest(cobravel.base, `/api/queries/${id2}/report`, { token });
+      assert.equal(reaberto.status, 200);
+      assert.deepEqual(paid(), [], 'reabrir de novo não cobra outra vez');
+      assert.equal(await ensureLienDetail(id2, { fetchSupplement: async () => { completeCalls += 1; return { notFound: true }; } }), false, 'completada, não paga duas vezes');
+      assert.equal(completeCalls, 0);
+    } finally {
+      await cobravel.stop(); credify.close();
+    }
   });
 });

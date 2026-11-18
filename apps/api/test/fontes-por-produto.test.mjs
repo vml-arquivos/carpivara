@@ -90,8 +90,11 @@ test('AnyCar: nomes dos campos e leitura de registros de leilão', () => {
   const piece = toAuctionPiece(ANYCAR_COM_LEILAO);
   assert.equal(piece.kind, 'data');
   assert.equal(piece.resposta.REGISTRO_1.LEILOEIRO, 'Leiloeiro Teste');
-  assert.equal(toAuctionPiece({ status: true, dados: [] }).kind, 'notFound');
-  assert.equal(toAuctionPiece({ status: true, dados: { leiloes: [] } }).kind, 'notFound');
+  // Justificativa da mudança de expectativa (auditoria C item 6 + diretiva): `status: true` apenas confirma que o pedido
+  // foi aceito; sem lista de leilões e sem frase da fonte dizendo que não há registro, isso é "sem retorno" (E3), e a
+  // expectativa antiga ("notFound", que o relatório lia como "não consta em base de leilão") afirmava ausência sem a fonte tê-la afirmado.
+  assert.throws(() => toAuctionPiece({ status: true, dados: [] }), (e) => e.code === 'DATA_PROVIDER_INVALID_RESPONSE');
+  assert.throws(() => toAuctionPiece({ status: true, dados: { leiloes: [] } }), (e) => e.code === 'DATA_PROVIDER_INVALID_RESPONSE');
   assert.equal(toAuctionPiece({ status: false, mensagem: 'Nenhum registro de leilão encontrado' }).kind, 'notFound');
   assert.throws(() => toAuctionPiece({ status: false, mensagem: 'erro interno' }), (e) => e.code === 'DATA_PROVIDER_INVALID_RESPONSE');
   assert.throws(() => toAuctionPiece('texto'), (e) => e.code === 'DATA_PROVIDER_INVALID_RESPONSE');
@@ -109,7 +112,9 @@ test('AnyCar: chamada usa POST /api/consultar com x-api-key e trata recusas', as
   for (const [status, code] of [[401, 'DATA_PROVIDER_AUTH_FAILED'], [402, 'DATA_PROVIDER_QUOTA_EXHAUSTED'], [429, 'DATA_PROVIDER_RATE_LIMITED'], [503, 'DATA_PROVIDER_UNAVAILABLE']]) {
     await assert.rejects(queryAnycarAuction('ABC1D23', { fetchImpl: anycarFetch({}, status), apiKey: 'k1' }), (e) => e.code === code, String(status));
   }
-  assert.equal((await queryAnycarAuction('ABC1D23', { fetchImpl: anycarFetch({}, 404), apiKey: 'k1' })).kind, 'notFound');
+  // Justificativa (item 6): HTTP 404 é endpoint fora do contrato/não provisionado, não "placa sem leilão". Antes virava
+  // notFound e o relatório escrevia "Não consta em base de leilão" — uma afirmação de ausência que a fonte nunca fez.
+  await assert.rejects(queryAnycarAuction('ABC1D23', { fetchImpl: anycarFetch({}, 404), apiKey: 'k1' }), (e) => e.code === 'DATA_PROVIDER_UNAVAILABLE');
   await assert.rejects(queryAnycarAuction('ABC1D23', { apiKey: '   ' }), (e) => e.code === 'DATA_PROVIDER_NOT_CONFIGURED');
 });
 
@@ -128,7 +133,7 @@ test('leilão simples (AnyCar) entra no relatório no lugar do leilão da Credif
   } finally { globalThis.fetch = realFetch; }
 });
 
-test('leilão simples sem registro vira "nada consta"; falha da AnyCar em produto com outras fontes deixa o resultado parcial', async () => {
+test('leilão simples: resposta sem confirmação é sem retorno (não "nada consta"); em produto com outras fontes, deixa o resultado parcial', async () => {
   resetCredifyTokenCache();
   const realFetch = globalThis.fetch;
   try {
@@ -136,7 +141,8 @@ test('leilão simples sem registro vira "nada consta"; falha da AnyCar em produt
     const f1 = fakeFetch({ '/debitosrestricoesproprietarios': sample });
     const limpo = await new CredifyVehicleProvider(opts(f1)).queryByPlate('AAA0000', { productId: 'LEILAO_SIMPLES', sources: ['AUCTION_SIMPLE'] });
     const items = new Map(buildReportV2(limpo.raw).sections.flatMap((s) => s.items).map((i) => [i.key, i]));
-    assert.equal(items.get('VT_LEILAO').state, 'CLEAR');
+    // Justificativa (item 6): `{ status: true, dados: [] }` não é a fonte afirmando ausência; o estado correto é sem retorno.
+    assert.equal(items.get('VT_LEILAO').state, 'NOT_PROVIDED');
 
     globalThis.fetch = anycarFetch({}, 503);
     const f2 = fakeFetch({ '/debitosrestricoesproprietarios': sample, '/indiciosinistro': ok('450', { DESCRICAORETORNO: 'Sucesso', INDICIODESINISTRO: '0' }) });
