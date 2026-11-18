@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gera scripts/brand/wordmark.json: contornos de "BL" e "BUSCAR" (Montserrat 800, levemente inclinado, no estilo da Sorte Tech).
+"""Gera scripts/brand/wordmark.json: contornos de "BL" e "BUSCARR" (Montserrat 700, levemente inclinado, no estilo da Sorte Tech).
 Os contornos ficam guardados para o logo não depender de fonte instalada.
 Uso: python3 scripts/brand/build-wordmark.py  (depois: python3 scripts/brand/build-logos.py)"""
 import json, os
@@ -10,8 +10,8 @@ from fontTools.pens.transformPen import TransformPen
 HERE = os.path.dirname(os.path.abspath(__file__))
 from fontTools.varLib import instancer
 FONT = os.path.join(HERE, 'fonts/Montserrat-Variable.ttf')
-f = instancer.instantiateVariableFont(TTFont(FONT), {'wght': 800})
-SKEW = 0.17  # inclinação (itálico simulado)
+f = instancer.instantiateVariableFont(TTFont(FONT), {'wght': 700})
+SKEW = 0.12  # inclinação (itálico simulado)
 gs, cmap, hmtx = f.getGlyphSet(), f.getBestCmap(), f['hmtx']
 
 
@@ -26,6 +26,6 @@ def outline(text, tracking=0):
 
 
 bl, bl_w = outline('BL', 10)
-busc, busc_w = outline('BUSCAR', 8)
+busc, busc_w = outline('BUSCARR', 8)
 json.dump({'BL': bl, 'BL_w': bl_w, 'Buscar': busc, 'Buscar_w': busc_w, 'cap': f['OS/2'].sCapHeight}, open(os.path.join(HERE, 'wordmark.json'), 'w'))
 print('ok', bl_w, busc_w)

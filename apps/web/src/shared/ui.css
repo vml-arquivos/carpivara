@@ -5,7 +5,7 @@
 .btn:hover { text-decoration: none; border-color: var(--violet); }
 .btn:active { transform: translateY(1px); }
 .btn[disabled], .btn[aria-disabled='true'] { opacity: .55; cursor: not-allowed; pointer-events: none; }
-.btn-primary { --b-bg: linear-gradient(135deg, #138F52, #086236); --b-fg: #fff; --b-bd: transparent; background: var(--b-bg); box-shadow: 0 10px 22px -10px rgba(55, 200, 123, .8); }
+.btn-primary { --b-bg: linear-gradient(135deg, #326C58, #153E34); --b-fg: #fff; --b-bd: transparent; background: var(--b-bg); box-shadow: 0 10px 22px -10px rgba(55, 200, 123, .8); }
 .btn-primary:hover { box-shadow: 0 14px 28px -10px rgba(55, 200, 123, .95); border-color: transparent; filter: brightness(1.06); }
 .btn-ghost { --b-bg: transparent; --b-bd: transparent; --b-fg: var(--text-2); }
 .btn-ghost:hover { background: var(--primary-soft); color: var(--primary-ink); border-color: transparent; }
@@ -141,7 +141,7 @@ table.table { width: 100%; border-collapse: collapse; font-size: 14px; min-width
 .stat .k { font-size: 13px; color: var(--muted); font-weight: 400; }
 .stat .v { font-family: var(--font-display); font-weight: 400; font-size: 23px; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .stat .s { font-size: 13px; color: var(--muted); }
-.stat.hl { background: linear-gradient(135deg, #138F52, #065A33); color: #fff; border-color: transparent; }
+.stat.hl { background: linear-gradient(135deg, #326C58, #1C493D); color: #fff; border-color: transparent; }
 .stat.hl .k, .stat.hl .s { color: rgba(255, 255, 255, .78); }
 .stat-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
 
@@ -174,9 +174,9 @@ table.table { width: 100%; border-collapse: collapse; font-size: 14px; min-width
 
 /* Dica com ícone "i" */
 .infotip { display: inline-flex; vertical-align: middle; margin-left: 6px; }
-.infotip-btn { width: 20px; height: 20px; min-width: 20px; padding: 0; border-radius: 50%; border: 1.5px solid var(--primary, #0B7A43); background: transparent; color: var(--primary, #0B7A43); font: 500 12px/1 var(--font-display, inherit); font-style: italic; cursor: pointer; display: inline-grid; place-items: center; text-transform: none; letter-spacing: 0; }
-.infotip-btn:hover, .infotip-btn[aria-expanded="true"] { background: var(--primary, #0B7A43); color: #fff; }
-.infotip-btn:focus-visible { outline: 2px solid var(--primary, #0B7A43); outline-offset: 2px; }
+.infotip-btn { width: 20px; height: 20px; min-width: 20px; padding: 0; border-radius: 50%; border: 1.5px solid var(--primary, #245A4B); background: transparent; color: var(--primary, #245A4B); font: 500 12px/1 var(--font-display, inherit); font-style: italic; cursor: pointer; display: inline-grid; place-items: center; text-transform: none; letter-spacing: 0; }
+.infotip-btn:hover, .infotip-btn[aria-expanded="true"] { background: var(--primary, #245A4B); color: #fff; }
+.infotip-btn:focus-visible { outline: 2px solid var(--primary, #245A4B); outline-offset: 2px; }
 .infotip-pop { position: fixed; z-index: 1000; width: min(300px, calc(100vw - 24px)); padding: 12px 14px; border-radius: 12px; background: var(--surface, #fff); color: var(--text, #111); border: 1px solid var(--border, #D2DCD7); box-shadow: 0 10px 30px rgba(0,0,0,.18); font: 400 13.5px/1.45 var(--font-body, inherit); font-style: normal; text-transform: none; letter-spacing: 0; text-align: left; }
 .infotip-pop b { display: block; margin-bottom: 4px; font-family: var(--font-display, inherit); }
 

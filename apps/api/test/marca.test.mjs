@@ -2,7 +2,7 @@
 // e nenhum texto da marca anterior sobrou fora das migrações antigas.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BRAND, hexToUnit } from '../dist/lib/brand.js';
@@ -20,10 +20,10 @@ describe('marca única', () => {
     assert.deepEqual(WEB, BRAND);
   });
   it('artigos em português seguem o nome', () => {
-    assert.equal(BRAND.name, 'BL Buscar');
-    assert.deepEqual([BRAND.the, BRAND.of, BRAND.in, BRAND.to, BRAND.by], ['o BL Buscar', 'do BL Buscar', 'no BL Buscar', 'ao BL Buscar', 'pelo BL Buscar']);
-    assert.deepEqual([BRAND.The, BRAND.Of], ['O BL Buscar', 'Do BL Buscar']);
-    assert.equal(BRAND.upper, 'BL BUSCAR');
+    assert.equal(BRAND.name, 'BL Buscarr');
+    assert.deepEqual([BRAND.the, BRAND.of, BRAND.in, BRAND.to, BRAND.by], ['o BL Buscarr', 'do BL Buscarr', 'no BL Buscarr', 'ao BL Buscarr', 'pelo BL Buscarr']);
+    assert.deepEqual([BRAND.The, BRAND.Of], ['O BL Buscarr', 'Do BL Buscarr']);
+    assert.equal(BRAND.upper, 'BL BUSCARR');
   });
   it('endereços derivam do domínio e nomes técnicos não usam espaço nem acento', () => {
     assert.equal(BRAND.url, `https://${BRAND.domain}`);
@@ -63,7 +63,12 @@ describe('marca única', () => {
   it('logos e ícones existem e trazem o nome da marca', () => {
     for (const f of ['logo-horizontal.svg', 'logo-horizontal-dark.svg', 'logo-vertical.svg', 'logo-mark.svg', 'logo-app-icon.svg']) assert.ok(read(`apps/web/public/brand/${f}`).includes(`aria-label="${BRAND.name}"`), f);
     assert.ok(read('apps/web/public/favicon.svg').includes(`aria-label="${BRAND.name}"`));
-    for (const f of ['icon-192.png', 'icon-512.png', 'icon-maskable-192.png', 'icon-maskable-512.png', 'apple-touch-icon.png', 'og-image.png']) assert.ok(statSync(path.join(root, 'apps/web/public/brand', f)).size > 5000, f);
+    const pngs = { 'icon-192.png': [192, 192], 'icon-512.png': [512, 512], 'icon-maskable-192.png': [192, 192], 'icon-maskable-512.png': [512, 512], 'apple-touch-icon.png': [180, 180], 'og-image.png': [1200, 630] };
+    for (const [file, dimensions] of Object.entries(pngs)) {
+      const png = readFileSync(path.join(root, 'apps/web/public/brand', file));
+      assert.equal(png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', file);
+      assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], dimensions, file);
+    }
   });
   it('nenhum texto da marca anterior fora das migrações antigas e do histórico', () => {
     // padrões montados em pedaços para este arquivo não se achar sozinho

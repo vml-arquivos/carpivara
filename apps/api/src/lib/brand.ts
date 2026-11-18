@@ -9,9 +9,9 @@
  * Marcadores [PREENCHER: ...] = dado que o dono ainda vai informar. Nada aqui é inventado.
  */
 
-/** Gênero do nome em português ('m' = masculino, como em "o BL Buscar"; 'f' = feminino). Os artigos abaixo seguem esse valor. */
+/** Gênero do nome em português ('m' = masculino, como em "o BL Buscarr"; 'f' = feminino). Os artigos abaixo seguem esse valor. */
 const GENDER: 'm' | 'f' = 'm';
-const NAME = 'BL Buscar';
+const NAME = 'BL Buscarr';
 
 const art = GENDER === 'm'
   ? { the: 'o', of: 'do', in: 'no', to: 'ao', by: 'pelo' }
@@ -70,22 +70,22 @@ export const BRAND = {
 
   // ── Cores (o tokens.css do front segue estes valores; o teste `marca` confere) ──
   colors: {
-    primary: '#0B7A43',
-    primaryHover: '#086236',
-    primarySoft: '#E3F5EA',
-    primaryInk: '#065A33',
-    accent: '#22A862',
-    gold: '#F2B705',
-    night: '#04140D',
-    ink: '#0A2418',
-    text: '#0F2A1D',
-    muted: '#566B5F',
-    line: '#DCE9E1',
-    soft: '#F3F8F5',
-    onDark: '#BFE3CE'
+    primary: '#245A4B',
+    primaryHover: '#153E34',
+    primarySoft: '#E6EFEA',
+    primaryInk: '#1C493D',
+    accent: '#548674',
+    gold: '#A9C4B6',
+    night: '#101F1B',
+    ink: '#152D26',
+    text: '#152D26',
+    muted: '#53675F',
+    line: '#DBE5DE',
+    soft: '#F6F7F4',
+    onDark: '#CBDDD4'
   },
 
-  // ── Artigos em português (ex.: "a equipe {of}" → "a equipe do BL Buscar") ──
+  // ── Artigos em português (ex.: "a equipe {of}" → "a equipe do BL Buscarr") ──
   the: `${art.the} ${NAME}`, The: `${cap(art.the)} ${NAME}`,
   of: `${art.of} ${NAME}`, Of: `${cap(art.of)} ${NAME}`,
   in: `${art.in} ${NAME}`, In: `${cap(art.in)} ${NAME}`,
@@ -93,7 +93,7 @@ export const BRAND = {
   by: `${art.by} ${NAME}`, By: `${cap(art.by)} ${NAME}`
 } as const;
 
-/** "#0B7A43" → [r,g,b] de 0 a 1 (para o pdf-lib: rgb(...hexToUnit(BRAND.colors.primary))). */
+/** "#245A4B" → [r,g,b] de 0 a 1 (para o pdf-lib: rgb(...hexToUnit(BRAND.colors.primary))). */
 export function hexToUnit(hex: string): [number, number, number] {
   const h = hex.replace('#', '');
   const n = parseInt(h.length === 3 ? h.split('').map((c) => c + c).join('') : h, 16);

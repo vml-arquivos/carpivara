@@ -64,6 +64,7 @@ const Account = lazy(() => import('./pages/Account'));
 const ContractSign = lazy(() => import('./pages/ContractSign').then((m) => ({ default: m.ContractSign })));
 const FiscalDocumentPage = lazy(() => import('./pages/ContractSign').then((m) => ({ default: m.FiscalDocumentPage })));
 const ContractCopy = lazy(() => import('./pages/ContractSign').then((m) => ({ default: m.ContractCopy })));
+const DemoConsultas = lazy(() => import('./pages/DemoConsultas'));
 const SharedReport = lazy(() => import('./pages/SharedReport'));
 const named = (key: string) => lazy(() => import('./pages/Public').then((m) => ({ default: (m as unknown as Record<string, React.ComponentType>)[key] })));
 const GuestQuery = named('GuestQuery'); const PlansPage = named('PlansPage'); const ValidatePage = named('ValidatePage'); const About = named('About'); const InstallApp = named('InstallApp'); const Contact = named('Contact'); const NotFound = named('NotFound');
@@ -118,6 +119,7 @@ export default function App() {
           <Route path="/recuperar-senha" element={<Auth initial="forgot" />} />
           <Route element={<PublicLayout />}>
             <Route path="/consultar" element={<GuestQuery />} />
+            <Route path="/demonstracao" element={<DemoConsultas />} />
             <Route path="/fipe" element={<><Fipe /><SeoContent path="/fipe" faqTitle="Perguntas sobre a Tabela FIPE" /></>} />
             <Route path="/veiculos" element={<GuideHome />} />
             <Route path="/veiculos/mais-economicos" element={<EconomyPage />} />

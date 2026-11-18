@@ -9,9 +9,9 @@
 .buscar-home .section { padding-block: clamp(48px, 7vw, 96px); }
 
 .buscar-entry {
-  background: #efece2;
+  background: #EDF2EE;
   color: #102e25;
-  border-bottom: 1px solid #d9d5c8;
+  border-bottom: 1px solid #D5E1D9;
   padding-block: clamp(46px, 8vw, 106px);
 }
 
@@ -34,8 +34,8 @@
 .buscar-search-panel {
   margin-top: 30px;
   padding: clamp(16px, 3vw, 26px);
-  background: #fffdf8;
-  border: 1px solid #d8d3c6;
+  background: #FAFCFA;
+  border: 1px solid #CFDCD3;
   border-radius: 12px;
 }
 
@@ -57,10 +57,10 @@
 
 .buscar-tools {
   background: #12352b;
-  color: #fff9e9;
+  color: #F6F7F4;
   border-radius: 14px;
   padding: clamp(20px, 4vw, 34px);
-  border-top: 5px solid #d3aa61;
+  border-top: 5px solid #A9C4B6;
   scroll-margin-top: calc(var(--nav-h) + 18px);
 }
 
@@ -77,9 +77,9 @@
 
 .buscar-tool strong, .buscar-tool small { display: block; }
 .buscar-tool small { color: #d0e0d5; margin-top: 5px; line-height: 1.45; font-size: .9rem; }
-.buscar-tool > svg, .buscar-validate > svg { color: #efd096; flex: none; }
+.buscar-tool > svg, .buscar-validate > svg { color: #BBD2C7; flex: none; }
 .buscar-tool:hover strong, .buscar-validate:hover { text-decoration: underline; }
-.buscar-validate { display: flex; gap: 9px; align-items: center; padding-top: 16px; border-top: 1px solid #537162; color: #fff9e9; }
+.buscar-validate { display: flex; gap: 9px; align-items: center; padding-top: 16px; border-top: 1px solid #537162; color: #F6F7F4; }
 
 .buscar-home #consultas { background: var(--bg); }
 .buscar-home #consultas .prod-grid { grid-template-columns: minmax(0, 1fr); gap: 14px; }
@@ -90,15 +90,15 @@
 .buscar-home #consultas .pcard .tag { min-height: 0; }
 .buscar-home #consultas .pcard .pactions { margin: 0; }
 
-.buscar-reading { background: #15372d; color: #fff9e9; }
+.buscar-reading { background: #15372d; color: #F6F7F4; }
 .buscar-reading-grid { display: grid; gap: clamp(24px, 6vw, 84px); grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); }
-.buscar-reading-intro > svg { color: #efd096; }
+.buscar-reading-intro > svg { color: #BBD2C7; }
 .buscar-reading h2 { color: inherit; margin-top: 14px; font-size: clamp(2rem, 4vw, 3.5rem); }
 .buscar-reading p { margin-block: 8px 14px; color: #d4e3d9; }
-.buscar-reading [class*='btn'] { color: #fff9e9; }
+.buscar-reading [class*='btn'] { color: #F6F7F4; }
 .buscar-timeline { margin: 0; padding: 0; list-style: none; counter-reset: consultation-step; }
 .buscar-timeline li { counter-increment: consultation-step; position: relative; padding: 12px 0 12px 48px; border-top: 1px solid #6a8679; }
-.buscar-timeline li::before { content: counter(consultation-step); position: absolute; inset: 12px auto auto 0; color: #efd096; font-size: 1.1rem; font-weight: 700; }
+.buscar-timeline li::before { content: counter(consultation-step); position: absolute; inset: 12px auto auto 0; color: #BBD2C7; font-size: 1.1rem; font-weight: 700; }
 .buscar-timeline h3 { color: inherit; }
 
 .buscar-home .home-sim .home-split { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }

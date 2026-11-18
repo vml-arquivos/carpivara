@@ -1,14 +1,14 @@
 {
-  "name": "BL Buscar | Consulta veicular por placa",
-  "short_name": "BL Buscar",
+  "name": "BL Buscarr | Consulta veicular por placa",
+  "short_name": "BL Buscarr",
   "description": "Consulte a placa e receba o relatório veicular completo em segundos.",
   "lang": "pt-BR",
   "id": "/",
   "start_url": "/?origem=app",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#04140D",
-  "theme_color": "#04140D",
+  "background_color": "#101F1B",
+  "theme_color": "#101F1B",
   "icons": [
     {
       "src": "/brand/icon-192.png",

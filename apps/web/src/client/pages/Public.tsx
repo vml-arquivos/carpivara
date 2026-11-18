@@ -41,7 +41,7 @@ export function GuestQuery() {
               </button>); })}
           </div>
           <div className="row"><Button variant="primary" size="lg" disabled={!ok} onClick={() => go()}>Criar conta e continuar <Icon name="arrow-right" size={18} /></Button><Link className="btn btn-lg" to={`/fipe${ok ? `?placa=${plate}` : ''}`}>Ver valor FIPE grátis</Link></div>
-          <p className="muted" style={{ fontSize: 13.5 }}>Já tem conta? <Link to={`/entrar?next=${encodeURIComponent(`/app/consultar?placa=${plate}`)}`}>Entrar</Link></p>
+          <p className="muted" style={{ fontSize: 13.5 }}>Já tem conta? <Link to={`/entrar?next=${encodeURIComponent(`/app/consultar?placa=${plate}`)}`}>Entrar</Link> · <Link to="/demonstracao">Ver consulta de exemplo</Link></p>
         </div>
       </div>
     </section>

@@ -149,7 +149,7 @@
 .adm-mod { display: grid; margin-top: 2px; }
 .adm-mod-h { display: flex; align-items: center; gap: 11px; width: 100%; padding: 9px 12px; border: 0; border-radius: 10px; background: transparent; color: #E7F1EC; font: 500 14px var(--font-display); text-align: left; cursor: pointer; }
 .adm-mod-h:hover { background: rgba(255, 255, 255, .06); color: #fff; }
-.adm-mod-h:focus-visible { outline: 2px solid #22A862; outline-offset: 1px; }
+.adm-mod-h:focus-visible { outline: 2px solid #548674; outline-offset: 1px; }
 .adm-mod-h > span { flex: 1; }
 .adm-mod-h .chev { transition: transform .18s ease; color: #91AC9E; }
 .adm-mod.open > .adm-mod-h .chev { transform: rotate(180deg); }
@@ -159,12 +159,12 @@
 
 /* Navegação administrativa e superfícies de trabalho. */
 .adm-side { background: #162d25; border-right: 0; box-shadow: inset -1px 0 #304d40; }
-.adm-side .adm-badge { color: #efd096; padding-bottom: 14px; border-bottom: 1px solid #4c695b; }
-.adm-nav a.active { background: #2d5040; box-shadow: inset 3px 0 #dfb779; }
-.adm-mod.has-active > .adm-mod-h { color: #ffe4b7; }
+.adm-side .adm-badge { color: #BBD2C7; padding-bottom: 14px; border-bottom: 1px solid #4c695b; }
+.adm-nav a.active { background: #2d5040; box-shadow: inset 3px 0 #A9C4B6; }
+.adm-mod.has-active > .adm-mod-h { color: #C8DED3; }
 .adm-main { padding-block-start: clamp(22px, 4vw, 46px); }
 .adm-card > header { background: var(--bg-soft); border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
-.kpi { border-inline-start: 3px solid #ac874e; box-shadow: none; }
+.kpi { border-inline-start: 3px solid #779F8F; box-shadow: none; }
 .kpi .v { font-weight: 700; }
 .login-wrap { background: var(--bg-soft); }
-.login-card { border-top: 4px solid #bd8d47; box-shadow: none; width: min(490px, 100%); }
+.login-card { border-top: 4px solid #779F8F; box-shadow: none; width: min(490px, 100%); }

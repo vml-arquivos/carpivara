@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.4 — Identidade BL Buscarr
+
+- Monograma BL inclinado, assinatura BUSCARR, ícones e favicon.
+- Inter e paleta verde-pinho com sálvia no site, aplicativo do cliente e painel. Identidade aplicada aos PDFs gerados e à imagem de compartilhamento.
+
+## 1.0.3 — Demonstração de consultas
+
+- Página pública com sete relatórios de exemplo para três placas fictícias, com visualização em tela e download de PDF.
+- Os exemplos funcionam com o provedor de dados desligado e ficam separados da compra e do histórico de consultas reais.
+
 ## 1.0.2 — Nova interface do BL Buscar
 
 - A página inicial reúne o formulário de placa, a FIPE, o simulador e a validação de relatórios em uma nova composição. O catálogo de consultas usa fichas horizontais no desktop.

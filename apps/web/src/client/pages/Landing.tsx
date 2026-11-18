@@ -11,7 +11,7 @@ import Faq from '../components/Faq';
 import Testimonials from '../components/Testimonials';
 import { LatestPosts } from './Content';
 import { HomeGuide, HomeSimulator } from '../components/HomeTools';
-import { DetailsButton, PdfModelLink } from '../components/ConsultaDetails';
+import { DetailsButton } from '../components/ConsultaDetails';
 import { SeoContentAfterFaqs, useSeoH1 } from '../components/SeoContent';
 
 import './landing.css';
@@ -45,7 +45,7 @@ export default function Landing() {
             <div className="buscar-search-panel">
               <strong>Qual é a placa do veículo?</strong>
               <PlateSearch authed={status === 'authed'} placement="hero" />
-              <a className="linkbtn" href="#consultas">Comparar opções de consulta <Icon name="arrow-right" size={16} /></a>
+              <div className="row"><Link className="linkbtn" to="/demonstracao">Ver consulta de exemplo <Icon name="arrow-right" size={16} /></Link><a className="linkbtn" href="#consultas">Comparar consultas</a></div>
             </div>
           </div>
           <aside className="buscar-tools" id="ferramentas-gratis" aria-labelledby="tools-title">
@@ -77,7 +77,7 @@ export default function Landing() {
             <Icon name="file-text" size={34} />
             <h2>Da placa ao relatório</h2>
             <p>Veja como escolher uma consulta e guardar o resultado para conferir depois.</p>
-            <PdfModelLink id="COMPLETE" className="btn btn-outline-light">Abrir exemplo de relatório</PdfModelLink>
+            <LinkButton to="/demonstracao" variant="outline-light">Abrir demonstração</LinkButton>
           </div>
           <ol className="buscar-timeline">
             {STEPS.map((step) => <li key={step.t}><h3>{step.t}</h3><p>{step.s}</p></li>)}

@@ -8,6 +8,7 @@ import { appError, asyncRoute, audit, requestId } from '../lib/http.js';
 import { requirePermission } from '../permissions.js';
 import { SECTIONS } from '../report/catalog.js';
 import { sampleSections, samplePdf } from '../report/sample.js';
+import { demoExamples, demoPdf, demoReport } from '../report/demo.js';
 import { SITEMAP_PATHS, pageMeta, seoImageUrl } from '../seo.js';
 import { FIN_PREFIX, financingInfo, invalidateFinancingPages, isCustomFinancingPath, slugify, syncFinancingPages } from '../financingPages.js';
 import { readImageInfo } from '../lib/imageInfo.js';
@@ -84,6 +85,27 @@ publicContentRouter.get('/catalog/:id/modelo.pdf', asyncRoute(async (req, res) =
   res.setHeader('Content-Disposition', `inline; filename="modelo-${String(p.rows[0].id).toLowerCase()}.pdf"`);
   res.type('application/pdf').send(buf);
 }));
+
+publicContentRouter.get('/demo-consultas', (_req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=60');
+  res.json({ examples: demoExamples });
+});
+
+publicContentRouter.get('/demo-consultas/:id/relatorio.pdf', asyncRoute(async (req, res) => {
+  const id = String(req.params.id);
+  const pdf = await demoPdf(id);
+  if (!pdf) throw notFound('DEMO_NOT_FOUND');
+  res.setHeader('Cache-Control', 'public, max-age=60');
+  res.setHeader('Content-Disposition', `attachment; filename="bl-buscar-demo-${id}.pdf"`);
+  res.type('application/pdf').send(pdf);
+}));
+
+publicContentRouter.get('/demo-consultas/:id', (req, res) => {
+  const data = demoReport(String(req.params.id));
+  if (!data) throw notFound('DEMO_NOT_FOUND');
+  res.setHeader('Cache-Control', 'public, max-age=60');
+  res.json(data);
+});
 
 publicContentRouter.get('/faqs', asyncRoute(async (_req, res) => {
   const rows = await pool.query('SELECT id,category,question,answer FROM faqs WHERE active=true ORDER BY display_order,created_at');

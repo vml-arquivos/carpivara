@@ -1,7 +1,7 @@
 import { forClientDocument } from './clientDoc.js';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { PDFDocument, LineCapStyle, degrees, rgb, type PDFFont, type PDFPage, type RGB } from 'pdf-lib';
+import { PDFDocument, degrees, rgb, type PDFFont, type PDFPage, type RGB } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import QRCode from 'qrcode';
 import type { ReportItem, ReportV2 } from './normalizeV2.js';
@@ -25,6 +25,7 @@ export interface ReportMeta {
   audience?: 'client' | 'team';
   /** modelo de exemplo com dados fictícios: marca d'água e aviso, sem validade */
   sample?: boolean;
+  demonstration?: boolean;
 }
 
 const FONT_DIR = new URL('../../assets/fonts/', import.meta.url);
@@ -89,14 +90,11 @@ export function fit(f: PDFFont, t: string, size: number, maxWidth: number): stri
 }
 
 export function drawLogo(d: Doc, x: number, y: number, size: number, dark: boolean) {
-  // marca: quadrado verde com lupa (aro branco, cabo dourado) e as letras "BL" dentro
   const p = d.page;
-  rect(p, { x, y, width: size, height: size, color: C.violet, borderRadius: size * 0.26 });
-  const cx = x + size * 0.44; const cy = y + size * 0.57; const r = size * 0.27;
-  p.drawLine({ start: { x: cx + r * 0.72, y: cy - r * 0.72 }, end: { x: x + size * 0.84, y: y + size * 0.2 }, thickness: size * 0.12, color: N.accent, lineCap: LineCapStyle.Round });
-  p.drawCircle({ x: cx, y: cy, size: r, color: C.violet, borderColor: C.white, borderWidth: size * 0.07 });
-  const fs = size * 0.25; const label = 'BL';
-  p.drawText(label, { x: cx - d.jx800.widthOfTextAtSize(label, fs) / 2, y: cy - fs * 0.36, size: fs, font: d.jx800, color: C.white });
+  rect(p, { x, y, width: size, height: size, color: brandRgb('#123A32'), borderRadius: size * 0.215 });
+  p.drawSvgPath('M17 4H49C61 4 67 10 64 20C62 27 58 30 53 32C59 35 60 40 58 46C55 56 46 60 34 60H4ZM26 15L23 26H42C47 26 50 24 51 20C52 17 50 15 46 15ZM20 37L17 49H35C41 49 45 47 46 43C47 39 45 37 40 37ZM70 4H84L73 48H101L98 60H52C59 56 63 51 65 45C67 39 67 35 64 31Z', {
+    x: x + size * 0.14, y: y + size * 0.72, scale: size * 0.0069, color: C.white
+  });
   void dark;
 }
 
@@ -204,7 +202,7 @@ function pageHeader(d: Doc, page: PDFPage, idx: number, total: number, meta: Rep
   const hl = report.headline;
   const name = [hl.brand, hl.model].filter(Boolean).join(' ') || hl.fullModel || 'Veículo';
   const sub = [hl.manufactureYear && hl.modelYear ? `${hl.manufactureYear}/${hl.modelYear}` : hl.modelYear ?? hl.manufactureYear, hl.color, hl.fuel, [hl.city, hl.state].filter(Boolean).join(' - ')].filter(Boolean).join(' · ');
-  docHeader(d, page, idx, total, { brand: meta.brandName ?? `${BRAND.name}`, title: 'Consulta Veicular', tag: 'Informações Exclusivas', when: meta.consultedAt, code: meta.verificationCode, url: meta.verificationUrl, vehicle: { name, plate: report.plate, ...(sub ? { sub } : {}) } });
+  docHeader(d, page, idx, total, { brand: meta.brandName ?? `${BRAND.name}`, title: 'Consulta Veicular', tag: meta.demonstration ? 'Demonstração · dados fictícios' : 'Informações Exclusivas', when: meta.consultedAt, code: meta.verificationCode, url: meta.verificationUrl, vehicle: { name, plate: report.plate, ...(sub ? { sub } : {}) } });
 }
 
 type BadgeState = 'ok' | 'alert' | 'na';
@@ -576,12 +574,12 @@ export async function renderVehiclePdf(fullReport: ReportV2, meta: ReportMeta): 
   d.page.drawRectangle({ x: M, y: by, width: 4, height: boxH, color: N.blue });
   await qr(d, meta.verificationUrl, M + 14, by + 14, 64);
   const tx = M + 104;
-  d.text('Validação do relatório', tx, by + boxH - 18, 10.5, d.jx800, N.ink);
-  d.text(`Código de verificação: ${meta.verificationCode}`, tx, by + boxH - 32, 8.5, d.dm500, N.text);
+  d.text(meta.demonstration ? 'Relatório de demonstração' : 'Validação do relatório', tx, by + boxH - 18, 10.5, d.jx800, N.ink);
+  d.text(meta.demonstration ? 'Dados fictícios · sem validade' : `Código de verificação: ${meta.verificationCode}`, tx, by + boxH - 32, 8.5, d.dm500, N.text);
   const hash = (meta.resultHash ?? createHash('sha256').update(JSON.stringify(report)).digest('hex')).slice(0, 32);
-  d.text(`Impressão digital: ${hash}`, tx, by + boxH - 43, 7, d.dm400, N.muted);
+  if (!meta.demonstration) d.text(`Impressão digital: ${hash}`, tx, by + boxH - 43, 7, d.dm400, N.muted);
   const vurl = meta.verificationUrl.replace(/^https?:\/\//, '');
-  d.text(`Confira a autenticidade em ${vurl}`, tx, by + boxH - 54, 7.5, d.dm400, N.muted, { maxWidth: CW - 120 });
+  d.text(meta.demonstration ? `Acesse outros exemplos em ${vurl}` : `Confira a autenticidade em ${vurl}`, tx, by + boxH - 54, 7.5, d.dm400, N.muted, { maxWidth: CW - 120 });
   const notice = meta.sample ? 'Este é um modelo ilustrativo, com dados fictícios, para mostrar quais informações você recebe nesta consulta. Não tem validade e não se refere a nenhum veículo real.' : 'Informações fornecidas por fonte de dados contratada, conforme retornado na data e hora da consulta; não substituem documentos oficiais nem certidões. ' + (ownerIdentityEnabled() ? 'Os dados de proprietários constam como retornados pela fonte e o uso é de responsabilidade de quem consulta (LGPD).' : 'Dados pessoais de proprietários pessoa física (nome e CPF) não são exibidos, em conformidade com a LGPD.');
   d.wrap(notice, d.dm400, 6.8, CW - 120).forEach((l, i) => d.text(l, tx, by + boxH - 66 - i * 8.2, 6.8, d.dm400, N.muted));
   d.y = by - 10;
@@ -591,7 +589,7 @@ export async function renderVehiclePdf(fullReport: ReportV2, meta: ReportMeta): 
   d.pages.forEach((p, i) => {
     pageHeader(d, p, i, total, meta, report);
     if (meta.sample) p.drawText(clean('MODELO · DADOS FICTÍCIOS'), { x: 110, y: 250, size: 44, font: d.jx800, color: rgb(0.86, 0.86, 0.86), rotate: degrees(40), opacity: 0.55 });
-    docFooter(d, p, i, total, `${meta.brandName ?? `${BRAND.name}`}  ·  ${meta.productName}  ·  ${report.plate}`, 'Informações de bases públicas e privadas, conforme retornado na data e hora da consulta; não substituem documentos oficiais. Confirme multas e débitos no órgão de trânsito.');
+    docFooter(d, p, i, total, `${meta.brandName ?? `${BRAND.name}`}  ·  ${meta.productName}  ·  ${report.plate}`, meta.demonstration ? 'Exemplo com dados fictícios. Nenhuma base foi consultada.' : 'Informações de bases públicas e privadas, conforme retornado na data e hora da consulta; não substituem documentos oficiais. Confirme multas e débitos no órgão de trânsito.');
   });
   return Buffer.from(await d.pdf.save());
 }
