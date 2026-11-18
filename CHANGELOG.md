@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.7 — Entenda seu relatório
+
+- Guia sob demanda com orientações de negociação ligadas a alertas do relatório adquirido.
+- Prioridade opcional por IA usando apenas códigos fixos, com ordem por regras como alternativa.
+- Comparador diferencia débitos sem retorno de débitos fora da cobertura.
+
 ## 1.0.6 — Contraste e hierarquia na página inicial
 
 - Abertura em verde profundo com título branco, fotografia e ação de consulta em dourado fosco.

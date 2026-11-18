@@ -348,6 +348,7 @@ const envSchema = z.object({
   SUPPORT_EMAIL: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.string().trim().email().max(254).optional()),
   // Assistente do chat de suporte. Sem SUPPORT_LLM_PROVIDER, responde só com regras, catálogo e perguntas frequentes.
   SUPPORT_ASSISTANT_NAME: z.string().trim().min(2).max(30).default('Renata'),
+  REPORT_LLM_ENABLED: booleanFromEnv.default(false),
   SUPPORT_LLM_PROVIDER: z.preprocess((v) => (typeof v === 'string' ? v.trim().toLowerCase() : v), z.enum(['', 'anthropic', 'openai']).default('')),
   SUPPORT_LLM_API_KEY: optionalString,
   SUPPORT_LLM_MODEL: optionalString,

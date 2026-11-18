@@ -25,7 +25,7 @@ function lines(a: ReportEnvelope, b: ReportEnvelope): Line[] {
   add('verdict', 'Veredito', (r) => VERDICT_BADGE[r.verdict.level]?.label ?? r.verdict.level);
   const fipe = (r: ReportV2) => { const i = r.sections.flatMap((s) => s.items).find((x) => x.key === 'VT_FIPE_PRECO' && x.state !== 'NOT_PROVIDED'); return i ? `R$ ${i.display ?? i.value}` : ''; };
   add('fipe', 'Valor FIPE', fipe);
-  add('debts', 'Débitos', (r) => (r.debtsHidden ? '' : r.debts.hasDebt ? money(r.debts.totalCents) : 'Nada consta'));
+  add('debts', 'Débitos', (r) => (r.debtsHidden ? 'Fora da cobertura' : r.debts.hasDebt ? money(r.debts.totalCents) : r.coverage.debtsProvided ? 'Nada consta' : 'Sem retorno'));
   add('resale', 'Risco na revenda e no seguro', (r) => (r.advice?.resale ? RESALE[r.advice.resale.level] : ''));
   const keys = new Map<string, string>();
   for (const r of [ra, rb]) for (const c of r.advice?.checks ?? []) keys.set(c.key, c.label);

@@ -9,6 +9,7 @@ import ReportView from '../../shared/ReportView';
 import type { ReportEnvelope, VehicleSheet } from '../../shared/reportTypes';
 import SheetView, { FreeIdentity, type FreeDetails } from '../../shared/SheetView';
 import { api } from '../api';
+import DecisionGuide from '../components/DecisionGuide';
 import { AdCheckModal, ShareModal } from '../components/ReportTools';
 import { STATUS, type QuerySummary } from '../components/QueryRow';
 
@@ -108,6 +109,7 @@ export default function QueryDetail() {
     return (
       <div>
         {back}
+        <DecisionGuide key={id} queryId={id} />
         <ReportView
           report={report}
           consultedAt={envelope.consultedAt}

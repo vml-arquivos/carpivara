@@ -1,3 +1,5 @@
+import { buildDecisionGuide, orderGuide } from './report/decisionGuide.js';
+import { askConfiguredLlm } from './lib/supportAssistant.js';
 import crypto from 'node:crypto';
 
 import path from 'node:path';
@@ -1887,16 +1889,16 @@ api.get('/queries/:id/export', auth, requirePermission('VIEW_HISTORY'), asyncRou
   res.type('application/json').send(JSON.stringify(serializeQuery(query.rows[0] as QueryRow & Record<string, unknown>), null, 2));
 }));
 
-async function vehicleReportForQuery(queryId: string, userId: string) {
+async function vehicleReportForQuery(queryId: string, userId: string, enrich = true) {
   const load = () => pool.query(`SELECT q.id,q.plate,q.search_type,q.product_id,q.created_at,q.completed_at,q.result_hash,p.name AS product_name,r.normalized
     FROM vehicle_queries q JOIN query_products p ON p.id=q.product_id JOIN vehicle_query_results r ON r.query_id=q.id
     WHERE q.id=$1 AND q.user_id=$2 AND q.status='SUCCESS'`, [queryId, userId]);
   let query = await load();
   if (!query.rowCount) throw appError('REPORT_NOT_FOUND', { code: 'REPORT_NOT_FOUND', http: 404, expose: true });
   // Consulta antiga com gravame sem banco/contrato/datas: completa com o /gravame uma única vez (só depois de confirmar que a consulta é do usuário).
-  try { if (await ensureLienDetail(queryId, getProvider())) query = await load(); } catch { /* fonte não configurada: segue com o que já está guardado */ }
+  try { if (enrich && await ensureLienDetail(queryId, getProvider())) query = await load(); } catch { /* fonte não configurada: segue com o que já está guardado */ }
   // Consulta Completa antiga sem FIPE: acrescenta valor e projeção (Tabela FIPE pública, sem custo no provedor).
-  try { if (SHEET_PRODUCTS.includes(String((query.rows[0] as Record<string, unknown>).product_id)) && await ensureFipeEnrichment(queryId)) query = await load(); } catch { /* segue com o que já está guardado */ }
+  try { if (enrich && SHEET_PRODUCTS.includes(String((query.rows[0] as Record<string, unknown>).product_id)) && await ensureFipeEnrichment(queryId)) query = await load(); } catch { /* segue com o que já está guardado */ }
   const row = query.rows[0] as Record<string, unknown>;
   const vehicle = row.normalized as NormalizedVehicle | null;
   if (!vehicle?.v2) throw appError('REPORT_UNAVAILABLE', { code: 'REPORT_UNAVAILABLE', http: 409, expose: true });
@@ -1912,6 +1914,28 @@ api.get('/queries/:id/report', auth, requirePermission('VIEW_HISTORY'), asyncRou
   const { report, meta } = await vehicleReportForQuery(String(req.params.id), req.user!.id);
   await recordFunnelEvent(req.user!.id, req, 'REPORT_OPENED', { queryId: String(req.params.id) });
   res.json({ report, verificationCode: meta.verificationCode, verificationUrl: meta.verificationUrl, consultedAt: meta.consultedAt, productName: meta.productName });
+}));
+
+const reportGuideLimit = rateLimit({ windowMs: 60_000, limit: 8, standardHeaders: true, legacyHeaders: false, skip: () => env.NODE_ENV === 'test' });
+api.post('/queries/:id/report/guide', auth, requirePermission('VIEW_HISTORY'), reportGuideLimit, asyncRoute(async (req, res) => {
+  const { report } = await vehicleReportForQuery(String(req.params.id), req.user!.id, false);
+  const guide = buildDecisionGuide(report);
+  let findings = guide.findings;
+  if (env.REPORT_LLM_ENABLED && findings.length > 1) {
+    // Somente códigos fixos de tópicos e prioridade. Sem placa, valores, texto da fonte ou dados do titular.
+    const context = findings.map(({ id, high }) => ({ id, high }));
+    const answer = await askConfiguredLlm(
+      'Ordene todos os códigos por prioridade para verificar antes da compra de um veículo. Priorize alertas com high=true. Responda somente os códigos separados por vírgula.',
+      [{ role: 'user', content: JSON.stringify(context) }]
+    );
+    if (answer) {
+      const ranked = orderGuide(findings, answer);
+      // A IA nunca coloca um alerta de prioridade normal antes de um alerta crítico.
+      findings = ranked.sort((a, b) => Number(b.high) - Number(a.high));
+    }
+  }
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.json({ ...guide, findings });
 }));
 
 const disputeBody = z.object({ field: z.string().trim().max(80).default(''), message: z.string().trim().min(10).max(800) }).strict();
