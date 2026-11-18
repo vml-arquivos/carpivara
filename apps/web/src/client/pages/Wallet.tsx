@@ -107,7 +107,7 @@ export default function Wallet() {
 
   return (
     <div className="stack-lg">
-      <div className="page-head"><h1>Carteira</h1></div>
+      <div className="page-head"><h1>Saldo e créditos</h1></div>
       {checkout === 'success' && <Alert tone="ok" title="Pagamento recebido.">O saldo entra em poucos segundos.</Alert>}
       {checkout === 'pending' && <Alert tone="info" title="Aguardando pagamento.">Pix ou boleto podem levar alguns minutos. O saldo entra sozinho.</Alert>}
       {checkout === 'failure' && <Alert tone="danger" title="Pagamento não aprovado.">Nada foi cobrado. Tente outro meio de pagamento.</Alert>}

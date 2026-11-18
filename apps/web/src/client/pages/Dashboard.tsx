@@ -25,20 +25,22 @@ export default function Dashboard() {
   }
   return (
     <div className="stack-lg">
-      <section className="hello">
-        <div><h1>Olá, {me?.user.name.split(' ')[0]}!</h1><p>Digite uma placa e consulte em segundos.</p></div>
-        <form onSubmit={go} className="grow" style={{ maxWidth: 460, flexBasis: 360 }}>
-          <div className="quick-plate"><input value={plate} onChange={(e) => { setPlate(normalizePlate(e.target.value)); setErr(''); }} placeholder="Placa (ex: ABC1D23)" aria-label="Placa do veículo" maxLength={8} autoComplete="off" /><Button type="submit" variant="primary" icon="search">Consultar</Button></div>
-          {err && <p role="alert" style={{ color: '#FCA5A5', marginTop: 8, fontSize: 14 }}>{err}</p>}
-          <p style={{ marginTop: 8, fontSize: 14 }}><Link to="/app/fipe" style={{ color: '#fff', textDecoration: 'underline' }}>Ver só o valor da Tabela FIPE (grátis)</Link></p>
-        </form>
-      </section>
-      <PaidQueries />
-      <div className="stat-grid">
-        <Stat highlight label="Saldo disponível" value={money(me?.balanceCents)} sub={<LinkButton to="/app/carteira" variant="ghost" size="sm" style={{ color: '#fff', padding: '0 4px', minHeight: 40 }}>Adicionar saldo →</LinkButton>} />
-        <Stat label="Consultas no mês" value={month.length} sub="concluídas" />
-        <Stat label="Investido no mês" value={money(spent)} sub="em consultas" />
+      <div className="buscar-account-overview">
+        <section className="hello">
+          <div><h1>Olá, {me?.user.name.split(' ')[0]}!</h1><p>Informe uma placa para iniciar uma consulta.</p></div>
+          <form onSubmit={go} className="grow" style={{ maxWidth: 460, flexBasis: 360 }}>
+            <div className="quick-plate"><input value={plate} onChange={(e) => { setPlate(normalizePlate(e.target.value)); setErr(''); }} placeholder="Placa (ex: ABC1D23)" aria-label="Placa do veículo" maxLength={8} autoComplete="off" /><Button type="submit" variant="primary" icon="search">Consultar</Button></div>
+            {err && <p role="alert" style={{ color: '#FCA5A5', marginTop: 8, fontSize: 14 }}>{err}</p>}
+            <p style={{ marginTop: 8, fontSize: 14 }}><Link to="/app/fipe" style={{ color: '#fff', textDecoration: 'underline' }}>Ver só o valor da Tabela FIPE (grátis)</Link></p>
+          </form>
+        </section>
+        <div className="stat-grid">
+          <Stat highlight label="Saldo disponível" value={money(me?.balanceCents)} sub={<LinkButton to="/app/carteira" variant="ghost" size="sm" style={{ color: '#fff', padding: '0 4px', minHeight: 40 }}>Adicionar saldo →</LinkButton>} />
+          <Stat label="Consultas no mês" value={month.length} sub="concluídas" />
+          <Stat label="Investido no mês" value={money(spent)} sub="em consultas" />
+        </div>
       </div>
+      <PaidQueries />
       <section>
         <div className="card-head"><h2 style={{ fontSize: 20 }}>Consultas recentes</h2><LinkButton to="/app/historico" variant="ghost" size="sm" iconRight="chevron-right">Ver tudo</LinkButton></div>
         {loading && <div className="q-list"><Skeleton h={44} r={10} /><Skeleton h={44} r={10} /><Skeleton h={44} r={10} /></div>}

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.2 — Nova interface do BL Buscar
+
+- A página inicial reúne o formulário de placa, a FIPE, o simulador e a validação de relatórios em uma nova composição. O catálogo de consultas usa fichas horizontais no desktop.
+- Páginas internas, área do cliente e painel administrativo receberam tipografia, superfícies, navegação e componentes revisados. O acesso à conta usa um formulário centralizado.
+- Revisão dos títulos e textos de orientação das telas principais.
+
 ## 1.0.1 — Respostas da Credify no formato publicado
 
 - **Recall com CODIGO dentro de CONSULTA.** Esse formato passa a ser aceito (antes a consulta era recusada).

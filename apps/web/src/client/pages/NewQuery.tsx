@@ -151,7 +151,7 @@ export default function NewQuery() {
 
   return (
     <div className="stack-lg">
-      <div className="page-head"><div><h1>Nova consulta</h1></div></div>
+      <div className="page-head"><div><h1>Consultar um veículo</h1></div></div>
       {me?.profile.profileRequired && !me.profile.profileComplete && (
         <Alert tone="warn" title="Antes da primeira compra, complete seu cadastro">
           São dados pedidos uma única vez. Falta: {me.profile.profileMissing.join(', ')}. <Link to="/app/conta?voltar=/app/consultar">Completar agora</Link>

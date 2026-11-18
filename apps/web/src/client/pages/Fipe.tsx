@@ -92,7 +92,7 @@ export default function Fipe({ inApp = false }: { inApp?: boolean }) {
     <>
       {inApp
         ? <div className="page-head"><div><h1>FIPE grátis</h1><p className="muted">Informe a placa ou escolha marca, modelo e ano e veja o valor médio de referência do mês. Sem custo.</p></div></div>
-        : <section className="page-hero"><div className="container"><span className="eyebrow">FIPE grátis</span><SeoH1 path="/fipe" fallback="Quanto vale o veículo? Consulte a Tabela FIPE." style={{ maxWidth: '22ch' }} /><p className="lead">Informe a placa ou escolha marca, modelo e ano e veja o valor médio de referência do mês.</p></div></section>}
+        : <section className="page-hero"><div className="container"><span className="eyebrow">FIPE grátis</span><SeoH1 path="/fipe" fallback="Pesquise o valor de referência na Tabela FIPE" style={{ maxWidth: '22ch' }} /><p className="lead">Informe a placa ou escolha marca, modelo e ano e veja o valor médio de referência do mês.</p></div></section>}
       <section className={inApp ? undefined : 'section'} style={inApp ? undefined : { paddingTop: 8 }}>
         <div className={inApp ? undefined : 'container'} style={{ maxWidth: 860 }}>
           {!enabled && <Alert tone="warn" title="Consulta FIPE em ativação.">Esta consulta ainda não está disponível neste ambiente.</Alert>}

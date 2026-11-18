@@ -249,3 +249,17 @@ h2 { font-size: 17px; }
 :root[data-theme="dark"] .seo-title{color:#98EABE}
 :root[data-theme="dark"] .seo-url{color:#81c995}
 ul.plain{list-style:none;padding:0;margin:0;display:grid;gap:6px}
+
+/* Componentes comuns aos três pontos de entrada. */
+.btn { border-radius: 8px; }
+.btn-primary { --b-fg: var(--on-primary); }
+:root[data-theme='dark'] { --on-primary: #132b20; }
+.page-head {
+  padding: 0 0 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.page-head h1 { font-size: clamp(1.5rem, 2.6vw, 2.25rem); letter-spacing: -.04em; }
+.table th { background: var(--bg-soft); color: var(--text-2); }
+.table tbody tr:nth-child(even) td { background-color: color-mix(in srgb, var(--surface) 75%, var(--bg-soft)); }
+.table tbody tr:hover td { background-color: var(--surface-2); }

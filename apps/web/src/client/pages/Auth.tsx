@@ -3,7 +3,6 @@ import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-do
 import { Icon } from '../../shared/icons';
 import { Alert, Button, Check, Field, Input, Logo, Select, ThemeSwitch, usePageTitle } from '../../shared/ui';
 import { errorMessage } from '../../shared/api';
-import { HeroArt } from '../art';
 import { api } from '../api';
 import { useSession } from '../session';
 import { attribution, funnelSessionId, storedInvite, storedLeadLink, storedReferral, trackFunnel } from '../funnel';
@@ -101,24 +100,15 @@ export default function Auth({ initial }: { initial: Mode }) {
     finally { setBusy(false); }
   }
 
-  const heading = { login: 'Que bom ver você de volta.', register: 'Crie sua conta grátis.', forgot: 'Vamos recuperar seu acesso.', reset: 'Defina sua nova senha.' }[mode];
+  const heading = { login: 'Acesse sua conta', register: 'Abra sua conta gratuita', forgot: 'Recupere seu acesso', reset: 'Crie uma nova senha' }[mode];
   const sub = { login: 'Entre para consultar placas e acessar seus relatórios salvos.', register: 'Só nome, e-mail e WhatsApp. CPF e dados de pagamento só se você comprar uma consulta.', forgot: 'Informe seu e-mail e enviaremos as instruções.', reset: 'Escolha uma nova senha com pelo menos 8 caracteres.' }[mode];
 
   return (
     <div className="auth-shell">
-      <aside className="auth-visual" aria-hidden="true">
-        <div className="art"><HeroArt /></div>
-        <Link to="/"><Logo forceDark height={44} /></Link>
-        <div>
-          <h2>Mais segurança para o seu veículo.</h2>
-          <p>Consulte débitos, restrições e gravame em segundos e guarde cada relatório no seu histórico.</p>
-          <ul><li><Icon name="check-circle" size={18} /> Relatório completo em PDF</li><li><Icon name="check-circle" size={18} /> Histórico seguro na sua conta</li><li><Icon name="check-circle" size={18} /> Dados pessoais protegidos (LGPD)</li></ul>
-        </div>
-      </aside>
       <div className="auth-panel">
         <div className="auth-card">
           <div className="top"><Link to="/" className="muted" style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}><Icon name="arrow-left" size={16} /> Voltar</Link><ThemeSwitch /></div>
-          <div><h1>{heading}</h1><p className="sub">{sub}</p></div>
+          <div className="auth-heading"><Logo height={42} /><h1>{heading}</h1><p className="sub">{sub}</p></div>
           {(mode === 'login' || mode === 'register') && providers.length > 0 && (
             <>
               <div className="social-row">{providers.map((p) => <a key={p.id} className="social-btn" href={`/api/auth/oauth/${p.id}/start`}><span aria-hidden="true">{PROVIDER_ICON[p.id]}</span> Continuar com {p.label}</a>)}</div>

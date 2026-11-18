@@ -21,7 +21,7 @@ export function HomeSimulator() {
       <div className="container home-split">
         <div className="home-split-copy">
           <span className="eyebrow">Simulador de financiamento</span>
-          <h2>Quanto custa financiar o seu veículo? Veja antes de ir ao banco.</h2>
+          <h2>Faça as contas antes de financiar</h2>
           <p className="muted">Simule CDC ou leasing com a taxa média de mercado, IOF e tarifas, e descubra a parcela, o CET e o custo total. Funciona para carro, moto, caminhão e qualquer outro veículo.</p>
           <ul className="checklist">{SIM_POINTS.map((p) => <li key={p.t}><Icon name="check-circle" size={20} />{p.t}</li>)}</ul>
           <div className="sim-kinds" aria-label="Simular por tipo de veículo">
@@ -57,7 +57,7 @@ export function HomeGuide() {
         <div className="home-split">
           <div className="home-split-copy">
             <span className="eyebrow">Guia de veículos</span>
-            <h2>Pesquise o carro, veja a ficha técnica e compare antes de comprar.</h2>
+            <h2>Compare os modelos da sua lista</h2>
             <p className="muted">Busque pelo modelo (ou pela placa), veja as informações técnicas, a nota de quem tem e compare com outro veículo, de acordo com dados reais. Crie sua conta grátis para ver tudo.</p>
             <form className="home-guide-search" onSubmit={submit} role="search" aria-label="Buscar veículo no guia">
               <Icon name="search" size={20} />

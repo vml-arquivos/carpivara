@@ -72,8 +72,8 @@ export default function Simulator() {
     <>
       <section className="page-hero sim-hero">
         <div className="container">
-          <span className="eyebrow">Simulador de financiamento</span>
-          <SeoH1 path={kindInfo ? `/simulador/${kindInfo.slug}` : '/simulador'} fallback={kindInfo ? `Simule o financiamento ${kindInfo.key === 'MOTORCYCLE' ? 'da sua moto' : kindInfo.key === 'TRUCK' ? 'do seu caminhão' : kindInfo.key === 'UTILITY' ? 'do seu utilitário' : 'do seu carro'}.` : 'Simulador de financiamento'} />
+          
+          <SeoH1 path={kindInfo ? `/simulador/${kindInfo.slug}` : '/simulador'} fallback={kindInfo ? `Simule o financiamento ${kindInfo.key === 'MOTORCYCLE' ? 'da sua moto' : kindInfo.key === 'TRUCK' ? 'do seu caminhão' : kindInfo.key === 'UTILITY' ? 'do seu utilitário' : 'do seu carro'}.` : 'Calcule as parcelas do financiamento'} />
           <p className="lead">{kindInfo ? 'CDC ou leasing, com a taxa média de mercado do Banco Central, IOF e tarifas. Veja a parcela, o CET e o custo total antes de ir ao banco, e baixe o PDF.' : 'Simule gratuitamente o financiamento de um veículo. Informe o valor, a entrada, o prazo e a taxa de juros para comparar parcelas e custos estimados. Você pode ajustar os dados conforme a proposta recebida do banco. A simulação é informativa e não representa aprovação nem oferta de crédito.'}</p>
           <div className="trust-row" style={{ marginTop: 18 }}>
             <span><Icon name="shield-check" size={16} />{cfg?.ratesStatus?.origin === 'BCB' ? 'Taxas do Banco Central' : 'Taxas de mercado de referência'}</span>

@@ -1273,3 +1273,49 @@ a.kind-tab { text-decoration: none; box-sizing: border-box; }
 .app-mod-b[hidden] { display: none; }
 .app-mod-b a { padding: 8px 10px; font-size: 14px; }
 .app-grp { margin-bottom: 4px; }
+
+/* Páginas internas e navegação do BL Buscar. */
+.pub-nav, .app-top { background: var(--surface); backdrop-filter: none; }
+.pub-nav.over-hero { background: transparent; }
+.page-hero { background: var(--bg-soft); border-bottom: 1px solid var(--border); }
+.page-hero h1 { font-size: clamp(1.85rem, 4.6vw, 3.5rem); letter-spacing: -.05em; }
+.auth-shell { grid-template-columns: minmax(0, 1fr); background: var(--bg-soft); }
+.auth-panel { padding-block: clamp(20px, 6vw, 68px); }
+.auth-card {
+  width: min(560px, 100%);
+  background: var(--surface);
+  padding: clamp(18px, 4vw, 40px);
+  border: 1px solid var(--border);
+  border-top: 4px solid #bd8d47;
+  border-radius: var(--radius-xl);
+}
+.auth-heading .logo { display: inline-flex; margin-bottom: 22px; }
+.auth-card h1 { font-size: clamp(1.55rem, 4vw, 2rem); }
+.app-side { background: var(--bg-soft); }
+.app-side > .logo { display: block; margin-bottom: 12px; border-bottom: 1px solid var(--border); }
+.app-nav a.active { border-inline-start: 3px solid #ad8348; }
+.app-content { max-width: 1300px; }
+.app-tabbar a.mid span.mi { background: #15583d; box-shadow: none; border-radius: 12px; }
+.hello { background: #173a2e; border-inline-start: 5px solid #c09a5c; border-radius: var(--radius-lg); }
+.quick-plate { border-radius: var(--radius); }
+.q-row { border-radius: var(--radius); }
+
+@media (min-width: 961px) {
+  .app-shell { grid-template-columns: minmax(228px, 18vw) minmax(0, 1fr); }
+  .app-side { padding-inline: clamp(14px, 1.5vw, 24px); }
+  .hello { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: start; }
+}
+
+.buscar-account-overview { display: grid; gap: 16px; }
+.buscar-account-overview .hello { margin: 0; }
+.buscar-account-overview .stat-grid { margin: 0; }
+@media (min-width: 1150px) {
+  .buscar-account-overview { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); }
+  .buscar-account-overview .stat-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+.buscar-account-overview > * { min-width: 0; }
+.buscar-account-overview .hello form { min-width: 0; flex-shrink: 1; }
+@media (max-width: 1149px) {
+  .buscar-account-overview { grid-template-columns: minmax(0, 1fr); }
+}

@@ -53,7 +53,7 @@ export function PlansPage() {
   usePageTitle('Consultas e preços');
   return (
     <>
-      <section className="page-hero"><div className="container"><span className="eyebrow">Consultas e preços</span><SeoH1 path="/planos" fallback="Pague só pelo que consultar." /><p className="lead">Sem mensalidade obrigatória. Compare o que cada consulta entrega, descubra a combinação mais barata para o seu caso ou recarregue saldo em pacotes.</p></div></section>
+      <section className="page-hero"><div className="container"><span className="eyebrow">Consultas e preços</span><SeoH1 path="/planos" fallback="Compare os relatórios e escolha sua consulta" /><p className="lead">Sem mensalidade obrigatória. Compare o que cada consulta entrega, descubra a combinação mais barata para o seu caso ou recarregue saldo em pacotes.</p></div></section>
       <section className="section" style={{ paddingTop: 12 }}><div className="container stack-lg">
         <ProductCards />
         <div className="stack"><h2 style={{ fontSize: 26 }}>Compare lado a lado</h2><CompareMatrix /></div>
