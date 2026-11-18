@@ -83,7 +83,9 @@ test('extra que falha não derruba o relatório: vira "não consultado", nunca "
 
 test('placa que a base principal não encontra falha como na Básica (sem gastar nas outras consultas)', async () => {
   resetCredifyTokenCache();
-  const f = fakeFetch({ '/debitosrestricoesproprietarios': { status: 404 } });
+  // A placa que a base não encontra chega como CODIGO=2 no corpo (é assim que a Credify publica "dado não encontrado").
+  // HTTP 404 foi separado disso na auditoria C item 5: é endpoint fora do contrato, tratado como consulta indisponível.
+  const f = fakeFetch({ '/debitosrestricoesproprietarios': absent('487', 'DADO NAO ENCONTRADO') });
   await assert.rejects(() => new CredifyVehicleProvider(opts(f)).queryByPlate('AAA0000', { productId: 'COMPLETE' }), (e) => e.code === 'NOT_FOUND');
   assert.deepEqual(f.paid(), ['/debitosrestricoesproprietarios']);
 });

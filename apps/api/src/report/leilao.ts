@@ -1,5 +1,6 @@
 import type { ReportTable, VtValue } from './vehicleTotal.js';
 import { HIDDEN_FIELDS, labelFor } from './fieldLabels.js';
+import { classifyText, STATE_LINE } from './layers.js';
 
 type Rec = Record<string, unknown>;
 const isRec = (v: unknown): v is Rec => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
@@ -98,22 +99,27 @@ const UNKNOWN_TEXT = /NAO FOI POSSIVEL|INDISPONIVEL|ERRO/;
 export function leilaoExtras(raw: unknown): Map<string, VtValue> {
   const out = new Map<string, VtValue>();
   const l = isRec(raw) ? raw.leilao : undefined;
-  if (!isRec(l) || l.unavailable) return out;
+  if (!isRec(l)) return out;
+  // Fonte fora do ar, recusada ou sem tempo: é consulta indisponível (E5), nunca "não consta em base de leilão".
+  if (l.unavailable) { out.set('AU_LEILAO', { state: 'NOT_PROVIDED', value: null, display: STATE_LINE.UNAVAILABLE, sourceState: 'UNAVAILABLE' }); return out; }
   if (l.notFound === true) {
-    out.set('AU_LEILAO', { state: 'CLEAR', value: 'NAO CONSTA', display: 'Não consta em base de leilão' });
+    // `notFound` hoje só vem do CODIGO=2 da própria fonte ("dado não encontrado nesta base"): ausência confirmada (E2).
+    out.set('AU_LEILAO', { state: 'CLEAR', value: 'NAO CONSTA', display: 'Não consta em base de leilão', sourceState: 'CONFIRMED_NONE' });
     return out;
   }
-  if (!('data' in l)) return out;
+  // Envelope sem corpo de dados: a consulta não respondeu (E3), então não se afirma ausência.
+  if (!('data' in l)) { out.set('AU_LEILAO', { state: 'NOT_PROVIDED', value: null, display: STATE_LINE.NO_RETURN, sourceState: 'NO_RETURN' }); return out; }
   const b = leilaoBlock(l.data);
   const desc = fold(str(b?.DESCRICAORETORNO));
   const recs = auctionRecords(b ?? undefined);
   if (recs.length) {
-    out.set('AU_LEILAO', { state: 'ALERT', value: str(b?.DESCRICAORETORNO) || 'CONSTA REGISTRO DE LEILAO', display: recs.length === 1 ? 'Consta 1 registro de leilão' : `Constam ${recs.length} registros de leilão` });
+    out.set('AU_LEILAO', { state: 'ALERT', value: str(b?.DESCRICAORETORNO) || 'CONSTA REGISTRO DE LEILAO', display: recs.length === 1 ? 'Consta 1 registro de leilão' : `Constam ${recs.length} registros de leilão`, sourceState: 'OCCURRENCE' });
     const table = auctionTable(recs);
     if (table) out.set('AU_LEILAO_DETALHES', { state: 'INFO', value: `${recs.length} ${recs.length === 1 ? 'registro' : 'registros'} de leilão`, display: `${recs.length} ${recs.length === 1 ? 'registro' : 'registros'} de leilão`, table });
     return out;
   }
-  if (NONE_TEXT.test(desc)) out.set('AU_LEILAO', { state: 'CLEAR', value: str(b?.DESCRICAORETORNO), display: 'Não consta em base de leilão' });
-  else if (desc && !UNKNOWN_TEXT.test(desc) && desc !== 'SUCESSO') out.set('AU_LEILAO', { state: 'ALERT', value: str(b?.DESCRICAORETORNO), display: str(b?.DESCRICAORETORNO) });
+  if (NONE_TEXT.test(desc)) out.set('AU_LEILAO', { state: 'CLEAR', value: str(b?.DESCRICAORETORNO), display: 'Não consta em base de leilão', sourceState: 'CONFIRMED_NONE' });
+  else if (desc && !UNKNOWN_TEXT.test(desc) && desc !== 'SUCESSO' && classifyText(desc) === 'OCCURRENCE') out.set('AU_LEILAO', { state: 'ALERT', value: str(b?.DESCRICAORETORNO), display: str(b?.DESCRICAORETORNO), sourceState: 'OCCURRENCE' });
+  else if (desc) { const st = classifyText(desc); out.set('AU_LEILAO', { state: 'NOT_PROVIDED', value: null, display: STATE_LINE[st === 'UNAVAILABLE' ? 'UNAVAILABLE' : 'NO_RETURN'], sourceState: st === 'UNAVAILABLE' ? 'UNAVAILABLE' : 'NO_RETURN' }); }
   return out;
 }

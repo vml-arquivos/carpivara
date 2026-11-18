@@ -12,6 +12,7 @@ import { enrichmentExtras, readFipeMatch } from './enrichmentExtras.js';
 import { applyLien, gravameExtras, parseDate, seizureExtra } from './gravame.js';
 import { leilaoExtras } from './leilao.js';
 import { leilaoAnalyses } from './analiseLeilao.js';
+import { classifyText, STATE_LINE, type SourceState } from './layers.js';
 import { applyJudicial, judicialExtras } from './judicial.js';
 import { adaptVehicleTotal, isVehicleTotal, vehicleTotalExtras, vehicleTotalOutcome, type ReportTable } from './vehicleTotal.js';
 import { formatDocument, ownerIdentityEnabled } from './mask.js';
@@ -44,6 +45,12 @@ export interface ReportItem {
   /** componente de outro total (ex.: multa por órgão): exibido, mas não somado */
   component?: boolean;
   high?: boolean;
+  /**
+   * Estado semântico do vocabulário de `layers.ts` (E1..E5) que explica o `state`:
+   * OCCURRENCE, CONFIRMED_NONE (o único que autoriza "nada consta"), NO_RETURN, OUT_OF_SCOPE, UNAVAILABLE.
+   */
+  sourceState?: SourceState;
+  /** calculado pelo sistema (estimativa, projeção, decodificação): exibido sempre com rótulo, nunca como fato da fonte */ derived?: boolean;
 }
 
 export interface ReportSection {
@@ -71,6 +78,8 @@ export interface ReportV2 {
   debtsHidden?: boolean;
   /** preenchido por viewReport: o que o produto contratado cobre. "Fora do produto" é diferente de "não retornado pela fonte". */
   scope?: { mode: 'TEMPLATE' | 'SECTIONS' | 'TIER'; templateVersion?: number; notIncluded: Array<{ key: string; label: string }> };
+  /** consulta em camadas em que alguma base contratada não respondeu (provedor marca `parcial`); muda o veredito e o texto */
+  parcial?: boolean;
   /** preenchido por viewReport: parecer de revenda/seguro e checklist "Antes de pagar", só com o que o pacote consultou */
   advice?: ReportAdvice;
   /** ficha gratuita (decodificador de chassi, tabela FIPE, financiamento, ficha técnica do guia); presente nas consultas que a incluem */
@@ -90,7 +99,17 @@ const DEBT_SUMMANDS: Array<[string, string]> = [
 ];
 
 const fold = (value: string) => value.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/\s+/g, ' ').trim();
-const DEFAULT_CLEAR = /^(NADA CONSTA|NAO CONSTA|NAO POSSUI|NAO EXISTE|NAO HA|NAO TEM|SEM (?!INFORMA)|INEXISTENTE|REGULAR$)|VEICULAR OK$|^OK$|^NORMAL$/;
+/**
+ * O que é "nada consta" para o normalizador: só ausência afirmada pela fonte (E2) do vocabulário único de `layers.ts`.
+ * Antes esta lista aceitava INEXISTENTE, NORMAL, OK e "SEM ...", que são o jeito da fonte dizer "não sei" — e viravam
+ * quitação em qualquer flag. Valores de domínio publicado de um campo específico continuam entrando por `FieldDef.clear`.
+ */
+const isConfirmedNone = (folded: string): boolean => classifyText(folded) === 'CONFIRMED_NONE';
+/** Lacuna (E3/E5): a fonte respondeu sem este dado, ou a consulta não se completou. Nunca "nada consta", nunca alerta. */
+const gapOf = (folded: string): SourceState | undefined => {
+  const st = classifyText(folded);
+  return st === 'NO_RETURN' || st === 'UNAVAILABLE' ? st : undefined;
+};
 const SITUATION_ALERT = /BAIXAD|ROUBO|FURTO|SINISTRO|BLOQUEAD|APREENDID|LEILAO|INATIV|DESMONT/;
 
 export function isEmptyValue(value: unknown): boolean {
@@ -178,16 +197,29 @@ function buildItem(def: FieldDef, rawValue: unknown): ReportItem {
   const folded = fold(text);
   switch (def.kind) {
     case 'money': {
+      // "NÃO INFORMADO" num campo de valor não é "R$ 0,00": é lacuna (E3/E5), senão vira "sem débito".
+      const moneyGap = gapOf(folded);
+      if (moneyGap && !MONEY_RE.test(text)) return { ...base, state: 'NOT_PROVIDED', display: STATE_LINE[moneyGap], sourceState: moneyGap };
       const amountCents = MONEY_RE.test(text) ? parseCents(text) : 0;
       const component = FINE_COMPONENTS.has(def.key);
-      return { ...base, state: amountCents > 0 ? 'ALERT' : 'CLEAR', value: MONEY_RE.test(text) ? text : null, display: MONEY_RE.test(text) ? brlFromCents(amountCents) : null, amountCents, component };
+      return { ...base, state: amountCents > 0 ? 'ALERT' : 'CLEAR', value: MONEY_RE.test(text) ? text : null, display: MONEY_RE.test(text) ? brlFromCents(amountCents) : null, amountCents, component, sourceState: amountCents > 0 ? 'OCCURRENCE' : 'CONFIRMED_NONE' };
     }
     case 'flag': {
-      const clear = DEFAULT_CLEAR.test(folded) || Boolean(def.clear?.test(folded));
-      return { ...base, state: clear ? 'CLEAR' : 'ALERT', value: text, display: sentenceCase(text) };
+      const clear = isConfirmedNone(folded) || Boolean(def.clear?.test(folded));
+      if (clear) return { ...base, state: 'CLEAR', value: text, display: sentenceCase(text), sourceState: 'CONFIRMED_NONE' };
+      if (classifyText(folded) === 'OCCURRENCE') return { ...base, state: 'ALERT', value: text, display: sentenceCase(text), sourceState: 'OCCURRENCE' };
+      // E3/E5: "NÃO INFORMADO", "NÃO DISPONÍVEL", texto que a fonte não publica como ausência — nada consta não se afirma,
+      // alerta também não se inventa. O rastro (sourceState + display) impede que o campo suma do relatório sem explicação.
+      const gap: SourceState = gapOf(folded) ?? 'NO_RETURN';
+      return { ...base, state: 'NOT_PROVIDED', display: STATE_LINE[gap], sourceState: gap };
     }
     case 'status':
-      return { ...base, state: SITUATION_ALERT.test(folded) ? 'ALERT' : 'INFO', value: text, display: sentenceCase(text), high: SITUATION_ALERT.test(folded) || undefined };
+      {
+        const statusGap = gapOf(folded);
+        if (statusGap) return { ...base, state: 'NOT_PROVIDED', display: STATE_LINE[statusGap], sourceState: statusGap };
+        const alert = SITUATION_ALERT.test(folded);
+        return { ...base, state: alert ? 'ALERT' : 'INFO', value: text, display: sentenceCase(text), high: alert || undefined, sourceState: alert ? 'OCCURRENCE' : undefined };
+      }
     case 'date': {
       const d = parseDate(text);
       const shown = d ? `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}` : text;
@@ -236,7 +268,9 @@ export function buildReportV2(raw: unknown): ReportV2 {
     const extras = vehicleTotalExtras(raw);
     for (const def of VT_CATALOG) {
       const x = extras.get(def.key) ?? { state: 'NOT_PROVIDED' as const, value: null };
-      items.set(def.key, { key: def.key, label: def.label, kind: def.kind, state: x.state, value: x.value, display: x.display ?? x.value, ...(x.masked ? { masked: true } : {}), ...(x.table ? { table: x.table } : {}), sensitivity: def.sensitivity, tier: def.tier, high: def.high && x.state === 'ALERT' ? true : undefined });
+      // O estado da fonte (E1..E5) é o que explica a lacuna: sem ele o item NOT_PROVIDED seria apagado abaixo e o
+      // campo sumiria do relatório sem dizer por quê — exatamente o falso "nada consta" que a diretiva proíbe.
+      items.set(def.key, { key: def.key, label: def.label, kind: def.kind, state: x.state, value: x.value, display: x.display ?? x.value, ...(x.masked ? { masked: true } : {}), ...(x.table ? { table: x.table } : {}), ...(x.sourceState ? { sourceState: x.sourceState } : {}), sensitivity: def.sensitivity, tier: def.tier, high: def.high && x.state === 'ALERT' ? true : undefined });
     }
   }
   // FIPE localizada pelo cadastro (modelo, ano e cilindrada) quando o provedor não trouxe o valor: preenche só o que está vazio.
@@ -256,18 +290,22 @@ export function buildReportV2(raw: unknown): ReportV2 {
   {
     // Análises de leilão: usam o leilão (do pacote Veículo Total ou da consulta de leilão) e o indício de sinistro já lidos.
     const au = enr.get('AU_LEILAO') ?? (items.get('VT_LEILAO')?.state !== 'NOT_PROVIDED' ? items.get('VT_LEILAO') : undefined);
-    const det = enr.get('AU_LEILAO_DETALHES')?.table ? enr.get('AU_LEILAO_DETALHES') : items.get('VT_LEILAO_DETALHES');
-    for (const [k, v] of leilaoAnalyses(au ? { state: au.state, ...(det?.table ? { table: det.table } : {}) } : undefined, items.get('VT_SINISTRO'))) enr.set(k, v);
+   const det = enr.get('AU_LEILAO_DETALHES')?.table ? enr.get('AU_LEILAO_DETALHES') : items.get('VT_LEILAO_DETALHES');
+    // `au.value === 'VERDE'` é o Farol respondendo sem o detalhe do leilão conjugado: indício, não ausência confirmada.
+    for (const [k, v] of leilaoAnalyses(au ? { state: au.state, ...(det?.table ? { table: det.table } : {}), ...(au.value === 'VERDE' ? { farolOnly: true } : {}) } : undefined, items.get('VT_SINISTRO'))) enr.set(k, v);
   }
   enr.set('RES_BUSCA_APREENSAO', seizureExtra(upper, raw));
   for (const def of ENRICH_CATALOG) {
     const x = enr.get(def.key) ?? { state: 'NOT_PROVIDED' as const, value: null };
-    items.set(def.key, { key: def.key, label: def.label, kind: def.kind, state: x.state, value: x.value, display: x.display ?? x.value, ...(x.table ? { table: x.table } : {}), sensitivity: def.sensitivity, tier: def.tier, high: def.high && x.state === 'ALERT' ? true : undefined });
+    // Mesmo motivo do VT_CATALOG: gravame, leilão e análises trazem o estado no VtValue e ele tem de chegar ao item.
+    items.set(def.key, { key: def.key, label: def.label, kind: def.kind, state: x.state, value: x.value, display: x.display ?? x.value, ...(x.derived ? { derived: true } : {}), ...(x.table ? { table: x.table } : {}), ...(x.sourceState ? { sourceState: x.sourceState } : {}), sensitivity: def.sensitivity, tier: def.tier, high: def.high && x.state === 'ALERT' ? true : undefined });
   }
   // Medidas zeradas (eixos, carga, CMT, PBT em carro de passeio) não informam nada: tratadas como ausentes.
   for (const k of ['EIXOS', 'CAPACIDADECARGA', 'CMT', 'PBT']) { const it = items.get(k); if (it && it.state !== 'NOT_PROVIDED' && /^0+([.,]0+)?$/.test(String(it.value ?? '').trim())) items.set(k, { ...it, state: 'NOT_PROVIDED', value: null, display: null }); }
   // Detalhes opcionais (leilão, roubo/furto, recall, análises) só existem quando há dado ou como calcular.
-  { const gone = defs.filter((d) => d.optional && items.get(d.key)?.state === 'NOT_PROVIDED'); for (const d of gone) items.delete(d.key); defs = defs.filter((d) => !gone.includes(d)); }
+  // Um campo de seção vendida só pode sumir quando não há nada a dizer: se há um estado (E3/E4/E5) ele fica, com rastro legível,
+  // porque "campo apagado" não pode ser confundido com "campo inexistente" nem com "nada consta".
+  { const gone = defs.filter((d) => d.optional && items.get(d.key)?.state === 'NOT_PROVIDED' && !items.get(d.key)?.sourceState); for (const d of gone) items.delete(d.key); defs = defs.filter((d) => !gone.includes(d)); }
   const unknownFieldCount = Object.keys(upper).filter((k) => !CATALOG_BY_KEY.has(k)).length;
 
   // Débitos: multas pelo total (fallback soma dos componentes); nunca soma componente + total.
@@ -320,7 +358,16 @@ export function buildReportV2(raw: unknown): ReportV2 {
     verdict = { level: 'CLEAR', title: 'Sem alertas relevantes', reason: 'Não foram identificadas ocorrências relevantes nos dados retornados pelo provedor nesta consulta.', alerts };
   }
 
-  const v = (key: string) => (items.get(key)!.state !== 'NOT_PROVIDED' ? items.get(key)!.value ?? undefined : undefined);
+ const v = (key: string) => (items.get(key)!.state !== 'NOT_PROVIDED' ? items.get(key)!.value ?? undefined : undefined);
+  // Item 12: em consulta por camadas, a peça que falhou só marcava `parcial` no provedor e o relatório saía como se fosse
+  // análise completa. O flag chega agora ao relatório (JSON, tela, PDF e impressão leem `verdict.reason`) e muda o veredito.
+  const parcial = (raw as { parcial?: unknown } | null)?.parcial === true;
+  const partialNote = 'Ao menos uma base desta consulta não respondeu (sem retorno ou indisponível): o que não voltou não pode ser lido como “nada consta”.';
+  if (parcial) {
+    verdict = verdict.level === 'CLEAR'
+      ? { level: 'INCONCLUSIVE', title: 'Consulta parcial', reason: partialNote, alerts: [] }
+      : { ...verdict, reason: verdict.reason.includes(partialNote) ? verdict.reason : `${verdict.reason} ${partialNote}` };
+  }
   const visibleKeys = defs.filter((d) => d.sensitivity !== 'INTERNAL');
   const notProvidedKeys = visibleKeys.filter((d) => items.get(d.key)!.state === 'NOT_PROVIDED').map((d) => d.key);
 
@@ -343,6 +390,7 @@ export function buildReportV2(raw: unknown): ReportV2 {
     },
     sections,
     coverage: { provided: visibleKeys.length - notProvidedKeys.length, total: visibleKeys.length, notProvidedKeys, restrictionsProvided, debtsProvided },
+    ...(parcial ? { parcial: true } : {}),
     unknownFieldCount,
     ...(readSheet((raw as { enrichment?: { sheet?: unknown } } | null)?.enrichment?.sheet) ? { sheet: readSheet((raw as { enrichment?: { sheet?: unknown } }).enrichment?.sheet) } : {})
   });
@@ -437,9 +485,16 @@ export function viewReport(report: ReportV2, opts: { audience: Audience; tier: T
   const scope: ReportV2['scope'] = opts.audience === 'client'
     ? { mode: template ? 'TEMPLATE' : allow ? 'SECTIONS' : 'TIER', ...(template ? { templateVersion: template.version } : {}), notIncluded: SECTIONS.filter((s) => s.key !== 'INTERNO' && s.key !== 'PROPRIETARIO' && !shown.has(s.key)).map((s) => ({ key: s.key, label: s.label })) }
     : undefined;
-  if (scope && verdict.level === 'CLEAR') {
+  if (scope) {
     const outside = scope.notIncluded.filter((n) => n.key === 'DEBITOS' || n.key === 'RESTRICOES' || n.key === 'GRAVAME').map((n) => n.label.toLowerCase());
-    if (outside.length) verdict = { level: 'INCONCLUSIVE', title: 'Consulta parcial', reason: `Este produto não inclui: ${outside.join(', ')}. Não é possível afirmar que o veículo está sem pendências.`, alerts: [] };
+    if (outside.length) {
+      const note = `Este produto não inclui: ${outside.join(', ')}. Não é possível afirmar que o veículo está sem pendências.`;
+      // O aviso de escopo vale para qualquer veredito: num laudo de gravame com risco alto o cliente também precisa saber que
+      // débitos, restrições e gravame não foram consultados. Antes só aparecia com veredito limpo.
+      verdict = verdict.level === 'CLEAR'
+        ? { level: 'INCONCLUSIVE', title: 'Consulta parcial', reason: note, alerts: [] }
+        : { ...verdict, reason: verdict.reason.includes(note) ? verdict.reason : `${verdict.reason} ${note}` };
+    }
   }
   const viewed: ReportV2 = { ...report, sections, verdict, debts, lockedAlertCount, debtsHidden, ...(scope ? { scope } : {}) };
   return { ...viewed, advice: buildAdvice(viewed) };

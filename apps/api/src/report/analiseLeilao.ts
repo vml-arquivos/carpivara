@@ -6,7 +6,8 @@
 import type { VtValue } from './vehicleTotal.js';
 
 import { BRAND } from '../lib/brand.js';
-type Seen = { state: string; table?: { columns: string[]; rows: string[][] } } | undefined;
+/** `farolOnly`: só o semáforo do Farol respondeu, sem o detalhe do leilão conjugado — é indício, não ausência confirmada. */
+type Seen = { state: string; table?: { columns: string[]; rows: string[][] }; farolOnly?: boolean } | undefined;
 
 const fold = (v: string) => v.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
 const SEVERE = /SUCATA|SINISTR|RECUPERAD|MONTA|BAIXA|INCENDI|ENCHENTE|ALAGAD|COLISAO|BATID|IRRECUPER|AVARIA GRAVE|DANO/;
@@ -18,7 +19,13 @@ export function leilaoLevel(auction: Seen, claim: Seen): { level: LeilaoLevel; r
   if (!auction || auction.state === 'NOT_PROVIDED') return null;
   const claimed = claim?.state === 'ALERT';
   const noClaim = claim?.state === 'CLEAR' ? ' nem indício de sinistro' : '';
-  if (auction.state !== 'ALERT') return claimed ? { level: 'Baixo', reason: 'sem registro de leilão, mas com indício de sinistro' } : { level: 'Muito baixo', reason: `sem registro de leilão${noClaim}` };
+  if (auction.state !== 'ALERT') {
+    // O Farol verde é um indício favorável: enquanto o detalhe de leilão não for consultado não se pode escrever "sem registro de leilão".
+    if (auction.farolOnly) return claimed
+      ? { level: 'Baixo', reason: 'apenas indício do Farol (verde), sem o detalhe de leilão consultado, e com indício de sinistro' }
+      : { level: 'Muito baixo', reason: 'apenas indício do Farol (verde), sem o detalhe de leilão consultado' };
+    return claimed ? { level: 'Baixo', reason: 'sem registro de leilão, mas com indício de sinistro' } : { level: 'Muito baixo', reason: `sem registro de leilão${noClaim}` };
+  }
   const rows = auction.table?.rows ?? [];
   const count = rows.length || 1;
   const severe = SEVERE.test(fold(rows.map((r) => r.join(' ')).join(' ')));

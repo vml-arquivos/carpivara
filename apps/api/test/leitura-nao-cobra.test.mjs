@@ -59,6 +59,14 @@ describe('leitura de relatório não cobra: nada de /gravame ao abrir, baixar, c
     const row = stored.rows[0];
     assert.equal(row.status, 'SUCCESS', 'a consulta legada está concluída'); assert.ok(row.has_raw, 'a consulta legada tem o bruto cifrado guardado');
     assert.ok(!row.n.includes('BANCO DO BRASIL'), 'sem banco, contrato e datas: é o retrato da consulta antiga');
+    // A fixture é trazida para o valor que a fonte REAL publica em RESTRICAOFINAN numa consulta com alienação
+    // ("ALIENACAO FIDUCIARIA"). O texto de demonstração do banco de teste ("GRAVAME FICTICIO PARA TESTE") não é um valor
+    // do domínio da Credify: desde o vocabulário único de estados (layers.ts) um texto que não afirma ocorrência nem
+    // ausência é lido como "sem retorno" (E3), nunca como alerta — por isso a asserção abaixo, que confere o mesmo
+    // predicado SQL de lienRefresh.ts, exige o payload real de uma consulta legada. Verificado antes de mexer aqui:
+    // com o payload real o predicado continua elegendo a consulta (queriesMissingLien) e continua excluindo as que já
+    // têm a resposta do /gravame, ou seja, o predicado não ficou cego — a fixture é que estava escrita fora do formato.
+    await rewriteLegacyLien(id);
     // É exatamente o predicado que o backfill pago usa para decidir a consulta: a fixture tem de cair nele.
     const eligible = await pool.query(`SELECT 1 FROM vehicle_queries q JOIN vehicle_query_results r ON r.query_id=q.id
       WHERE q.id=$1 AND q.status='SUCCESS' AND q.product_id IN ('PREMIUM','LIEN') AND r.raw_enc IS NOT NULL AND r.normalized ? 'v2'
@@ -68,6 +76,32 @@ describe('leitura de relatório não cobra: nada de /gravame ao abrir, baixar, c
     const storedRaw = await pool.query('SELECT raw_enc FROM vehicle_query_results WHERE query_id=$1', [id]);
     assert.equal(decryptRaw(storedRaw.rows[0].raw_enc).gravame, undefined, 'o bruto não tem a resposta de /gravame: ali é onde a leitura antiga cobrava');
     return id;
+  }
+
+  /** Reescreve o bruto e o relatório guardados com o payload de uma consulta legada de verdade: alienação afirmada no
+   * cadastro (RESTRICAOFINAN em ALERT) e nenhuma resposta do /gravame. Não toca em mais nenhum campo. */
+  async function rewriteLegacyLien(queryId) {
+    const { decryptRaw, encryptRaw } = await import('../dist/lib/rawStore.js');
+    const { normalizeBdrp } = await import('../dist/normalizer.js');
+    const { NORMALIZER_VERSION } = await import('../dist/report/normalizeV2.js');
+    const findReturn = (o, depth = 0) => {
+      if (!o || typeof o !== 'object' || depth > 5) return null;
+      for (const [k, v] of Object.entries(o)) {
+        const key = k.toUpperCase();
+        if (key === 'RESPOSTA' && v && typeof v === 'object' && v.VEICULOSBDRP && v.VEICULOSBDRP.RETORNO) return v.VEICULOSBDRP.RETORNO;
+        const inner = findReturn(v, depth + 1); if (inner) return inner;
+      }
+      return null;
+    };
+    const stored = await pool.query('SELECT raw_enc FROM vehicle_query_results WHERE query_id=$1', [queryId]);
+    const raw = decryptRaw(stored.rows[0].raw_enc);
+    const ret = findReturn(raw);
+    assert.ok(ret, 'o bruto da consulta legada tem o RETORNO do cadastro');
+    ret.RESTRICAOFINAN = 'ALIENACAO FIDUCIARIA';
+    ret.RESTRICAONOMEAGENTE = ''; ret.NUMEROCONTRATOFINANCEIRA = ''; ret.RESTRICAODATAINCLUSAO = ''; ret.CGCFINANCEIRA = '';
+    const fresh = normalizeBdrp(raw);
+    await pool.query('UPDATE vehicle_query_results SET normalized=$2::jsonb, raw_enc=$3, normalizer_version=$4 WHERE query_id=$1',
+      [queryId, JSON.stringify(fresh), encryptRaw(raw), NORMALIZER_VERSION]);
   }
 
   /** Zera o contador e devolve o que a Credify recebeu depois disso (login não é consulta paga). */
