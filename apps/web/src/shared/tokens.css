@@ -1,0 +1,134 @@
+/* BL Buscar — design tokens, fontes e base. Fontes hospedadas localmente (sem CDN). Paleta derivada do logo (verde e dourado). */
+@font-face { font-family: 'Inter'; font-weight: 300; font-style: normal; font-display: swap; src: url('/fonts/inter-latin-300-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-weight: 400; font-style: normal; font-display: swap; src: url('/fonts/inter-latin-400-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-weight: 500; font-style: normal; font-display: swap; src: url('/fonts/inter-latin-500-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Nunito'; font-weight: 800; font-style: normal; font-display: swap; src: url('/fonts/nunito-latin-800-normal.woff2') format('woff2'); }
+
+:root {
+  /* marca (nomes --violet/--lilac mantidos por compatibilidade; hoje são tons de verde) */
+  --violet: #138F52;
+  --violet-600: #0B7A43;
+  --violet-700: #086236;
+  --lilac: #5FD28F;
+  --blue: #22A862;
+  --ink: #04140D;
+
+  --bg: #F3F8F5;
+  --bg-soft: #E6F0EA;
+  --surface: #FFFFFF;
+  --surface-2: #F7FAF8;
+  --border: #DCE9E1;
+  --border-strong: #C5D8CC;
+  --text: #0F2A1D;
+  --text-2: #3A5144;
+  --muted: #566B5F;
+  --primary: #0B7A43;
+  --primary-hover: #086236;
+  --primary-soft: #E3F5EA;
+  --primary-ink: #065A33;
+  --on-primary: #FFFFFF;
+  --accent: #22A862;
+  --ok: #0E9F6E;
+  --ok-soft: #E3F8EF;
+  --ok-ink: #046C4E;
+  --warn: #B45309;
+  --warn-soft: #FEF3C7;
+  --warn-ink: #92400E;
+  --danger: #DC2626;
+  --danger-soft: #FEE8E8;
+  --danger-ink: #991B1B;
+  --info-soft: #E3F5EA;
+  --info-ink: #0B7A43;
+  --focus: #138F52;
+  --gold: #F2B705;
+
+  --night: #04140D;
+  --night-2: #0A2418;
+  --night-3: #12351F;
+
+  --radius-sm: 10px;
+  --radius: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+  --shadow-sm: 0 1px 2px rgba(16, 46, 30, .06), 0 1px 1px rgba(16, 46, 30, .04);
+  --shadow: 0 10px 28px -10px rgba(33, 108, 68, .16), 0 2px 6px rgba(16, 46, 30, .05);
+  --shadow-lg: 0 30px 64px -24px rgba(37, 142, 86, .30), 0 8px 20px -8px rgba(16, 46, 30, .10);
+  --ring: 0 0 0 3px rgba(70, 205, 133, .30);
+  --grad-brand: linear-gradient(135deg, #138F52, #22A862);
+
+  --font-display: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-body: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-plate: 'Nunito', 'Inter', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+
+  --gutter: clamp(16px, 4vw, 32px);
+  --maxw: 1180px;
+  --nav-h: 68px;
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --bg: #06170F;
+  --bg-soft: #0A1F15;
+  --surface: #0D2217;
+  --surface-2: #12301F;
+  --border: #1E3A2B;
+  --border-strong: #2C4A38;
+  --text: #E8F6EE;
+  --text-2: #BFD6C7;
+  --muted: #8FAA9A;
+  --primary: #5FDB99;
+  --primary-hover: #7BE4AC;
+  --primary-soft: #19472E;
+  --primary-ink: #A6E3C0;
+  --ok: #34D399;
+  --ok-soft: #0F2A22;
+  --ok-ink: #7FE3BC;
+  --warn: #FBBF24;
+  --warn-soft: #2D2410;
+  --warn-ink: #FCD679;
+  --danger: #F87171;
+  --danger-soft: #2E1618;
+  --danger-ink: #FCA5A5;
+  --info-soft: #193A28;
+  --info-ink: #A1EFC5;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .4);
+  --shadow: 0 10px 30px -10px rgba(0, 0, 0, .6);
+  --shadow-lg: 0 30px 70px -20px rgba(0, 0, 0, .7);
+  --ring: 0 0 0 3px rgba(110, 222, 162, .38);
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']):not([data-theme='dark']) {
+    --bg: #06170F; --bg-soft: #0A1F15; --surface: #0D2217; --surface-2: #12301F; --border: #1E3A2B; --border-strong: #2C4A38;
+    --text: #E8F6EE; --text-2: #BFD6C7; --muted: #8FAA9A; --primary: #5FDB99; --primary-hover: #7BE4AC; --primary-soft: #19472E; --primary-ink: #A6E3C0;
+    --ok: #34D399; --ok-soft: #0F2A22; --ok-ink: #7FE3BC; --warn: #FBBF24; --warn-soft: #2D2410; --warn-ink: #FCD679;
+    --danger: #F87171; --danger-soft: #2E1618; --danger-ink: #FCA5A5; --info-soft: #193A28; --info-ink: #A1EFC5;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, .4); --shadow: 0 10px 30px -10px rgba(0, 0, 0, .6); --shadow-lg: 0 30px 70px -20px rgba(0, 0, 0, .7);
+    --ring: 0 0 0 3px rgba(110, 222, 162, .38);
+    color-scheme: dark;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; } }
+body { margin: 0; font-family: var(--font-body); font-size: 16px; line-height: 1.55; color: var(--text); background: var(--bg); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+h1, h2, h3, h4 { font-family: var(--font-display); margin: 0; letter-spacing: -0.015em; line-height: 1.2; color: var(--text); }
+h1, h2, h3, h4 { font-weight: 400; }
+.muted, .page-head p, .card p { font-weight: 300; }
+b, strong, th { font-weight: 500; }
+p { margin: 0; }
+a { color: var(--primary); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 3px; }
+img, svg { max-width: 100%; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 6px; }
+::selection { background: rgba(111, 227, 165, .3); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.skip-link { position: absolute; left: 12px; top: -60px; z-index: 1000; background: var(--primary); color: #fff; padding: 10px 14px; border-radius: 10px; }
+.skip-link:focus { top: 12px; text-decoration: none; }
+.num { font-variant-numeric: tabular-nums; }
+.container { width: 100%; max-width: var(--maxw); margin: 0 auto; padding-inline: var(--gutter); }

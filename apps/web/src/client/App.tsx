@@ -1,0 +1,191 @@
+import { lazy, Suspense } from 'react';
+import ConsentBanner from './components/ConsentBanner';
+import SupportWidget from './components/SupportWidget';
+import SeoContent from './components/SeoContent';
+import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
+import { PageLoading } from '../shared/ui';
+import HeadSync from './components/HeadSync';
+import { AppLayout, PublicLayout, RequireAuth, ScrollManager } from './layouts';
+import { useActiveProfile } from './session';
+import { SEO_PAGES } from './content/seoPages';
+import { useEffect } from 'react';
+import { captureInvite, captureReferral } from './funnel';
+import { LeadLinkLanding, Unsubscribe } from './pages/LeadLink';
+import { api } from './api';
+import { useSession } from './session';
+
+const SupportChat = lazy(() => import('./pages/Support'));
+const Simulations = lazy(() => import('./pages/Simulations'));
+const Landing = lazy(() => import('./pages/Landing'));
+const Auth = lazy(() => import('./pages/Auth'));
+const SeoPage = lazy(() => import('./pages/SeoPage'));
+const Fipe = lazy(() => import('./pages/Fipe'));
+const FuelPage = lazy(() => import('./pages/Fuel').then((m) => ({ default: m.FuelPage })));
+const EconomyPage = lazy(() => import('./pages/Fuel').then((m) => ({ default: m.EconomyPage })));
+const GuideHome = lazy(() => import('./pages/Guide').then((m) => ({ default: m.GuideHome })));
+const CatalogVehiclePage = lazy(() => import('./pages/Guide').then((m) => ({ default: m.CatalogVehiclePage })));
+const GuideModelPage = lazy(() => import('./pages/Guide').then((m) => ({ default: m.GuideModelPage })));
+const Compare = lazy(() => import('./pages/Compare'));
+const Simulator = lazy(() => import('./pages/Simulator'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+/** Página inicial da área logada conforme o perfil: afiliado cai direto no painel de indicações. */
+function AppHome() {
+  const profile = useActiveProfile();
+  return profile === 'AFILIADO' ? <Navigate to="/app/parceiro" replace /> : <Dashboard />;
+}
+const PaidQueryReturn = lazy(() => import('./pages/PaidQueryReturn'));
+const NewQuery = lazy(() => import('./pages/NewQuery'));
+const History = lazy(() => import('./pages/History'));
+const Batch = lazy(() => import('./pages/Batch'));
+const CompareQueries = lazy(() => import('./pages/CompareQueries'));
+const Vehicles = lazy(() => import('./pages/Vehicles'));
+const Watches = lazy(() => import('./pages/Watches'));
+const QueryDetail = lazy(() => import('./pages/QueryDetail'));
+const Wallet = lazy(() => import('./pages/Wallet'));
+const Partner = lazy(() => import('./pages/Partner'));
+const PartnerInvite = lazy(() => import('./pages/PartnerInvite'));
+const Invites = lazy(() => import('./pages/Invites'));
+const InviteLanding = lazy(() => import('./pages/Invites').then((m) => ({ default: m.InviteLanding })));
+const Garage = lazy(() => import('./pages/Garage'));
+const GarageVehicle = lazy(() => import('./pages/Garage').then((m) => ({ default: m.GarageVehicle })));
+const FaqPage = lazy(() => import('./pages/Content').then((m) => ({ default: m.FaqPage })));
+const BlogPage = lazy(() => import('./pages/Content').then((m) => ({ default: m.BlogPage })));
+const BlogPostPage = lazy(() => import('./pages/Content').then((m) => ({ default: m.BlogPostPage })));
+const StoreShell = lazy(() => import('./pages/Store').then((m) => ({ default: m.StoreShell })));
+const StoreHome = lazy(() => import('./pages/Store').then((m) => ({ default: m.StoreHome })));
+const StoreCampaigns = lazy(() => import('./pages/Store').then((m) => ({ default: m.StoreCampaigns })));
+const StoreTeam = lazy(() => import('./pages/Store').then((m) => ({ default: m.StoreTeam })));
+const StoreStock = lazy(() => import('./pages/StoreStock'));
+const StoreLeads = lazy(() => import('./pages/StoreLeads').then((m) => ({ default: m.StoreLeads })));
+const StoreProposals = lazy(() => import('./pages/StoreLeads').then((m) => ({ default: m.StoreProposals })));
+const StorePage = lazy(() => import('./pages/Storefront').then((m) => ({ default: m.StorePage })));
+const StoreVehiclePage = lazy(() => import('./pages/Storefront').then((m) => ({ default: m.StoreVehiclePage })));
+const Account = lazy(() => import('./pages/Account'));
+const ContractSign = lazy(() => import('./pages/ContractSign').then((m) => ({ default: m.ContractSign })));
+const FiscalDocumentPage = lazy(() => import('./pages/ContractSign').then((m) => ({ default: m.FiscalDocumentPage })));
+const ContractCopy = lazy(() => import('./pages/ContractSign').then((m) => ({ default: m.ContractCopy })));
+const SharedReport = lazy(() => import('./pages/SharedReport'));
+const named = (key: string) => lazy(() => import('./pages/Public').then((m) => ({ default: (m as unknown as Record<string, React.ComponentType>)[key] })));
+const GuestQuery = named('GuestQuery'); const PlansPage = named('PlansPage'); const ValidatePage = named('ValidatePage'); const About = named('About'); const InstallApp = named('InstallApp'); const Contact = named('Contact'); const NotFound = named('NotFound');
+const FinancingBank = lazy(() => import('./pages/FinancingBank'));
+const Legal = lazy(() => import('./pages/Public').then((m) => ({ default: m.Legal })));
+
+/** Trata retornos que chegam na raiz: login social, redefinição de senha e retorno do checkout. */
+function Home() {
+  const loc = useLocation();
+  const { login } = useSession();
+  const p = new URLSearchParams(loc.search);
+  const ticket = p.get('oauth_ticket');
+  const returning = Boolean(p.get('checkout'));
+  // Aba do pagamento aberta pelo próprio app: ao voltar do Mercado Pago ela se fecha e a aba original segue a consulta.
+  useEffect(() => {
+    if (!returning) return;
+    try { if (window.opener && window.opener !== window && window.opener.location.origin === window.location.origin) window.close(); } catch { /* aba normal */ }
+  }, [returning]);
+  useEffect(() => {
+    if (!ticket) return;
+    api.post<{ token: string }>('/auth/oauth/consume', { ticket }).then((r) => login(r.token)).catch(() => undefined).finally(() => { window.history.replaceState(null, '', '/app'); window.location.replace('/app'); });
+  }, [ticket, login]);
+  if (ticket) return <PageLoading />;
+  if (p.get('oauth_error')) return <Navigate to={`/entrar?oauth_error=${encodeURIComponent(p.get('oauth_error')!)}`} replace />;
+  if (p.get('reset_token')) return <Navigate to={`/entrar?reset_token=${encodeURIComponent(p.get('reset_token')!)}`} replace />;
+  const checkout = p.get('checkout');
+  const pedido = p.get('pedido');
+  // Consulta avulsa paga: volta direto para a tela da consulta, que se executa sozinha.
+  if (checkout && p.get('tipo') === 'consulta' && pedido && /^[0-9a-f-]{36}$/i.test(pedido)) return <Navigate to={`/app/consultar/pedido/${pedido}?checkout=${encodeURIComponent(checkout)}`} replace />;
+  if (checkout) return <Navigate to={`/app/carteira?checkout=${encodeURIComponent(checkout)}`} replace />;
+  return <Landing />;
+}
+
+function SimulatorKind() {
+  const { tipo } = useParams();
+  return <><Simulator /><SeoContent path={`/simulador/${tipo ?? ''}`} faqTitle="Perguntas sobre financiamento" /></>;
+}
+
+export default function App() {
+  useEffect(() => { captureReferral(); captureInvite(); }, []);
+  return (
+    <>
+      <ScrollManager />
+      <HeadSync />
+      <ConsentBanner />
+      <SupportWidget />
+      <Suspense fallback={<PageLoading />}>
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/entrar" element={<Auth initial="login" />} />
+          <Route path="/criar-conta" element={<Auth initial="register" />} />
+          <Route path="/recuperar-senha" element={<Auth initial="forgot" />} />
+          <Route element={<PublicLayout />}>
+            <Route path="/consultar" element={<GuestQuery />} />
+            <Route path="/fipe" element={<><Fipe /><SeoContent path="/fipe" faqTitle="Perguntas sobre a Tabela FIPE" /></>} />
+            <Route path="/veiculos" element={<GuideHome />} />
+            <Route path="/veiculos/mais-economicos" element={<EconomyPage />} />
+            <Route path="/combustivel" element={<><FuelPage /><SeoContent path="/combustivel" /></>} />
+            <Route path="/veiculos/frota/:id" element={<CatalogVehiclePage />} />
+            <Route path="/veiculos/:slug" element={<GuideModelPage />} />
+            <Route path="/comparar" element={<><Compare /><SeoContent path="/comparar" /></>} />
+            <Route path="/simulador" element={<><Simulator /><SeoContent path="/simulador" faqTitle="Perguntas sobre financiamento" /></>} />
+            <Route path="/simulador/:tipo" element={<SimulatorKind />} />
+            <Route path="/financiamento" element={<FinancingBank />} />
+            <Route path="/financiamento/:slug" element={<FinancingBank />} />
+            <Route path="/planos" element={<PlansPage />} />
+            <Route path="/desenvolvedores" element={<Navigate to="/" replace />} />
+            <Route path="/perguntas-frequentes" element={<FaqPage />} />
+            <Route path="/blog" element={<BlogPage />} />
+            <Route path="/blog/:slug" element={<BlogPostPage />} />
+            <Route path="/sobre" element={<About />} />
+            <Route path="/instalar" element={<InstallApp />} />
+            <Route path="/contato" element={<Contact />} />
+            <Route path="/termos" element={<Legal kind="terms" />} />
+            <Route path="/privacidade" element={<Legal kind="privacy" />} />
+            <Route path="/parceiro/convite/:token" element={<PartnerInvite />} />
+            <Route path="/convite/:code" element={<InviteLanding />} />
+            <Route path="/c/:code" element={<LeadLinkLanding />} />
+            <Route path="/descadastrar" element={<Unsubscribe />} />
+            <Route path="/contrato/assinar/:token" element={<ContractSign />} />
+            <Route path="/contrato/:token" element={<ContractCopy />} />
+            <Route path="/documento-fiscal/:token" element={<FiscalDocumentPage />} />
+            <Route path="/loja/:slug" element={<StorePage />} />
+            <Route path="/loja/:slug/veiculo/:id" element={<StoreVehiclePage />} />
+            <Route path="/r/:token" element={<SharedReport />} />
+            <Route path="/validar" element={<ValidatePage />} />
+            <Route path="/validar/:code" element={<ValidatePage />} />
+            <Route path="/validar-relatorio/:code" element={<ValidatePage />} />
+            {SEO_PAGES.map((s) => <Route key={s.path} path={s.path} element={<SeoPage path={s.path} />} />)}
+            <Route path="*" element={<NotFound />} />
+          </Route>
+          <Route path="/app" element={<RequireAuth><AppLayout /></RequireAuth>}>
+            <Route index element={<AppHome />} />
+            <Route path="consultar" element={<NewQuery />} />
+            <Route path="fipe" element={<Fipe inApp />} />
+            <Route path="consultar/pedido/:orderId" element={<PaidQueryReturn />} />
+            <Route path="historico" element={<History />} />
+            <Route path="lote" element={<Batch />} />
+            <Route path="comparar-consultas" element={<CompareQueries />} />
+            <Route path="veiculos" element={<Vehicles />} />
+            <Route path="monitoramento" element={<Watches />} />
+            <Route path="simulacoes" element={<Simulations />} />
+            <Route path="consulta/:id" element={<QueryDetail />} />
+            <Route path="carteira" element={<Wallet />} />
+            <Route path="garagem" element={<Garage />} />
+            <Route path="garagem/:id" element={<GarageVehicle />} />
+            <Route path="loja" element={<StoreShell />}>
+              <Route index element={<StoreHome />} />
+              <Route path="estoque" element={<StoreStock />} />
+              <Route path="leads" element={<StoreLeads />} />
+              <Route path="propostas" element={<StoreProposals />} />
+              <Route path="equipe" element={<StoreTeam />} />
+              <Route path="campanhas" element={<StoreCampaigns />} />
+            </Route>
+            <Route path="parceiro" element={<Partner />} />
+            <Route path="convites" element={<Invites />} />
+            <Route path="api" element={<Navigate to="/app" replace />} />
+            <Route path="conta" element={<Account />} />
+            <Route path="suporte" element={<SupportChat />} />
+          </Route>
+        </Routes>
+      </Suspense>
+    </>
+  );
+}

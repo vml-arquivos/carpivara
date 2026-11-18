@@ -1,0 +1,13 @@
+node_modules/
+**/node_modules/
+apps/web/dist/
+**/*.tsbuildinfo
+.env
+.env.local
+coverage/
+.DS_Store
+
+# Ativos temporários de análise
+.assets/
+
+**/dist/
