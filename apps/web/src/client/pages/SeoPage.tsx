@@ -5,6 +5,7 @@ import { LinkButton, usePageTitle } from '../../shared/ui';
 import { trackFunnel } from '../funnel';
 import { SEO_BY_PATH } from '../content/seoPages';
 import { useSession } from '../session';
+import ForDealers from './ForDealers';
 import PlateSearch from '../components/PlateSearch';
 import { useFaqs } from '../components/Faq';
 import { SeoH1, useSeoContent } from '../components/SeoContent';
@@ -33,10 +34,11 @@ export default function SeoPage({ path }: { path: string }) {
           <SeoH1 path={path} fallback={page.heading} />
           <p className="lead">{page.lead}</p>
           <div style={{ marginTop: 26, maxWidth: 640 }}>
-            {page.intent === 'plate' ? <PlateSearch authed={status === 'authed'} placement="seo_hero" /> : <div className="row"><LinkButton to="/criar-conta" variant="primary" size="lg" iconRight="arrow-right">Criar conta grátis</LinkButton><LinkButton to="/contato?assunto=comercial" size="lg">Falar com a equipe</LinkButton></div>}
+            {page.intent === 'plate' ? <PlateSearch authed={status === 'authed'} placement="seo_hero" /> : <div className="row"><LinkButton to={path === '/para-lojistas' ? '/criar-conta?next=%2Fapp%2Floja' : '/criar-conta'} variant="primary" size="lg" iconRight="arrow-right">Criar conta grátis</LinkButton><LinkButton to="/contato?assunto=comercial" size="lg">Falar com a equipe</LinkButton></div>}
           </div>
         </div>
       </section>
+      {path === '/para-lojistas' && <ForDealers authenticated={status === 'authed'} />}
       <section className="section" style={{ paddingTop: 24 }}>
         <div className="container">
           <h2 className="sr-only">Por que verificar</h2>

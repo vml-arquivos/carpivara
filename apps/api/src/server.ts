@@ -79,6 +79,7 @@ import { loadMembership } from './dealer/context.js';
 import { dealerLeadsRouter } from './routes/dealerLeads.js';
 import { dealerOpsRouter } from './routes/dealerOps.js';
 import { dealerPublicRouter } from './routes/dealerPublic.js';
+import { findSimilarListings } from './dealer/recommendations.js';
 import { adminDealersRouter } from './routes/adminDealers.js';
 import { adminAccessRouter } from './routes/adminAccess.js';
 import { resolveAccess } from './lib/access.js';
@@ -1916,6 +1917,13 @@ api.get('/queries/:id/report', auth, requirePermission('VIEW_HISTORY'), asyncRou
   res.json({ report, verificationCode: meta.verificationCode, verificationUrl: meta.verificationUrl, consultedAt: meta.consultedAt, productName: meta.productName });
 }));
 
+const similarListingsLimit = rateLimit({ windowMs: 60_000, limit: 15, standardHeaders: true, legacyHeaders: false, skip: () => env.NODE_ENV === 'test' });
+api.get('/queries/:id/similar-listings', auth, requirePermission('VIEW_HISTORY'), similarListingsLimit, asyncRoute(async (req, res) => {
+  const { report } = await vehicleReportForQuery(String(req.params.id), req.user!.id, false);
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.json({ items: await findSimilarListings(report.headline, report.plate) });
+}));
+
 const reportGuideLimit = rateLimit({ windowMs: 60_000, limit: 8, standardHeaders: true, legacyHeaders: false, skip: () => env.NODE_ENV === 'test' });
 api.post('/queries/:id/report/guide', auth, requirePermission('VIEW_HISTORY'), reportGuideLimit, asyncRoute(async (req, res) => {
   const { report } = await vehicleReportForQuery(String(req.params.id), req.user!.id, false);
@@ -2050,7 +2058,7 @@ const adCheckBody = z.object({
 api.post('/queries/:id/ad-check', auth, requirePermission('VIEW_HISTORY'), asyncRoute(async (req, res) => {
   const parsed = adCheckBody.safeParse(req.body ?? {});
   if (!parsed.success || !Object.values(parsed.data).some((v) => v !== undefined && v !== '')) throw appError('Informe o preço, o modelo, a cor ou o ano do anúncio.', { code: 'INVALID_INPUT', http: 400, expose: true });
-  const { report } = await vehicleReportForQuery(String(req.params.id), req.user!.id);
+  const { report } = await vehicleReportForQuery(String(req.params.id), req.user!.id, req.query.snapshot !== '1');
   await recordFunnelEvent(req.user!.id, req, 'AD_CHECKED', {});
   res.setHeader('Cache-Control', 'private, no-store');
   res.json(checkAd(report, parsed.data));

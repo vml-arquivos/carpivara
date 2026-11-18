@@ -13,9 +13,9 @@ interface Item { id: string; subject: string; category: string; status: string; 
 interface Detail { id: string; subject: string; category: string; status: string; handler: 'BOT' | 'HUMAN'; messages: ThreadMessage[]; attachments: ThreadAttachment[] }
 const RELATED = new Set(['QUERY', 'PAYMENT']);
 
-function NewConversation({ onCreated, related }: { onCreated: (id: string) => void; related: { type: string; id: string } | null }) {
+function NewConversation({ onCreated, related, dealer }: { dealer: boolean; onCreated: (id: string) => void; related: { type: string; id: string } | null }) {
   const toast = useToast();
-  const [subject, setSubject] = useState(''); const [category, setCategory] = useState('DUVIDA'); const [message, setMessage] = useState(''); const [busy, setBusy] = useState(false);
+  const [subject, setSubject] = useState(dealer ? 'Contratação de pacote para lojista' : ''); const [category, setCategory] = useState('DUVIDA'); const [message, setMessage] = useState(''); const [busy, setBusy] = useState(false);
   async function submit(e: FormEvent) {
     e.preventDefault(); setBusy(true);
     try { const r = await api.post<{ id: string }>('/support/conversations', { subject, category, message, ...(related ? { related } : {}) }); onCreated(r.id); } catch (x) { toast.error(errorMessage(x)); } finally { setBusy(false); }
@@ -71,9 +71,10 @@ export default function Support() {
   const [open, setOpen] = useState<string | 'new' | null>(null);
   const type = params.get('tipo')?.toUpperCase() ?? ''; const rid = params.get('id') ?? '';
   const related = RELATED.has(type) && rid ? { type, id: rid } : null;
+  const dealer = params.get('assunto') === 'lojista';
   const items = list.data?.items ?? [];
-  useEffect(() => { if (related) setOpen('new'); }, [related?.type, related?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (!open && !related && items.length) setOpen(items[0].id); }, [items.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (related || dealer) setOpen('new'); }, [related?.type, related?.id, dealer]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!open && !related && !dealer && items.length) setOpen(items[0].id); }, [items.length]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { const t = window.setInterval(() => { if (!document.hidden) list.reload(); }, 20000); return () => window.clearInterval(t); }); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div className="page">
@@ -94,7 +95,7 @@ export default function Support() {
             ))}
           </ul>
           <section aria-label="Conversa">
-            {open === 'new' || (!open && !items.length) ? <NewConversation related={related} onCreated={(id) => { setParams({}, { replace: true }); setOpen(id); list.reload(); }} /> : open ? <Conversation id={open} onChanged={list.reload} /> : null}
+            {open === 'new' || (!open && !items.length) ? <NewConversation key={dealer ? "dealer" : "general"} dealer={dealer} related={related} onCreated={(id) => { setParams({}, { replace: true }); setOpen(id); list.reload(); }} /> : open ? <Conversation id={open} onChanged={list.reload} /> : null}
           </section>
         </div>
       )}

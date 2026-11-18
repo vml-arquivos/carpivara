@@ -80,6 +80,40 @@ describe('consulta → relatório v2: LGPD, planos, PDF/HTML e revelação audit
     assert.equal(other.status, 401);
   });
 
+  it('ofertas semelhantes consultam somente estoque público, sem entregar a placa nem criar leads', async () => {
+    const report = (await call(`/api/queries/${premiumQuery}/report`)).json.report;
+    const { brand, model } = report.headline;
+    const reg = await call('/api/auth/register', {
+      method: 'POST', token: undefined,
+      body: { name: 'Lojista de Teste', email: `${uid('loja')}@cliente.local`, password: 'Senha-Forte-123!', acceptTerms: true, acceptPrivacy: true }
+    });
+    assert.equal(reg.status, 201);
+    const store = (await pool.query(`INSERT INTO dealerships(owner_user_id,name,slug,public_enabled)
+      VALUES($1,'Loja de teste',$2,true) RETURNING id`, [reg.json.user.id, `teste-${premiumQuery.slice(0, 8)}`])).rows[0].id;
+    const dbModel = model.toLowerCase().startsWith(brand.toLowerCase() + ' ') ? model : `${brand} ${model}`;
+    const insert = async (listed, status, plate) => (await pool.query(`INSERT INTO stock_vehicles(dealership_id,brand,model,price_cents,cost_cents,public_listed,status,plate)
+      VALUES($1,$2,$3,5000000,4100000,$4,$5,$6) RETURNING id`, [store, brand, dbModel, listed, status, plate])).rows[0].id;
+    const available = await insert(true, 'AVAILABLE', null);
+    const hidden = await insert(false, 'AVAILABLE', null);
+    const reserved = await insert(true, 'RESERVED', null);
+    const samePlate = await insert(true, 'AVAILABLE', 'DEV1B11');
+    try {
+      const path = `/api/queries/${premiumQuery}/similar-listings`;
+      assert.equal((await call(path, { token: undefined })).status, 401);
+      assert.equal((await call(path, { token: reg.json.token })).status, 404);
+      const result = await call(path);
+      assert.equal(result.status, 200, result.text);
+      assert.equal(result.json.items.some((x) => x.id === available && x.priceCents === 5000000), true);
+      for (const id of [hidden, reserved, samePlate]) assert.equal(result.json.items.some((x) => x.id === id), false);
+      assert.doesNotMatch(result.text, /DEV1B11|costCents|4100000/);
+      assert.equal((await pool.query('SELECT count(*)::int AS n FROM dealer_leads WHERE dealership_id=$1', [store])).rows[0].n, 0);
+      await pool.query('UPDATE dealerships SET active=false WHERE id=$1', [store]);
+      assert.equal((await call(path)).json.items.some((x) => x.id === available), false);
+    } finally {
+      await pool.query('DELETE FROM dealerships WHERE id=$1', [store]);
+    }
+  });
+
   it('validação pública do código do relatório', async () => {
     const r = await hostRequest(server.base, `/api/validar-relatorio/${premiumQuery.slice(0, 8).toUpperCase()}`);
     assert.equal(r.status, 200); assert.equal(r.json.authentic, true);

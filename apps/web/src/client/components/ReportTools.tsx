@@ -71,13 +71,13 @@ export function ShareModal({ queryId, plate, onClose }: { queryId: string; plate
 }
 
 interface AdField { field: 'year' | 'color' | 'model'; status: 'OK' | 'ATTENTION' | 'MISMATCH'; registered: string; informed: string; message: string }
-interface AdResult { price?: { level: 'ALERT' | 'ATTENTION' | 'OK' | 'ABOVE' | 'NO_REFERENCE'; message: string }; fields: AdField[]; summary: string; hasRisk: boolean }
+export interface AdResult { price?: { diffPct?: number; level: 'ALERT' | 'ATTENTION' | 'OK' | 'ABOVE' | 'NO_REFERENCE'; message: string }; fields: AdField[]; summary: string; hasRisk: boolean }
 const FIELD_LABEL: Record<AdField['field'], string> = { year: 'Ano', color: 'Cor', model: 'Modelo' };
 const TONE = { OK: 'ok', ATTENTION: 'warn', MISMATCH: 'danger' } as const;
 const PRICE_TONE = { ALERT: 'danger', ATTENTION: 'warn', OK: 'ok', ABOVE: 'info', NO_REFERENCE: 'info' } as const;
 
 /** Conferir anúncio: compara preço, modelo, cor e ano do anúncio com o registro e a FIPE desta consulta. */
-export function AdCheckModal({ queryId, onClose }: { queryId: string; onClose: () => void }) {
+export function AdCheckModal({ queryId, onClose, onChecked }: { queryId: string; onClose: () => void; onChecked?: (result: AdResult, priceCents?: number) => void }) {
   const [price, setPrice] = useState(''); const [model, setModel] = useState(''); const [color, setColor] = useState(''); const [year, setYear] = useState('');
   const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [result, setResult] = useState<AdResult | null>(null);
   async function run() {
@@ -89,7 +89,11 @@ export function AdCheckModal({ queryId, onClose }: { queryId: string; onClose: (
     if (model.trim()) body.model = model.trim();
     if (color.trim()) body.color = color.trim();
     if (year.trim()) body.year = Number(year);
-    try { setResult(await api.post<AdResult>(`/queries/${queryId}/ad-check`, body)); }
+    try {
+      const checked = await api.post<AdResult>(`/queries/${queryId}/ad-check${onChecked ? '?snapshot=1' : ''}`, body);
+      setResult(checked);
+      onChecked?.(checked, typeof body.priceCents === 'number' ? body.priceCents : undefined);
+    }
     catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
   }
   return (

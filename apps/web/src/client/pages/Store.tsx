@@ -34,7 +34,7 @@ function Activate({ onDone }: { onDone: () => void }) {
           <li>Campanhas e relacionamento com clientes (em breve)</li>
         </ul>
         <p className="muted">O acesso da loja é liberado pelo nosso time quando o pacote é contratado.</p>
-        <div><Link className="btn primary" to="/app/suporte">Falar com o suporte</Link></div>
+        <div><Link className="btn primary" to="/app/suporte?assunto=lojista">Solicitar contratação</Link></div>
       </section>
     </div>
   );

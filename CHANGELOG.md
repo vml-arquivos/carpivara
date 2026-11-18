@@ -1,4 +1,10 @@
 # Changelog
+ 
+## 1.0.8 — Lojistas e comparação de anúncios
+
+- Página para lojistas com cadastro direcionado, solicitação de contratação e instruções para publicar a vitrine após liberação.
+- Ofertas de estoque público e disponível sob demanda, a partir do relatório privado do comprador.
+- Conferência de dois anúncios no comparador existente, com preço e diferença em relação à FIPE quando disponível.
 
 ## 1.0.7 — Entenda seu relatório
 

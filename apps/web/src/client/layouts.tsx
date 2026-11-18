@@ -34,6 +34,7 @@ const NAV: PubItem[] = [
   { to: '/planos', label: 'Consultas e preços' },
   { to: '/fipe', label: 'Tabela FIPE' },
   { to: '/simulador', label: 'Simulador' },
+  { to: '/para-lojistas', label: 'Para lojistas' },
   { label: 'Veículos', children: [
     { to: '/veiculos', label: 'Guia de veículos' },
     { to: '/comparar', label: 'Comparar veículos' },

@@ -10,6 +10,7 @@ import type { ReportEnvelope, VehicleSheet } from '../../shared/reportTypes';
 import SheetView, { FreeIdentity, type FreeDetails } from '../../shared/SheetView';
 import { api } from '../api';
 import DecisionGuide from '../components/DecisionGuide';
+import SimilarListings from '../components/SimilarListings';
 import { AdCheckModal, ShareModal } from '../components/ReportTools';
 import { STATUS, type QuerySummary } from '../components/QueryRow';
 
@@ -126,6 +127,7 @@ export default function QueryDetail() {
           </>}
           upsell={<div className="row-between"><span><b>Há pontos de atenção fora do seu plano.</b> A consulta completa mostra todos os detalhes.</span><LinkButton to={`/app/consultar?placa=${summary.plate}&produto=COMPLETE`} variant="primary" size="sm" iconRight="arrow-right">Consulta completa</LinkButton></div>}
         />
+        <SimilarListings key={id} queryId={id} />
         <div className="row no-print" style={{ marginTop: 22 }}>
           <LinkButton to={`/app/consultar?placa=${summary.plate}`} icon="refresh">Consultar de novo</LinkButton>
           <LinkButton to="/app/consultar" variant="ghost" icon="search">Outra placa</LinkButton>

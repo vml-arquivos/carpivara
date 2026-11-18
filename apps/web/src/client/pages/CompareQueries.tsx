@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Alert, Badge, EmptyState, ErrorState, Field, LinkButton, PageLoading, Select, useAsync, usePageTitle } from '../../shared/ui';
+import { Alert, Badge, Button, EmptyState, ErrorState, Field, LinkButton, PageLoading, Select, useAsync, usePageTitle } from '../../shared/ui';
 import { errorMessage } from '../../shared/api';
 import { dateTime, money } from '../../shared/format';
 import type { ReportEnvelope, ReportV2 } from '../../shared/reportTypes';
 import { api } from '../api';
+import { AdCheckModal, type AdResult } from '../components/ReportTools';
 import { VERDICT_BADGE, type QuerySummary } from '../components/QueryRow';
 
 const CHECK = { OK: 'Nada consta', ATTENTION: 'Atenção', ALERT: 'Alerta', NOT_CHECKED: 'Não consultado' } as const;
@@ -35,6 +36,37 @@ function lines(a: ReportEnvelope, b: ReportEnvelope): Line[] {
   return out;
 }
 
+function CompareAds({ a, b }: { a: { id: string; plate: string }; b: { id: string; plate: string } }) {
+  const [editing, setEditing] = useState<string | null>(null);
+  const [checks, setChecks] = useState<Record<string, { result: AdResult; priceCents?: number }>>({});
+  return (
+    <section className="card card-pad stack">
+      <h2>Comparar os anúncios</h2>
+      <p className="muted">Informe os dados de cada anúncio para conferir com o relatório da respectiva placa.</p>
+      <div className="grid-2">
+        {[a, b].map(({ id, plate }) => {
+          const check = checks[id];
+          const diff = check?.result.price?.diffPct;
+          return (
+            <article key={id} className="card card-pad stack-sm">
+              <h3>{plate}</h3>
+              <div><Button size="sm" onClick={() => setEditing(id)}>{check ? 'Conferir novamente' : `Conferir anúncio de ${plate}`}</Button></div>
+              {check && <>
+                {check.priceCents !== undefined && <p>Preço anunciado <strong>{money(check.priceCents)}</strong></p>}
+                {diff !== undefined && <p>Diferença em relação à FIPE <strong>{new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 1, signDisplay: 'exceptZero' }).format(diff / 100)}</strong></p>}
+                {check.result.price && <Alert tone={check.result.price.level === 'ALERT' ? 'danger' : 'info'}>{check.result.price.message}</Alert>}
+                {check.result.fields.map((field) => <Alert key={field.field} tone={field.status === 'MISMATCH' ? 'danger' : field.status === 'ATTENTION' ? 'warn' : 'info'}>{field.message}</Alert>)}
+              </>}
+            </article>
+          );
+        })}
+      </div>
+      {editing && <AdCheckModal key={editing} queryId={editing} onClose={() => setEditing(null)}
+        onChecked={(result, priceCents) => setChecks((prev) => ({ ...prev, [editing]: { result, priceCents } }))} />}
+    </section>
+  );
+}
+
 /** Comparar duas consultas já feitas, lado a lado. Não gera cobrança nem consulta nova. */
 export default function CompareQueries() {
   usePageTitle('Comparar consultas');
@@ -42,16 +74,16 @@ export default function CompareQueries() {
   const [idA, setIdA] = useState(params.get('a') ?? '');
   const [idB, setIdB] = useState(params.get('b') ?? '');
   const list = useAsync(async () => (await api.get<QuerySummary[]>('/queries?status=SUCCESS&limit=100')).filter((q) => q.productId !== 'FIPE_FREE'), []);
-  const [pair, setPair] = useState<{ a: ReportEnvelope; b: ReportEnvelope } | null>(null);
+  const [pair, setPair] = useState<{ a: ReportEnvelope; b: ReportEnvelope; idA: string; idB: string } | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    setPair(null); setError('');
+    setPair(null); setError(''); setBusy(false);
     if (!idA || !idB || idA === idB) return;
     let alive = true; setBusy(true);
     Promise.all([api.get<ReportEnvelope>(`/queries/${idA}/report`), api.get<ReportEnvelope>(`/queries/${idB}/report`)])
-      .then(([a, b]) => { if (alive) setPair({ a, b }); }, (e) => { if (alive) setError(errorMessage(e)); })
+      .then(([a, b]) => { if (alive) setPair({ a, b, idA, idB }); }, (e) => { if (alive) setError(errorMessage(e)); })
       .finally(() => { if (alive) setBusy(false); });
     setParams({ a: idA, b: idB }, { replace: true });
     return () => { alive = false; };
@@ -78,7 +110,8 @@ export default function CompareQueries() {
           {busy && <p className="muted">Carregando…</p>}
         </section>
       )}
-      {pair && (
+      {pair && pair.idA === idA && pair.idB === idB && (
+        <>
         <section className="card card-pad stack">
           <div className="table-wrap">
             <table className="table">
@@ -99,6 +132,8 @@ export default function CompareQueries() {
           </div>
           <p className="muted">Compara só o que cada consulta trouxe. "Não consultado" quer dizer que aquele pacote não verificou esse ponto, não que está tudo certo.</p>
         </section>
+        <CompareAds key={`${idA}:${idB}`} a={{ id: idA, plate: pair.a.report.plate }} b={{ id: idB, plate: pair.b.report.plate }} />
+        </>
       )}
     </div>
   );
