@@ -86,5 +86,15 @@ export async function queryAnycarAuction(plate: string, o: AnycarOptions = {}): 
   if (response.status >= 500) throw fail('DATA_PROVIDER_UNAVAILABLE', `AnyCar indisponível (HTTP ${response.status}).`);
   const body = await response.json().catch(() => null);
   if (!response.ok && !isRec(body)) throw fail('DATA_PROVIDER_INVALID_RESPONSE', `AnyCar respondeu HTTP ${response.status}.`);
-  return toAuctionPiece(body);
+  // Resposta 200 que não é um objeto legível: a base não devolveu a informação, não é "respondeu sem este dado".
+  if (!isRec(body)) throw fail('DATA_PROVIDER_INVALID_RESPONSE', 'AnyCar respondeu sem um JSON legível.');
+  try {
+    return toAuctionPiece(body);
+  } catch (e) {
+    // Marca o que a exceção não consegue dizer sozinha: a fonte RESPONDEU e o corpo não afirma ausência (E3, sem retorno),
+    // em vez de não ter respondido (E5). É o que permite a um produto com outras fontes degradar para parcial sem
+    // inventar "nada consta" e sem derrubar a consulta inteira.
+    Object.assign(e as object, { answered: true });
+    throw e;
+  }
 }

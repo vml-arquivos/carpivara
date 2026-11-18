@@ -26,7 +26,7 @@ export interface ReportTable { columns: string[]; rows: string[][] }
  * `sourceState` é o estado semântico do vocabulário de `layers.ts` (E1..E5) que explica o porquê — é ele que impede
  * "sem retorno", "fora da cobertura" e "indisponível" de serem lidos como "nada consta".
  */
-export interface VtValue { state: 'NOT_PROVIDED' | 'CLEAR' | 'ALERT' | 'INFO'; value: string | null; display?: string | null; masked?: boolean; table?: ReportTable; sourceState?: SourceState; farolOnly?: boolean }
+export interface VtValue { state: 'NOT_PROVIDED' | 'CLEAR' | 'ALERT' | 'INFO'; value: string | null; display?: string | null; masked?: boolean; table?: ReportTable; sourceState?: SourceState; farolOnly?: boolean; /** valor calculado pelo BL Buscar (estimativa, classificação ou decodificação), nunca dado bruto da fonte */ derived?: boolean }
 
 const isRec = (v: unknown): v is Rec => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 const fold = (v: string) => v.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/\s+/g, ' ').trim();
@@ -62,6 +62,23 @@ function blockCode(r: Rec, name: BlockName): string | undefined {
 }
 const block = (r: Rec, name: BlockName): Rec | undefined => (isRec(r[name]) ? upperKeys(r[name] as Rec) : undefined);
 const records = (b: Rec | undefined): Rec[] => b ? Object.entries(b).filter(([k, v]) => /^REGISTRO_\d+$/.test(k) && isRec(v)).sort((a, c) => Number(a[0].slice(9)) - Number(c[0].slice(9))).map(([, v]) => upperKeys(v as Rec)) : [];
+/** Campos que a fonte só repete (controle da consulta e identificação do veículo): não são conteúdo de ocorrência. */
+const IDENTITY_KEYS = /^(?:CODIGO|CODIGORESPOSTA|DESCRICAORETORNO|EXISTE_ERRO|MSG_ERRO|CHAVERETORNO|TEMPOEXECUCAO|REDUNDANCIA|STATUS_CONSULTA|IDCONSULTA|DATAHORA|LOGON|PLACA|CHASSI|RENAVAM|MARCA|MODELO|MARCAMODELO)$/;
+/**
+ * O bloco traz conteúdo de ocorrência escrito solto, no formato que a Credify publica em /historicoroubofurto e
+ * /recall (DESCRICAOOCORRENCIA, UF_DUT, MONTADORA...) — fora do Veículo Total não existe REGISTRO_n para contar.
+ */
+function blockHasContent(b: Rec | undefined, depth = 0): boolean {
+  if (!b || depth > 2) return false;
+  for (const [k, v] of Object.entries(b)) {
+    if (IDENTITY_KEYS.test(k)) continue;
+    if (Array.isArray(v)) { if (v.some((x) => (isRec(x) ? blockHasContent(upperKeys(x), depth + 1) : str(x) !== '' && str(x) !== '0'))) return true; continue; }
+    if (isRec(v)) { if (blockHasContent(upperKeys(v as Rec), depth + 1)) return true; continue; }
+    const s = str(v);
+    if (s !== '' && s !== '0') return true;
+  }
+  return false;
+}
 
 /** Código da base de gravame (VEICULOSBDRP) no Veículo Total: '1' = há dados; outro valor = sem dados ou erro; undefined = não é Veículo Total. */
 export function bdrpCode(raw: unknown): string | undefined {
@@ -180,7 +197,9 @@ function occurrence(r: Rec, name: BlockName, clearText: string, noneMeansClear: 
   if (c === '2' || (c === undefined && saysNone)) return noneMeansClear ? { state: 'CLEAR', value: desc || clearText, display: clearText, sourceState: 'CONFIRMED_NONE' } : gapItem(st ?? 'NO_RETURN');
   if (!desc) return gapItem('NO_RETURN');
   // Só é ocorrência o que a fonte afirma ou o que veio como registro; texto irreconhecível é lacuna, não alarme.
-  if (!hasRecords && st !== 'OCCURRENCE') return gapItem('NO_RETURN');
+  // "Registro" aqui é o que a fonte escreveu solto no bloco também: em camadas, /historicoroubofurto devolve
+  // DESCRICAOOCORRENCIA e UF_DUT sem REGISTRO_1, e isso é ocorrência afirmada, não lacuna.
+  if (!hasRecords && !blockHasContent(b) && st !== 'OCCURRENCE') return gapItem('NO_RETURN');
   const generic = /^(SUCESSO|OK|CONSULTA (REALIZADA )?COM SUCESSO|REGISTRO(S)? ENCONTRADO(S)?|ENCONTRADO)\.?$/.test(fold(desc));
   return { state: 'ALERT', value: desc || 'CONSTA', display: generic ? alertText : sentenceCase(desc), sourceState: 'OCCURRENCE' };
 }
@@ -385,12 +404,13 @@ export function vehicleTotalExtras(raw: unknown): Map<string, VtValue> {
   const indYes = Boolean(ind) && (indDigits ? Number(indDigits) > 0 : /^(S|SIM|TRUE)$/.test(fold(ind)));
   const indNo = Boolean(ind) && (indDigits ? Number(indDigits) === 0 : /^(N|NAO|NADA|NENHUM|FALSE)$/.test(fold(ind)));
   out.set('VT_SINISTRO', !sin || sinCode === '3'
-    ? withTrace(sinCode === '3' ? { ...NOT_PROVIDED, sourceState: 'UNAVAILABLE' as SourceState } : NOT_PROVIDED, sinTrace)
+    // Sem display, o item ficaria com "null" em tela e em PDF: toda lacuna carrega a linha legível do estado.
+    ? withTrace(sinCode === '3' ? gapItem('UNAVAILABLE') : NOT_PROVIDED, sinTrace)
     : indNo
       ? { state: 'CLEAR', value: 'SEM INDICIO', display: 'Sem indício de sinistro', sourceState: 'CONFIRMED_NONE' }
       : indYes
         ? { state: 'ALERT', value: str(sin.DESCRICAORETORNO) || 'INDICIO DE SINISTRO', display: 'Há indício de sinistro', sourceState: 'OCCURRENCE' }
-        : (() => { const st = classifyText(ind); return withTrace(st === 'NO_RETURN' || st === 'UNAVAILABLE' ? gapItem(st) : { ...NOT_PROVIDED, sourceState: 'NO_RETURN' as SourceState }, sinTrace); })());
+        : (() => { const st = classifyText(ind); return withTrace(gapItem(st === 'NO_RETURN' || st === 'UNAVAILABLE' ? st : 'NO_RETURN'), sinTrace); })());
   const origem = isRec(r.ORIGEM) ? upperKeys(r.ORIGEM as Rec) : {};
   // Roubo/furto lido só do marcador do cadastro (Completa em camadas): a frase diz exatamente isso.
   const theft = occurrence(r, 'HISTORICOROUBOFURTO', origem.ROUBOFURTO === 'CADASTRO' ? 'Sem restrição de roubo ou furto no cadastro do veículo' : 'Não consta no histórico de roubo ou furto', true, 'Consta registro de roubo ou furto');

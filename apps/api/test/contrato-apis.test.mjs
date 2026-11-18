@@ -150,9 +150,16 @@ describe('base obrigatória que não responde: não entrega relatório incomplet
 
   it('"não encontrado" é resposta válida (nada consta): entrega normalmente', async () => {
     resetCredifyTokenCache();
-    const f = fakeFetch({ '/veiculoproprietarioplaca': { status: 404 }, '/precificadorfipe': { status: 404 } });
+    // A Credify publica "dado não encontrado" como CODIGO=2 no corpo. HTTP 404 é outra coisa: endpoint fora do
+    // contrato da conta, tratado no caso seguinte para nunca ser lido como ausência confirmada.
+    const f = fakeFetch({ '/veiculoproprietarioplaca': absent('514', 'DADO NAO ENCONTRADO'), '/precificadorfipe': absent('454', 'DADO NAO ENCONTRADO') });
     const out = await run(f, 'COMPLETE');
     assert.equal(out.raw.parcial, undefined);
+  });
+  it('endpoint fora do contrato (HTTP 404) não é nada consta: a consulta cai e nada é entregue', async () => {
+    resetCredifyTokenCache();
+    const f = fakeFetch({ '/precificadorfipe': { status: 404 } });
+    await assert.rejects(run(f, 'COMPLETE'), (e) => e.code === 'DATA_PROVIDER_INCOMPLETE' && /FIPE/.test(e.detail));
   });
 
   it('gravame que o cadastro pede e falha derruba a Avançada e a Premium; na Completa nem é consultado', async () => {

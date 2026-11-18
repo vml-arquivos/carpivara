@@ -13,8 +13,14 @@ const upperKeys = (o: Rec): Rec => Object.fromEntries(Object.entries(o).map(([k,
 export const LAYER_ORDER = ['INDICIOSINISTROVEICULAR', 'RECALL', 'HISTORICOROUBOFURTO', 'LEILAOCONJUGADO', 'HISTORICOPROPRIETARIO', 'VEICULARBNACIONAL', 'PRECIFICADORFIPE', 'VEICULOSBDRP'] as const;
 export type LayerBlock = (typeof LAYER_ORDER)[number];
 
-/** Resultado de uma consulta avulsa: dados, "não encontrado" ou nada (falhou ou não foi chamada). */
-export type Piece = { kind: 'data'; resposta: Rec } | { kind: 'notFound' } | { kind: 'none'; code?: string };
+/**
+ * Resultado de uma consulta avulsa: dados, "não encontrado" ou nada (falhou ou não foi chamada).
+ * `gap` é o estado (E3/E4/E5) quando quem monta a peça já sabe qual é: uma fonte que respondeu HTTP 200 sem trazer o dado
+ * é sem retorno (E3), e não "fora da cobertura" (E4) nem "não respondeu" (E5). Sem `gap`, vale a dedução de sempre:
+ * sem código é fora da cobertura, com código é a base que não respondeu.
+ */
+export type GapState = Extract<SourceState, 'NO_RETURN' | 'OUT_OF_SCOPE' | 'UNAVAILABLE'>;
+export type Piece = { kind: 'data'; resposta: Rec } | { kind: 'notFound' } | { kind: 'none'; code?: string; gap?: GapState };
 
 /**
  * Vocabulário único dos estados de uma informação (diretiva do dono do produto). Todo o resto do relatório deriva daqui;
@@ -41,31 +47,78 @@ export const STATE_LINE: Record<SourceState, string> = {
   CONFIRMED_NONE: '',
   NO_RETURN: 'Não informado pela fonte: a consulta foi feita e respondeu sem este dado. Isso não equivale a “nada consta”.',
   UNAVAILABLE: 'Não informado pela fonte: esta base não respondeu (indisponibilidade, recusa ou falta de tempo). Isso não equivale a “nada consta”.',
-  OUT_OF_SCOPE: 'Não informado nesta consulta: a base que verifica este item não foi acionada nesta consulta. Isso não equivale a “nada consta”.'
+  // Fora da cobertura, o texto não pode nem mencionar a expressão de quitação: o item é lido em tela e em PDF, e
+  // "nada consta" escrito até para negar ainda vira leitura de ausência. Aqui se diz o que não foi verificado.
+  OUT_OF_SCOPE: 'Não informado nesta consulta: a base que verifica este item não foi acionada (fora da cobertura deste produto). Este item não foi verificado — isso não significa que está tudo certo.'
 };
 
-/** A fonte avisando que a consulta em si não se completou (E5). */
-const UNAVAILABLE_TEXT = /^(ERRO|FALHA|TIMEOUT|INDISPONIVEL|LIMI(TE|T)|QUOTA|SALDO|RECUSAD|NAO AUTORIZAD|NAO PERMITID|SEM TEMPO|SEM CREDENCI)/;
-/** A fonte respondeu, mas não informou este dado (E3): "não sei" nunca é "não há". Marcadores de frase são prefixados; só códigos curtos (N, NAO, 0, N/D) exigem igualdade. */
-const NO_RETURN_TEXT = /^(N\/D|N\/A|NULL|-+)$|^(NAO INFORMAD|NAO DISPONIVEL|NAO DISPONIBILIZAD|NAO LOCALIZAD|NAO FOI POSSIVEL|NAO CONSEGU|NAO IDENTIFICAD|NAO CADASTRAD|INDEFINID|INCONCLUS|EM ANDAMENTO|AGUARDE|SEM RETORNO|SEM DADOS|SEM INFORMAC|SEM RESPOSTA|PLACA SEM CADASTRO|RESPOSTA PARCIAL)/;
-/** Ausência afirmada pela fonte (E2). Prefixos para as frases de quitação, igualdade para os códigos de campo (N, NAO, NADA, 0). */
-const CONFIRMED_NONE_TEXT = /^(N|NAO|NADA|NENHUM|NENHUMA|FALSE|0+)$|^(NADA CONSTA|NADA CONS|NAO CONSTA|NAO POSSUI|NAO HA|NAO EXISTE|NAO TEM|NAO (?:FOI )?APRESENTAD)|^SEM (?!INFORMAC|RETORNO|DADOS|RESPOSTA)/;
-/** Ocorrência afirmada pela fonte (E1), incluindo as respostas afirmativas dos campos de código (S, 1, 2...). */
-const OCCURRENCE_TEXT = /^(S|SIM|TRUE|[1-9]\d*)$|REGISTRO|OCORRENCIA|CONSTA|EXISTE|POSSUI|LOCALIZADO|ALIENAC|APREENS|BLOQUE|RESTRICAO|LEILAO|SINISTRO|ROUBO|FURTO|RECALL|CAMPANHA|IRREGULAR|REMARCA|DENUNCIA|INQUERITO|GUINCHO|TRIBUTARI|ADMINISTRATIV|JUDICIAL|PENDENCIA|VENCID|ATIVA|EM ABERTO|INATIV|DESMONT|SUCATA|MULTA|DEBITO|BUSCA/;
+/** Família 1 — igualdade exata do marcador normalizado (maiúsculas, sem acento, espaço colapsado). */
+const UNAVAILABLE_EXACT = /^(?:ERRO|FALHA|TIMEOUT|INDISPONIVEL|RECUSA|SEM TEMPO)$/;
+const NO_RETURN_EXACT = /^(?:N\/D|N\/A|NULL|-+|INDEFINID\w*|INCONCLUS\w*|EM ANDAMENTO|AGUARDE\w*|RESPOSTA PARCIAL|PLACA SEM CADASTRO|CONSULTA EM ANDAMENTO)$/;
+const CONFIRMED_NONE_EXACT = /^(?:N|NAO|NADA|NENHUM|NENHUMA|FALSE|0+)$/;
+const OCCURRENCE_EXACT = /^(?:S|SIM|TRUE|[1-9]\d*)$/;
 
-/** Estado de um texto devolvido pela fonte. `undefined` = texto que ninguém pode interpretar como ausência. */
+/** Família 2 — afixo semântico: em texto composto ("NAO INFORMADO PELO PROVEDOR"), quem abre ou fecha a frase decide. */
+const UNAVAILABLE_PREFIX = /^(?:ERRO|FALHA|TIMEOUT|INDISPONIVEL|LIMI(?:TE|T)|QUOTA|SALDO|RECUSAD|NAO AUTORIZAD|NAO PERMITID|SEM TEMPO|SEM CREDENCI)/;
+const UNAVAILABLE_SUFFIX = /(?:INDISPONIVEL|TIMEOUT|FORA DO AR|NAO RESPONDEU)$/;
+const NO_RETURN_PREFIX = /^(?:NAO INFORMAD|NAO DISPONIB|NAO LOCALIZAD|NAO IDENTIFICAD|NAO CADASTRAD|NAO FOI POSSIVEL|NAO CONSEGU|NAO DECODIF|EM ANDAMENTO|AGUARDE|SEM RETORNO|SEM DADOS|SEM INFORMAC|SEM RESPOSTA|RESPOSTA PARCIAL|PLACA SEM CADASTRO|INDEFINID|INCONCLUS)/;
+const NO_RETURN_SUFFIX = /(?:EM ANDAMENTO|SEM RETORNO|SEM DADOS|SEM INFORMAC\w*|SEM RESPOSTA|NAO INFORMAD\w*|NAO DISPONIVEL|NAO LOCALIZAD\w*)$/;
+const CONFIRMED_NONE_PREFIX = /^(?:NADA CONSTA|NADA CONS\w*|NAO CONSTA|NAO POSSUI|NAO HA|NAO EXISTE|NAO TEM|NAO (?:FOI )?APRESENTAD|SEM (?!INFORMAC|RETORNO|DADOS|RESPOSTA|TEMPO|CREDENCI))/;
+
+/** Família 3 — frase de quitação escrita no meio do texto ("O VEICULO NAO FOI APRESENTADO NA BASE DE LEILAO."). */
+const ABSENCE_PHRASE = /(?:^|\s)(?:NADA CONSTA|NAO CONSTA(?:M)?|NAO FOI APRESENTAD\w*|NAO APRESENTAD\w*|NAO POSSUI|NAO HA|NAO EXISTE|NAO TEM|SEM REGISTRO|SEM OCORRENCIA|SEM PENDENCIA|SEM SINAL|SEM VESTIGIO)(?:$|\s)/;
+/** Verbos que afirmam uma ocorrência: se algum aparecer fora do alcance de uma negação, a frase não é de quitação. */
+const ASSERTION_TOKENS = ['CONSTA', 'CONSTAM', 'EXISTE', 'EXISTEM', 'POSSUI', 'POSSUEM', 'HA', 'TEM', 'TENHA', 'HOUVE', 'REGISTROU', 'REGISTRAM', 'APRESENTOU', 'APRESENTA', 'CONSTATA'];
+/** Palavras de domínio do relatório; lidas por início de palavra, para "INEXISTENTE" não casar "EXISTE". */
+const OCCURRENCE_STEMS = ['REGISTRO', 'REGISTRAD', 'OCORRENCIA', 'CONSTA', 'EXISTE', 'POSSUI', 'LOCALIZAD', 'ALIENAC', 'APREENS', 'BLOQUE', 'RESTRICAO', 'RESTRICOES', 'LEILAO', 'LEILOES', 'SINISTRO', 'ROUBO', 'FURTO', 'RECALL', 'CAMPANHA', 'IRREGULAR', 'REMARCA', 'DENUNCIA', 'INQUERITO', 'GUINCHO', 'TRIBUTARI', 'ADMINISTRATIV', 'JUDICIAL', 'PENDENCIA', 'VENCID', 'ATIVA', 'INATIV', 'DESMONT', 'SUCATA', 'MULTA', 'DEBITO', 'BUSCA', 'APRESENTAD', 'INDICIO', 'EM ABERTO'];
+const NEGATION_TOKENS = ['NAO', 'NADA', 'SEM', 'NEM'];
+
+/** A palavra-chave aparece como palavra (ou começo de palavra) sem uma negação até três palavras antes dela. */
+function unnegated(t: string, keys: readonly string[], wholeWord: boolean): boolean {
+  for (const k of keys) {
+    let i = t.indexOf(k);
+    while (i !== -1) {
+      const before = t.slice(0, i);
+      const after = t[i + k.length] ?? '';
+      const startsWord = before === '' || !/[A-Z0-9]/.test(before[before.length - 1]!);
+      const endsWord = !/[A-Z0-9]/.test(after);
+      if (startsWord && (!wholeWord || endsWord)) {
+        const previous = before.split(' ').filter(Boolean).slice(-3);
+        if (!previous.some((w) => NEGATION_TOKENS.includes(w))) return true;
+      }
+      i = t.indexOf(k, i + 1);
+    }
+  }
+  return false;
+}
+
+/**
+ * Estado de um texto devolvido pela fonte. `undefined` = texto que ninguém pode interpretar como ausência.
+ * Três famílias, nesta ordem: (1) igualdade exata do marcador, (2) afixo semântico quando o texto é composto,
+ * (3) presença de expressão de ausência só quando não há marcador contraditório. Nunca é uma regex única com `^...$`.
+ * Dentro de cada família a checagem é E5 → E3 → E2 → E1, e E1 vem por último de propósito: "LEILAO", "RECALL" e
+ * "RESTRICAO" também são nomes do domínio, então ler a ocorrência antes da negação transformaria "SEM RECALL" e
+ * "O VEICULO NAO FOI APRESENTADO NA BASE DE LEILAO." em alerta — o falso alerta que a diretiva também proíbe.
+ */
 export function classifyText(value: unknown): SourceState | undefined {
   const t = fold(scalar(value));
   if (!t) return undefined;
-  if (UNAVAILABLE_TEXT.test(t)) return 'UNAVAILABLE';
-  if (NO_RETURN_TEXT.test(t)) return 'NO_RETURN';
-  if (CONFIRMED_NONE_TEXT.test(t)) return 'CONFIRMED_NONE';
-  if (OCCURRENCE_TEXT.test(t)) return 'OCCURRENCE';
+  if (UNAVAILABLE_EXACT.test(t)) return 'UNAVAILABLE';
+  if (NO_RETURN_EXACT.test(t)) return 'NO_RETURN';
+  if (CONFIRMED_NONE_EXACT.test(t)) return 'CONFIRMED_NONE';
+  if (OCCURRENCE_EXACT.test(t)) return 'OCCURRENCE';
+  if (UNAVAILABLE_PREFIX.test(t) || UNAVAILABLE_SUFFIX.test(t)) return 'UNAVAILABLE';
+  if (NO_RETURN_PREFIX.test(t) || NO_RETURN_SUFFIX.test(t)) return 'NO_RETURN';
+  if (CONFIRMED_NONE_PREFIX.test(t)) return 'CONFIRMED_NONE';
+  const affirms = unnegated(t, ASSERTION_TOKENS, true);
+  if (!affirms && ABSENCE_PHRASE.test(t)) return 'CONFIRMED_NONE';
+  if (affirms || unnegated(t, OCCURRENCE_STEMS, false)) return 'OCCURRENCE';
   return undefined;
 }
 
-/** Estado de uma peça que não veio como dados: sem código é fora da cobertura; com código é a base que não respondeu. */
-export const missingPieceState = (piece: Piece): SourceState => (piece.kind === 'none' ? (piece.code ? 'UNAVAILABLE' : 'OUT_OF_SCOPE') : piece.kind === 'notFound' ? 'CONFIRMED_NONE' : 'NO_RETURN');
+/** Estado de uma peça que não veio como dados: o estado dito por quem a monta manda; sem código é fora da cobertura; com código é a base que não respondeu. */
+export const missingPieceState = (piece: Piece): SourceState =>
+  piece.kind === 'none' ? (piece.gap ?? (piece.code ? 'UNAVAILABLE' : 'OUT_OF_SCOPE')) : piece.kind === 'notFound' ? 'CONFIRMED_NONE' : 'NO_RETURN';
 /** Linha legível do estado (vazia para E1/E2, que se mostram com o texto da própria fonte). */
 export const stateLine = (state: SourceState | undefined): string | undefined => (state && state !== 'OCCURRENCE' && state !== 'CONFIRMED_NONE' ? STATE_LINE[state] : undefined);
 

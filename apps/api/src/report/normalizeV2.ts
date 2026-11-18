@@ -50,6 +50,7 @@ export interface ReportItem {
    * OCCURRENCE, CONFIRMED_NONE (o único que autoriza "nada consta"), NO_RETURN, OUT_OF_SCOPE, UNAVAILABLE.
    */
   sourceState?: SourceState;
+  /** calculado pelo sistema (estimativa, projeção, decodificação): exibido sempre com rótulo, nunca como fato da fonte */ derived?: boolean;
 }
 
 export interface ReportSection {
@@ -267,7 +268,9 @@ export function buildReportV2(raw: unknown): ReportV2 {
     const extras = vehicleTotalExtras(raw);
     for (const def of VT_CATALOG) {
       const x = extras.get(def.key) ?? { state: 'NOT_PROVIDED' as const, value: null };
-      items.set(def.key, { key: def.key, label: def.label, kind: def.kind, state: x.state, value: x.value, display: x.display ?? x.value, ...(x.masked ? { masked: true } : {}), ...(x.table ? { table: x.table } : {}), sensitivity: def.sensitivity, tier: def.tier, high: def.high && x.state === 'ALERT' ? true : undefined });
+      // O estado da fonte (E1..E5) é o que explica a lacuna: sem ele o item NOT_PROVIDED seria apagado abaixo e o
+      // campo sumiria do relatório sem dizer por quê — exatamente o falso "nada consta" que a diretiva proíbe.
+      items.set(def.key, { key: def.key, label: def.label, kind: def.kind, state: x.state, value: x.value, display: x.display ?? x.value, ...(x.masked ? { masked: true } : {}), ...(x.table ? { table: x.table } : {}), ...(x.sourceState ? { sourceState: x.sourceState } : {}), sensitivity: def.sensitivity, tier: def.tier, high: def.high && x.state === 'ALERT' ? true : undefined });
     }
   }
   // FIPE localizada pelo cadastro (modelo, ano e cilindrada) quando o provedor não trouxe o valor: preenche só o que está vazio.
@@ -294,7 +297,8 @@ export function buildReportV2(raw: unknown): ReportV2 {
   enr.set('RES_BUSCA_APREENSAO', seizureExtra(upper, raw));
   for (const def of ENRICH_CATALOG) {
     const x = enr.get(def.key) ?? { state: 'NOT_PROVIDED' as const, value: null };
-    items.set(def.key, { key: def.key, label: def.label, kind: def.kind, state: x.state, value: x.value, display: x.display ?? x.value, ...(x.table ? { table: x.table } : {}), sensitivity: def.sensitivity, tier: def.tier, high: def.high && x.state === 'ALERT' ? true : undefined });
+    // Mesmo motivo do VT_CATALOG: gravame, leilão e análises trazem o estado no VtValue e ele tem de chegar ao item.
+    items.set(def.key, { key: def.key, label: def.label, kind: def.kind, state: x.state, value: x.value, display: x.display ?? x.value, ...(x.derived ? { derived: true } : {}), ...(x.table ? { table: x.table } : {}), ...(x.sourceState ? { sourceState: x.sourceState } : {}), sensitivity: def.sensitivity, tier: def.tier, high: def.high && x.state === 'ALERT' ? true : undefined });
   }
   // Medidas zeradas (eixos, carga, CMT, PBT em carro de passeio) não informam nada: tratadas como ausentes.
   for (const k of ['EIXOS', 'CAPACIDADECARGA', 'CMT', 'PBT']) { const it = items.get(k); if (it && it.state !== 'NOT_PROVIDED' && /^0+([.,]0+)?$/.test(String(it.value ?? '').trim())) items.set(k, { ...it, state: 'NOT_PROVIDED', value: null, display: null }); }

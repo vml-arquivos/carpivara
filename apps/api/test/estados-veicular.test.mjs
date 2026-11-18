@@ -101,7 +101,9 @@ test('1. marcador "NAO INFORMADO" nunca vira "nada consta" no relatório', () =>
     assert.equal(it.state, 'NOT_PROVIDED');
     assert.equal(it.sourceState, 'NO_RETURN');
     assert.match(it.display, /não equivale a .*nada consta/i);
-    assert.ok(!/Sem restrição|Nada consta/i.test(it.display ?? ''), k);
+    // A explicacao obrigatoria contem a propria expressao entre aspas ("isso nao equivale a nada consta").
+    // O que a diretiva proibe e AFIRMAR ausencia: verificamos a frase de abertura, que e a destacada na tela e no PDF.
+    assert.ok(!/^(sem restricao|nada consta|sem restri[cç][ãa]o)/i.test(String(it.display ?? '').split(/[:.;]/)[0].trim()), k);
   }
   assert.notEqual(r.verdict.level, 'CLEAR', 'três lacunas não podem dar veredito limpo');
 });
@@ -384,7 +386,19 @@ test('11. farol verde sozinho não afirma "sem registro de leilão"', () => {
 test('11. derivados nunca saem como fato: km, projeção, chassi, valores de gravame', () => {
   const x = structuredClone(vt);
   Object.assign(x.RESPOSTA.VEICULOSBDRP.RETORNO, { CHASSI: '9BWZZZ377VT004251', VEIANOMODELO: '2019', VEIANOFABR: '2018' });
-  const r = buildReportV2({ placa: 'AAA0000', data: x, enrichment: { fipeHistory: { series: [{ label: 'mai/2026', time: Date.UTC(2026, 4, 1), cents: 3000000 }, { label: 'jun/2026', time: Date.UTC(2026, 5, 1), cents: 3100000 }] } } });
+  // Projeção de 6 meses exige 12 meses de histórico; dois pontos não geram EN_FIPE_PROJECAO.
+  const fipeSeries = Array.from({ length: 13 }, (_, n) => {
+    const d = new Date(Date.UTC(2025, 5 + n, 1));
+    return { label: `${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCFullYear()).slice(2)}`, time: d.getTime(), cents: 2800000 + n * 25000 };
+  });
+  // GR_VALORES só existe com gravame ativo, e a base de gravame chega como resposta do /gravame (raw.gravame.data),
+  // exatamente como o lienRefresh grava.
+  const r = buildReportV2({
+    placa: 'AAA0000',
+    data: x,
+    gravame: { data: { CODIGO: '1', GRAVAMES: { REGISTRO_1: { NUMERO_RESTRICAO: '5', DATA_RESTRICAO: '2022-02-02', NOME_AGENTE: 'BANCO DO BRASIL S.A.', DOCUMENTO_AGENTE: '00000000000191', NUMERO_CONTRATO: 'X9', STATUS: 'ATIVO' } } } },
+    enrichment: { fipeHistory: { series: fipeSeries } },
+  });
   const km = String(item(r, 'EN_KM_REFERENCIA').display);
   assert.match(km, /estimativa/i);
   assert.match(km, /n[ãa]o [eé] a quilometragem real/i);
