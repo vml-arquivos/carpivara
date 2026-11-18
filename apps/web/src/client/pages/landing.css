@@ -9,33 +9,35 @@
 .buscar-home .section { padding-block: clamp(48px, 7vw, 96px); }
 
 .buscar-entry {
-  background: #EDF2EE;
-  color: #102e25;
-  border-bottom: 1px solid #D5E1D9;
-  padding-block: clamp(46px, 8vw, 106px);
+  background: var(--bg-soft);
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  padding-block: clamp(32px, 6vw, 76px) 22px;
 }
 
 .buscar-entry-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr);
-  gap: clamp(32px, 7vw, 100px);
+  grid-template-columns: minmax(0, .95fr) minmax(0, 1.05fr);
+  gap: clamp(28px, 5vw, 70px);
   align-items: center;
 }
 
 .buscar-entry h1 {
-  font-size: clamp(2.35rem, 5.9vw, 5.45rem);
+  font-size: clamp(2.2rem, 4.3vw, 3.9rem);
   line-height: 1.02;
-  max-width: 13ch;
+  color: var(--text);
+  max-width: 19ch;
+  text-wrap: balance;
   overflow-wrap: anywhere;
 }
 
-.buscar-intro { margin-top: 22px; max-width: 44ch; color: #42564d; font-size: clamp(1rem, 1.5vw, 1.2rem); }
+.buscar-intro { margin-top: 22px; max-width: 44ch; color: var(--text-2); font-size: clamp(1rem, 1.5vw, 1.2rem); }
 
 .buscar-search-panel {
   margin-top: 30px;
   padding: clamp(16px, 3vw, 26px);
-  background: #FAFCFA;
-  border: 1px solid #CFDCD3;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
   border-radius: 12px;
 }
 
@@ -51,38 +53,53 @@
 .buscar-search-panel .plate-search:focus-within { outline: 2px solid #197650; outline-offset: 2px; }
 .buscar-search-panel .plate-search .btn { background: #154e39; color: #fff; border-color: #154e39; }
 .buscar-search-panel .plate-search .btn:hover { background: #0e3627; }
-.buscar-search-panel .plate-search-err { color: #9c271e; min-height: 0; }
+.buscar-search-panel .plate-search-err { color: var(--danger); min-height: 0; }
 .buscar-search-panel .plate-search-err:empty { margin: 0; }
-.buscar-search-panel .linkbtn { margin-top: 14px; color: #234e3d; text-align: left; }
+.buscar-search-panel .linkbtn { margin-top: 14px; color: var(--primary-ink); text-align: left; }
+
+.buscar-hero-photo {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 3 / 2;
+  object-fit: cover;
+  display: block;
+  border-radius: 16px;
+  border: 1px solid var(--border-strong);
+}
 
 .buscar-tools {
-  background: #12352b;
-  color: #F6F7F4;
-  border-radius: 14px;
-  padding: clamp(20px, 4vw, 34px);
-  border-top: 5px solid #A9C4B6;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  gap: 0 22px;
+  align-items: center;
+  margin-top: clamp(28px, 5vw, 60px);
   scroll-margin-top: calc(var(--nav-h) + 18px);
 }
 
-.buscar-tools h2 { font-size: clamp(1.25rem, 2.4vw, 1.75rem); color: inherit; margin-bottom: 14px; }
-.buscar-tool {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 13px;
-  padding: 18px 0;
-  border-top: 1px solid #537162;
-  color: inherit;
+.buscar-tools h2 {
+  grid-column: 1 / -1;
+  margin-bottom: 8px;
+  font-size: 1rem;
+  letter-spacing: -.02em;
 }
 
+.buscar-tool, .buscar-validate {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 60px;
+  padding-block: 12px;
+  border-top: 1px solid var(--border-strong);
+  color: var(--text);
+}
+.buscar-tool span { flex: 1; }
 .buscar-tool strong, .buscar-tool small { display: block; }
-.buscar-tool small { color: #d0e0d5; margin-top: 5px; line-height: 1.45; font-size: .9rem; }
-.buscar-tool > svg, .buscar-validate > svg { color: #BBD2C7; flex: none; }
+.buscar-tool small { color: var(--muted); margin-top: 4px; font-size: .875rem; }
+.buscar-tool > svg, .buscar-validate > svg { color: var(--primary); flex: none; }
 .buscar-tool:hover strong, .buscar-validate:hover { text-decoration: underline; }
-.buscar-validate { display: flex; gap: 9px; align-items: center; padding-top: 16px; border-top: 1px solid #537162; color: #F6F7F4; }
 
 .buscar-home #consultas { background: var(--bg); }
-.buscar-home #consultas .prod-grid { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+.buscar-home #consultas .prod-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .buscar-home #consultas .pcard { box-shadow: none; padding: clamp(18px, 3vw, 30px); }
 .buscar-home #consultas .pcard:hover { transform: none; border-color: var(--primary); }
 .buscar-home #consultas .pcard.featured { background: var(--surface); border-inline-start: 5px solid var(--primary); }
@@ -107,26 +124,30 @@
 .buscar-home .custom-pack { padding-block-start: 0; }
 .buscar-home .custom-card { border-radius: 12px; background: #15372d; }
 
-@media (min-width: 900px) {
-  .buscar-home #consultas .pcard {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, .85fr);
-    grid-template-rows: auto auto auto auto auto;
-    grid-auto-flow: row;
-    column-gap: clamp(22px, 4vw, 52px);
-    align-content: center;
-  }
-  .buscar-home #consultas .pcard > :is(.pbadge, h3, .tag, .pprice, .off) { grid-column: 1; }
-  .buscar-home #consultas .pcard > ul { grid-area: 2 / 2 / 4; align-self: start; }
-  .buscar-home #consultas .pcard > .pmore { grid-area: 4 / 2; }
-  .buscar-home #consultas .pcard > .pactions { grid-area: 1 / 3 / 6; align-self: center; padding: 0; }
+.buscar-editorial-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.16fr) minmax(0, 1fr);
+  gap: clamp(24px, 6vw, 80px);
+  align-items: center;
 }
+.buscar-editorial-grid img { display: block; width: 100%; height: auto; border-radius: 16px; }
+.buscar-editorial-copy h2 { font-size: clamp(1.65rem, 3.4vw, 3rem); line-height: 1.13; }
+.buscar-editorial-copy p { margin-top: 14px; color: var(--muted); }
+.buscar-editorial-copy ul { padding-left: 20px; margin-bottom: 0; display: grid; gap: 8px; }
+.buscar-editorial-copy a { color: var(--primary-ink); text-decoration: underline; text-underline-offset: 3px; }
 
 @media (max-width: 760px) {
-  .buscar-entry-grid, .buscar-reading-grid, .buscar-home .home-sim .home-split { grid-template-columns: minmax(0, 1fr); }
+  .buscar-entry-grid, .buscar-reading-grid, .buscar-editorial-grid, .buscar-tools, .buscar-home .home-sim .home-split, .buscar-home #consultas .prod-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 520px) {
   .buscar-search-panel .plate-search input { font-size: 15px; }
   .buscar-home .post-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+.buscar-home .btn-primary {
+  background: #245A4B;
+  border-color: #548674;
+  color: #FFFFFF;
+}
+.buscar-home .btn-primary:hover { background: #153E34; }

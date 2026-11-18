@@ -6,6 +6,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BRAND, hexToUnit } from '../dist/lib/brand.js';
+import { pageMeta } from '../dist/seo.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const read = (p) => readFileSync(path.join(root, p), 'utf8');
@@ -37,7 +38,7 @@ describe('marca única', () => {
   });
   it('arquivos estáticos do front seguem a marca', () => {
     const index = read('apps/web/index.html');
-    for (const s of [`content="${BRAND.name}"`, `href="${BRAND.url}/"`, `${BRAND.url}/brand/og-image.png`, `<title>${BRAND.name} | ${BRAND.tagline}</title>`, `content="${BRAND.colors.night}"`]) assert.ok(index.includes(s), `index.html sem ${s}`);
+    for (const s of [`content="${BRAND.name}"`, `href="${BRAND.url}/"`, `${BRAND.url}/brand/og-image.png`, `<title>${pageMeta["/"].title}</title>`, `content="${BRAND.colors.night}"`]) assert.ok(index.includes(s), `index.html sem ${s}`);
     assert.ok(read('apps/web/admin.html').includes(`<title>Painel | ${BRAND.name}</title>`));
     assert.ok(read('apps/web/admin.html').includes(BRAND.colors.night));
     const manifest = JSON.parse(read('apps/web/public/site.webmanifest'));

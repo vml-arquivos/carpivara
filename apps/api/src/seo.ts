@@ -2,7 +2,8 @@ import { BRAND } from './lib/brand.js';
 type SeoMeta = { title: string; description: string };
 
 export const pageMeta: Record<string, SeoMeta> = {
-  '/': { title: `Consulta de placa: débitos, multas, gravame e histórico | ${BRAND.name}`, description: 'Consulte a placa e veja o relatório do veículo: débitos, multas, restrições, gravame, histórico e FIPE, conforme a fonte. Sem mensalidade, com PDF.' },
+  '/': { title: `Consulta de placa e histórico veicular | ${BRAND.name}`, description: 'Consulte a placa para conferir débitos, gravame, restrições e leilão, conforme a cobertura. Compare relatórios, acesse a Tabela FIPE e simule o financiamento.' },
+  '/demonstracao': { title: `Exemplo de relatório veicular por placa | ${BRAND.name}`, description: 'Veja exemplos de consulta veicular com dados fictícios e baixe um modelo de relatório em PDF.' },
   '/fipe': { title: `Consulta FIPE grátis: valor médio vigente | ${BRAND.name}`, description: 'Consulte gratuitamente o valor médio FIPE vigente por tipo, marca, modelo e ano.' },
   '/consulta-placa': { title: `Consulta de placa veicular online | ${BRAND.name}`, description: 'Consulte a placa, compare a cobertura disponível e receba um relatório veicular organizado para apoiar sua decisão.' },
   '/consulta-veicular': { title: `Consulta veicular completa online | ${BRAND.name}`, description: 'Entenda o que uma consulta veicular pode verificar e escolha a cobertura adequada para sua negociação.' },
@@ -75,6 +76,14 @@ export function isKnownPath(pathname: string): boolean {
   return n in pageMeta || DYNAMIC.test(n);
 }
 
+const HOME_IMAGE = '/brand/landing/consulta-veicular-1200.webp';
+const BUYING_GUIDES = [
+  ['/consultar-debitos-veiculo', 'Débitos do veículo'],
+  ['/consultar-gravame', 'Gravame e financiamento ativo'],
+  ['/consultar-leilao-veiculo', 'Passagem por leilão'],
+  ['/historico-veicular', 'Guia de histórico veicular']
+] as const;
+
 const NAV: Array<[string, string]> = [['/fipe', 'Consulta FIPE grátis'], ['/consulta-placa', 'Consulta de placa'], ['/consulta-veicular', 'Consulta veicular completa'], ['/planos', 'Preços'], ['/simulador', 'Simulador de financiamento'], ['/veiculos', 'Guia de veículos'], ['/comparar', 'Comparar veículos'], ['/blog', 'Blog'], ['/perguntas-frequentes', 'Perguntas frequentes'], ['/sobre', 'Sobre'], ['/contato', 'Contato']];
 
 export function renderRobotsTxt(appUrl: string, adminHost: boolean): string {
@@ -86,7 +95,16 @@ export function renderRobotsTxt(appUrl: string, adminHost: boolean): string {
 export function renderSitemapXml(appUrl: string, extra: Array<{ path: string; lastmod?: Date }> = [], pages: Map<string, { noindex: boolean; updatedAt: Date; imageUrl?: string | null }> = new Map()): string {
   const base = appUrl.replace(/\/$/, '');
   const articleUrls = extra.map((e) => `  <url><loc>${base}${e.path}</loc>${e.lastmod ? `<lastmod>${e.lastmod.toISOString().slice(0, 10)}</lastmod>` : ''}<changefreq>monthly</changefreq><priority>0.6</priority></url>`);
-  const urls = [...SITEMAP_PATHS.filter((p) => !pages.get(p)?.noindex).map((p) => `  <url><loc>${base}${p === '/' ? '/' : p}</loc>${pages.get(p) ? `<lastmod>${pages.get(p)!.updatedAt.toISOString().slice(0, 10)}</lastmod>` : ''}<changefreq>${p === '/' || p === '/planos' ? 'weekly' : 'monthly'}</changefreq><priority>${p === '/' ? '1.0' : p === '/planos' || p === '/fipe' ? '0.9' : '0.7'}</priority>${pages.get(p)?.imageUrl ? `<image:image><image:loc>${escapeHtml(pages.get(p)!.imageUrl!)}</image:loc></image:image>` : ''}</url>`), ...articleUrls].join('\n');
+  const pageUrls = SITEMAP_PATHS.filter((path) => !pages.get(path)?.noindex).map((path) => {
+    const page = pages.get(path);
+    const lastmod = page ? `<lastmod>${page.updatedAt.toISOString().slice(0, 10)}</lastmod>` : '';
+    const images = new Set([page?.imageUrl, path === '/' ? `${base}${HOME_IMAGE}` : undefined].filter((url): url is string => Boolean(url)));
+    const imageTags = [...images].map((url) => `<image:image><image:loc>${escapeHtml(url)}</image:loc></image:image>`).join('');
+    const frequency = path === '/' || path === '/planos' ? 'weekly' : 'monthly';
+    const priority = path === '/' ? '1.0' : path === '/planos' || path === '/fipe' ? '0.9' : '0.7';
+    return `  <url><loc>${base}${path}</loc>${lastmod}<changefreq>${frequency}</changefreq><priority>${priority}</priority>${imageTags}</url>`;
+  });
+  const urls = [...pageUrls, ...articleUrls].join('\n');
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">\n${urls}\n</urlset>\n`;
 }
 
@@ -108,7 +126,7 @@ export function renderSeoHtml(template: string, pathname: string, appUrl: string
     name: meta.title,
     description: meta.description,
     url: canonical,
-    ...(override.image ? { image: override.image } : {}),
+    ...(override.image ? { image: override.image } : normalized === '/' ? { image: `${baseUrl}${HOME_IMAGE}` } : {}),
     inLanguage: 'pt-BR',
     isPartOf: { '@type': 'WebSite', name: `${BRAND.name}`, url: `${baseUrl}/` },
     publisher: { '@type': 'Organization', name: `${BRAND.name}`, url: `${baseUrl}/` }
@@ -132,7 +150,10 @@ export function renderSeoHtml(template: string, pathname: string, appUrl: string
   const h1Attr = !unknown && override.h1 ? ' data-seo="1"' : '';
   const intro = unknown ? 'O endereço que você abriu não existe ou foi removido.' : meta.description;
   const links = NAV.map(([href, label]) => `<li><a href="${href}">${escapeHtml(label)}</a></li>`).join('');
-  const body = noindex && !unknown ? '' : `<main><h1${h1Attr}>${h1}</h1><p>${escapeHtml(intro)}</p>${unknown ? '' : (override.bodyHtml ?? '')}<nav aria-label="Principal"><ul>${links}</ul></nav></main>`;
+  const homeGuides = normalized === '/' && !unknown && !noindex
+    ? `<section><h2>O que verificar antes de comprar um carro usado?</h2><p>Comece pelo histórico da placa. Confira se o veículo tem débitos, restrição financeira ou passagem por leilão e leve esses pontos para a negociação.</p><ul>${BUYING_GUIDES.map(([href, label]) => `<li><a href="${href}">${escapeHtml(label)}</a></li>`).join('')}</ul></section>`
+    : '';
+  const body = noindex && !unknown ? '' : `<main><h1${h1Attr}>${h1}</h1><p>${escapeHtml(intro)}</p>${unknown ? '' : (override.bodyHtml ?? '')}${homeGuides}<nav aria-label="Principal"><ul>${links}</ul></nav></main>`;
   return template
     .replace('<div id="root"></div>', () => `<div id="root">${body}</div>`)
     .replace(new RegExp(`${BRAND.url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=/brand/)`, 'g'), baseUrl)

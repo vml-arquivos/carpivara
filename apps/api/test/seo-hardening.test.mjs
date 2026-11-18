@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test, { before, after, describe, it } from 'node:test';
 import { integration, loadCore, useTestEnv } from './helpers/db.mjs';
 import { startServer } from './helpers/server.mjs';
-import { SITEMAP_PATHS, isKnownPath, renderRobotsTxt, renderSeoHtml } from '../dist/seo.js';
+import { SITEMAP_PATHS, isKnownPath, renderRobotsTxt, renderSeoHtml, renderSitemapXml } from '../dist/seo.js';
 
 useTestEnv();
 const tpl = '<html><head><title>x</title><meta name="robots" content="index,follow" /></head><body><div id="root"></div></body></html>';
@@ -28,7 +28,7 @@ test('HTML inicial traz conteúdo semântico (h1, descrição, navegação) para
 test('rotas desconhecidas e modelos inexistentes: noindex, título próprio e sem conteúdo indexável', () => {
   assert.equal(isKnownPath('/fipe'), true); assert.equal(isKnownPath('/blog/qualquer-slug'), true); assert.equal(isKnownPath('/nao-existe'), false);
   const html = renderSeoHtml(tpl, '/nao-existe', base);
-  assert.match(html, /content="noindex,nofollow"/); assert.match(html, /<title>Página não encontrada \| BL Buscar<\/title>/); assert.match(html, /<h1>Página não encontrada<\/h1>/);
+  assert.match(html, /content="noindex,nofollow"/); assert.match(html, /<title>Página não encontrada \| BL Buscarr<\/title>/); assert.match(html, /<h1>Página não encontrada<\/h1>/);
   const model = renderSeoHtml(tpl, '/veiculos/modelo-que-nao-existe', base, { notFound: true });
   assert.match(model, /content="noindex,nofollow"/); assert.doesNotMatch(model, /ficha técnica e opinião/i);
 });
@@ -61,4 +61,14 @@ describe('servidor: status HTTP das páginas', integration, () => {
     assert.match(await sitemap.text(), /<loc>[^<]*\/veiculos\/mais-economicos<\/loc>/);
     assert.equal(missingModel.status, 404);
   });
+});
+
+
+test('home tem guias rastreáveis e imagem no sitemap', () => {
+  const html = renderSeoHtml(tpl, '/', base);
+  assert.match(html, /<h1>Consulta de placa e histórico veicular<\/h1>/);
+  for (const path of ['consultar-debitos-veiculo', 'consultar-gravame', 'consultar-leilao-veiculo', 'historico-veicular']) {
+    assert.ok(html.includes(`href="/${path}"`), path);
+  }
+  assert.ok(renderSitemapXml(base).includes(`${base}/brand/landing/consulta-veicular-1200.webp`));
 });

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.5 — Página inicial e SEO
+
+- Primeira dobra com fotografia automotiva, consulta em destaque, ferramentas abaixo e contraste adaptado ao tema.
+- Catálogo em duas colunas no desktop, guia ilustrado de compra e imagens WebP responsivas.
+- Metadados da home revisados, guias rastreáveis no HTML inicial e imagem no sitemap.
+
 ## 1.0.4 — Identidade BL Buscarr
 
 - Monograma BL inclinado, assinatura BUSCARR, ícones e favicon.
