@@ -58,7 +58,7 @@
 .rv-item.multi { flex-direction: column; align-items: stretch; gap: 6px; }
 .rv-item.multi dt, .rv-item.multi dd { flex: none; width: 100%; text-align: left; justify-content: flex-start; }
 .rv-lines { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; font-weight: 500; }
-.rv-lines li { padding: 8px 12px; border-radius: 10px; background: var(--soft, rgba(131, 156, 143,.1)); font-size: 14px; }
+.rv-lines li { padding: 8px 12px; border-radius: 10px; background: var(--soft, rgba(144, 144, 144, .1)); font-size: 14px; }
 .rv-section-head:disabled { cursor: default; opacity: 1; }
 .rv-item dd.missing { color: var(--muted); font-weight: 400; font-style: italic; font-size: 13.5px; }
 .rv-item.alert dd { color: var(--warn-ink); }
@@ -120,18 +120,18 @@
 .rv-upsell { border-color: var(--border); background: var(--bg-soft); color: var(--text); }
 .rv-debts tr.total td { color: var(--text); }
 
-:root[data-theme='dark'] .rv { --bg-soft: #1d1d1d; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme='light']) .rv { --bg-soft: #1d1d1d; } }
+:root[data-theme='dark'] .rv { --bg-soft: #1F2937; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme='light']) .rv { --bg-soft: #1F2937; } }
 
 .rv-table-wrap { width: 100%; overflow-x: auto; }
 .rv-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.rv-table th { text-align: left; background: var(--soft, rgba(131, 156, 143,.12)); padding: 8px 10px; font-weight: 500; white-space: nowrap; }
-.rv-table td { padding: 8px 10px; border-bottom: 1px solid var(--line, rgba(131, 156, 143,.2)); vertical-align: top; font-weight: 500; }
+.rv-table th { text-align: left; background: var(--soft, rgba(144, 144, 144, .12)); padding: 8px 10px; font-weight: 500; white-space: nowrap; }
+.rv-table td { padding: 8px 10px; border-bottom: 1px solid var(--line, rgba(144, 144, 144, .2)); vertical-align: top; font-weight: 500; }
 .rv-table td span { display: block; }
 @media (max-width: 560px) {
   .rv-table thead { display: none; }
   .rv-table, .rv-table tbody, .rv-table tr, .rv-table td { display: block; width: 100%; }
-  .rv-table tr { margin-bottom: 8px; padding: 6px 0; border: 1px solid var(--line, rgba(131, 156, 143,.2)); border-radius: 10px; }
+  .rv-table tr { margin-bottom: 8px; padding: 6px 0; border: 1px solid var(--line, rgba(144, 144, 144, .2)); border-radius: 10px; }
   .rv-table td { border: 0; padding: 4px 10px; }
   .rv-table td::before { content: attr(data-label); display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; opacity: .65; font-weight: 500; }
 }

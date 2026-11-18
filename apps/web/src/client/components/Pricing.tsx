@@ -62,7 +62,7 @@ export default function Pricing({ id = 'planos' }: { id?: string }) {
     <div className="plans-wrap" id={id}>
       <div className="plans-intro">
         <div>
-          <span className="eyebrow" style={{ color: '#C3EFD8' }}>Planos e consultas</span>
+          <span className="eyebrow" style={{ color: '#C3D0EF' }}>Planos e consultas</span>
           <h3 style={{ marginTop: 10 }}>Evite surpresas. Faça uma consulta completa.</h3>
           <p style={{ marginTop: 10 }}>Antes de comprar, vender ou financiar, consulte o histórico e tenha mais segurança na sua decisão.</p>
         </div>

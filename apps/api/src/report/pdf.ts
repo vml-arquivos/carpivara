@@ -34,8 +34,8 @@ const font = (name: string) => readFileSync(new URL(name, FONT_DIR));
 export const W = 595.28; export const H = 841.89; export const M = 40; export const CW = W - M * 2;
 export const C = {
   ink: brandRgb(BC.night), text: brandRgb(BC.text), muted: brandRgb(BC.muted), line: brandRgb(BC.line), soft: brandRgb(BC.soft),
-  violet: brandRgb(BC.primary), lilac: brandRgb('#5FD28F'), blue: brandRgb(BC.accent), white: rgb(1, 1, 1),
-  green: rgb(0.055, 0.624, 0.431), greenBg: rgb(0.89, 0.973, 0.937), amber: rgb(0.706, 0.325, 0.035), amberBg: rgb(0.996, 0.953, 0.78), red: rgb(0.863, 0.149, 0.149), redBg: rgb(0.996, 0.91, 0.91), grayBg: brandRgb('#E6F0EA')
+  violet: brandRgb(BC.primary), lilac: brandRgb('#5F82D2'), blue: brandRgb(BC.accent), white: rgb(1, 1, 1),
+  green: rgb(0.055, 0.624, 0.431), greenBg: rgb(0.89, 0.973, 0.937), amber: rgb(0.706, 0.325, 0.035), amberBg: rgb(0.996, 0.953, 0.78), red: rgb(0.863, 0.149, 0.149), redBg: rgb(0.996, 0.91, 0.91), grayBg: brandRgb('#EFF6FF')
 };
 
 export interface RectOpts { x: number; y: number; width: number; height: number; color?: RGB; borderColor?: RGB; borderWidth?: number; borderRadius?: number }
@@ -91,7 +91,7 @@ export function fit(f: PDFFont, t: string, size: number, maxWidth: number): stri
 
 export function drawLogo(d: Doc, x: number, y: number, size: number, dark: boolean) {
   const p = d.page;
-  rect(p, { x, y, width: size, height: size, color: brandRgb('#123A32'), borderRadius: size * 0.215 });
+  rect(p, { x, y, width: size, height: size, color: brandRgb('#1e40af'), borderRadius: size * 0.215 });
   p.drawSvgPath('M17 4H49C61 4 67 10 64 20C62 27 58 30 53 32C59 35 60 40 58 46C55 56 46 60 34 60H4ZM26 15L23 26H42C47 26 50 24 51 20C52 17 50 15 46 15ZM20 37L17 49H35C41 49 45 47 46 43C47 39 45 37 40 37ZM70 4H84L73 48H101L98 60H52C59 56 63 51 65 45C67 39 67 35 64 31Z', {
     x: x + size * 0.14, y: y + size * 0.72, scale: size * 0.0069, color: C.white
   });
@@ -100,9 +100,9 @@ export function drawLogo(d: Doc, x: number, y: number, size: number, dark: boole
 
 /* ---------- Layout do relatório de consulta (identidade da plataforma: verde-escuro, verde, dourado e fundos claros; verde, âmbar e vermelho só no estado) ---------- */
 export const N = {
-  ink: brandRgb(BC.night), text: brandRgb(BC.text), muted: brandRgb(BC.muted), line: brandRgb('#C9DDD0'), hair: brandRgb(BC.line),
+  ink: brandRgb(BC.night), text: brandRgb(BC.text), muted: brandRgb(BC.muted), line: brandRgb('#C9CFDD'), hair: brandRgb(BC.line),
   band: brandRgb(BC.primarySoft), soft: brandRgb(BC.soft), dark: brandRgb(BC.night), white: rgb(1, 1, 1),
-  blue: brandRgb(BC.primary), blueInk: brandRgb(BC.primaryInk), accent: brandRgb(BC.gold), pale: brandRgb('#D5F0E0'),
+  blue: brandRgb(BC.primary), blueInk: brandRgb(BC.primaryInk), accent: brandRgb(BC.gold), pale: brandRgb('#E2E2E2'),
   ok: rgb(0.055, 0.624, 0.431), okSoft: rgb(0.89, 0.973, 0.937), okInk: rgb(0.016, 0.424, 0.306),
   warn: rgb(0.706, 0.325, 0.035), warnSoft: rgb(0.996, 0.953, 0.78), warnInk: rgb(0.573, 0.251, 0.055),
   danger: rgb(0.863, 0.149, 0.149), dangerSoft: rgb(0.996, 0.91, 0.91), dangerInk: rgb(0.6, 0.106, 0.106)

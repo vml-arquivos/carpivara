@@ -138,7 +138,7 @@ for (const slug of ['consulta-cadastral', 'consulta-completa', 'consulta-gravame
 }
 
 // ---- imagem de compartilhamento 1200x630 ----
-await shot(wide({ title: `Conheça a história do carro <span style="color:#4CCB86">antes de decidir.</span>`, sub: 'Consulte pela placa. Relatório claro, com PDF.', big: 60 }), 1200, 630, path.join(brand, 'og-image.png'));
+await shot(wide({ title: `Conheça a história do carro <span style="color:#4C72CB">antes de decidir.</span>`, sub: 'Consulte pela placa. Relatório claro, com PDF.', big: 60 }), 1200, 630, path.join(brand, 'og-image.png'));
 await browser.close();
 rmSync(tmp, { recursive: true, force: true });
 console.log('ok');

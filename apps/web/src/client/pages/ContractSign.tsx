@@ -5,7 +5,7 @@ import { errorMessage } from '../../shared/api';
 import { dateTime } from '../../shared/format';
 import { api } from '../api';
 
-const box = { whiteSpace: 'pre-wrap', fontFamily: 'inherit', lineHeight: 1.6, maxHeight: '55vh', overflow: 'auto', border: '1px solid #d7ddd9', borderRadius: 8, padding: 16, background: 'var(--surface, #fff)' } as const;
+const box = { whiteSpace: 'pre-wrap', fontFamily: 'inherit', lineHeight: 1.6, maxHeight: '55vh', overflow: 'auto', border: '1px solid #e5e7eb', borderRadius: 8, padding: 16, background: 'var(--surface, #fff)' } as const;
 const shell = (children: React.ReactNode) => <main className="container" style={{ maxWidth: 820, padding: '32px 16px' }}>{children}</main>;
 
 /** Página de assinatura por link seguro. Sem login: o link é a credencial e expira. */

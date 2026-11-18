@@ -51,19 +51,19 @@ export const BRAND = {
   },
 
   colors: {
-    primary: '#245A4B',
-    primaryHover: '#153E34',
-    primarySoft: '#E6EFEA',
-    primaryInk: '#1C493D',
-    accent: '#548674',
-    gold: '#A9C4B6',
-    night: '#101F1B',
-    ink: '#152D26',
-    text: '#152D26',
-    muted: '#53675F',
-    line: '#DBE5DE',
-    soft: '#F6F7F4',
-    onDark: '#CBDDD4'
+    primary: '#2563eb',
+    primaryHover: '#1e40af',
+    primarySoft: '#EFF6FF',
+    primaryInk: '#1e40af',
+    accent: '#60a5fa',
+    gold: '#93C5FD',
+    night: '#111827',
+    ink: '#1f2937',
+    text: '#1f2937',
+    muted: '#4b5563',
+    line: '#E5E7EB',
+    soft: '#FFFFFF',
+    onDark: '#E5E7EB'
   },
 
   the: `${art.the} ${NAME}`, The: `${cap(art.the)} ${NAME}`,

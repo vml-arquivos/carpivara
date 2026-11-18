@@ -11,3 +11,4 @@ coverage/
 .assets/
 
 **/dist/
+__pycache__/
