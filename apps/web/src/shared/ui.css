@@ -107,7 +107,7 @@ table.table { width: 100%; border-collapse: collapse; font-size: 14px; min-width
 .tab[aria-selected='true'] { background: var(--surface); color: var(--primary-ink); box-shadow: var(--shadow-sm); }
 
 /* ---------- Modal / gaveta ---------- */
-.overlay { position: fixed; inset: 0; z-index: 400; background: rgba(9, 13, 11, .62); backdrop-filter: blur(4px); display: grid; place-items: center; padding: 16px; animation: fade .15s ease; }
+.overlay { position: fixed; inset: 0; z-index: 400; background: rgba(11, 11, 11, .62); backdrop-filter: blur(4px); display: grid; place-items: center; padding: 16px; animation: fade .15s ease; }
 .modal { width: min(560px, 100%); max-height: calc(100dvh - 32px); display: flex; flex-direction: column; overflow: hidden; background: var(--surface); border-radius: 20px; border: 1px solid var(--border); box-shadow: var(--shadow-lg); animation: pop .18s ease; }
 .modal.wide { width: min(820px, 100%); }
 .modal-head { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 18px 22px; border-bottom: 1px solid var(--border); }
@@ -186,10 +186,10 @@ table.table { width: 100%; border-collapse: collapse; font-size: 14px; min-width
 .chat-msg{max-width:min(560px,92%);padding:8px 12px;border-radius:10px;background:var(--surface-2,#F3F4F6);align-self:flex-start}
 .chat-msg.from-cliente{align-self:flex-end;background:var(--primary-soft,#E7E7E7)}
 .chat-msg.from-sistema{align-self:center;background:transparent;font-size:13px;color:var(--muted,#4b5563);text-align:center}
-.chat-msg.internal{background:#fff6d6;border:1px dashed #c9a400;color:#3b3200}
+.chat-msg.internal{background:#fff6d6;border:1px dashed #1E40AF;color:#3b3200}
 .chat-msg p{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
 .chat-meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--muted,#4b5563)}
-.chat-tag{font-size:11px;font-weight: 400;padding:1px 6px;border-radius:99px;background:#c9a400;color:#fff}
+.chat-tag{font-size:11px;font-weight: 400;padding:1px 6px;border-radius:99px;background:#1E40AF;color:#fff}
 .chat-file{display:block;margin-top:6px;font:inherit;font-size:13px;background:none;border:0;padding:0;color:var(--link,#166534);text-decoration:underline;cursor:pointer;text-align:left}
 .chat-err{color:var(--danger,#b42318);font-size:13px;margin:4px 0}
 .chat-composer{display:grid;gap:8px;margin-top:12px}

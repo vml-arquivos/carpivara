@@ -47,7 +47,7 @@ export function renderVehicleHtml(fullReport: ReportV2, meta: ReportMeta): strin
 :root{--ink:#111827;--text:#1f2937;--muted:#4b5563;--line:#E5E7EB;--soft:#FFFFFF;--violet:#2563eb;--blue-ink:#1e40af;--accent:#60a5fa;--band:#EFF6FF;--ok:#0E9F6E;--warn:#B45309;--bad:#DC2626}
 @page{size:A4;margin:14mm}*{box-sizing:border-box}
 body{margin:0;background:#FFFFFF;color:var(--text);font:14px/1.45 "Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.sheet{max-width:820px;margin:24px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 8px 30px rgba(16, 19, 17,.08)}
+.sheet{max-width:820px;margin:24px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 8px 30px rgba(18, 18, 18, .08)}
 header{background:#111827;color:#fff;padding:22px 28px;border-bottom:3px solid var(--accent);display:flex;justify-content:space-between;gap:16px;align-items:center}
 .logo{display:flex;gap:12px;align-items:center;font:800 20px "Inter",system-ui,sans-serif}.logo i{width:36px;height:36px;border-radius:9px;background:var(--violet);display:inline-block}
 .meta{text-align:right;font-size:12px;color:#93C5FD}.meta b{display:block;color:#fff;font:700 13px "Inter",system-ui,sans-serif}.meta span{color:var(--accent)}

@@ -29,6 +29,24 @@ ROOT = Path(__file__).resolve().parents[2]
 APPLY = '--apply' in sys.argv
 
 EXATO = {
+    # segunda passada (comentário fora do dict não serve; documentado abaixo): a landing tinha um sistema próprio de tokens (herança da página dourada) -- --
+    '#ECCC85': '#60A5FA', '#F8DCA0': '#93C5FD', '#AD8245': '#1E40AF', '#C9A400': '#1E40AF',
+    '#211B10': '#0B1220', '#101513': '#0B1220', '#F7F5EF': '#FFFFFF', '#FAF8F2': '#F9FAFB',
+    '#1C1C1C': '#111827', '#E1E1E1': '#E5E7EB', '#4ADE80': '#60A5FA',
+     '#ADF1CD': '#DBEAFE', '#81E9B2': '#93C5FD', '#CCF2DE': '#BFDBFE',
+    '#C5F1DA': '#BFDBFE', '#D1E8DC': '#DBEAFE', '#DEF7EA': '#DBEAFE', '#ABF0CB': '#BFDBFE',
+    '#BCE4D0': '#DBEAFE', '#C1E9D1': '#BFDBFE', '#C3EFD8': '#BFDBFE', '#C9F1DC': '#BFDBFE',
+    '#CDF3E0': '#DBEAFE', '#D5F0E0': '#DBEAFE', '#D6ECE0': '#E5E7EB', '#DCF2E3': '#E5E7EB',
+    '#E2F4EA': '#EFF6FF', '#98EABE': '#93C5FD', '#70E6A7': '#60A5FA', '#7DDFAB': '#60A5FA',
+    '#52DF94': '#60A5FA', '#5ECD92': '#60A5FA', '#35C176': '#2563EB', '#34C075': '#2563EB',
+    '#2D9D61': '#1E40AF', '#4CB37C': '#60A5FA', '#81C995': '#93C5FD', '#3B9F6A': '#2563EB',
+    '#418D64': '#1E40AF', '#1FA971': '#1E40AF', '#20834E': '#1E40AF', '#219758': '#1E40AF',
+    '#276E48': '#1E40AF', '#31724F': '#1E40AF', '#367E58': '#2563EB', '#17432C': '#111827',
+    '#174A38': '#1E40AF', '#183A30': '#111827', '#183E2A': '#1E40AF', '#18513E': '#1E40AF',
+    '#193A28': '#111827', '#19472E': '#1E40AF', '#1D1D1D': '#1F2937', '#0B2417': '#0B1220',
+    '#0C2718': '#0B1220', '#0F2B1C': '#0B1220', '#0F301E': '#0B1220', '#102B1D': '#0B1220',
+    '#10311F': '#0B1220', '#113421': '#0B1220', '#123924': '#0B1220', '#123B25': '#0B1220',
+    '#132B20': '#0B1220', '#14261D': '#0B1220', '#23362C': '#1F2937', '#C1D8CD': '#D1D5DB',
     '#245A4B': '#2563EB', '#326C58': '#2563EB', '#205539': '#2563EB', '#246241': '#2563EB',
     '#153E34': '#1E40AF', '#1C493D': '#1E40AF', '#123A32': '#1E40AF', '#173A2E': '#1E40AF',
     '#152D26': '#1F2937', '#101F1B': '#111827', '#12351F': '#0B1220', '#103220': '#111827',
@@ -112,6 +130,10 @@ def cast_verde(r, g, b):
 
 
 def eh_verde(r, g, b):
+    # verde evidente, ou verde escuro de saturação baixa (o fundo do herói era este caso:
+    # rgb(17, 29, 24) tem o verde como canal máximo sem dominar o azul)
+    if max(r, g, b) < 90 and g > r and g >= b:
+        return True
     return g > r + 6 and g > b + 6
 
 

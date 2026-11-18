@@ -120,8 +120,8 @@
 .rv-upsell { border-color: var(--border); background: var(--bg-soft); color: var(--text); }
 .rv-debts tr.total td { color: var(--text); }
 
-:root[data-theme='dark'] .rv { --bg-soft: #1d1d1d; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme='light']) .rv { --bg-soft: #1d1d1d; } }
+:root[data-theme='dark'] .rv { --bg-soft: #1F2937; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme='light']) .rv { --bg-soft: #1F2937; } }
 
 .rv-table-wrap { width: 100%; overflow-x: auto; }
 .rv-table { width: 100%; border-collapse: collapse; font-size: 13px; }
