@@ -82,3 +82,20 @@ Ordem recomendada, cada fatia com build + testes em banco limpo antes de mesclar
 6. Identidade visual em telas críticas, PDF e página de configuração, sem mudar campos nem operação.
 
 As quatro primeiras não precisam de credencial para serem escritas; a validação real delas precisa.
+
+## Bloqueio de release encontrado fora do escopo das fatias (auditoria de dependências)
+
+`npm run release:verify` encadeia `npm audit --omit=dev --audit-level=high`. Essa etapa **falha hoje**, e a causa é
+anterior a este trabalho: está nas dependências declaradas da 1.0.8, não nas mudanças das fases 1 e estados.
+
+- `zod` instalado 3.25.76, range declarado `^3.23.8` em `apps/api/package.json`. O advisory GHSA-mrhx-c7xc-m3w5
+  (esgotamento de memória ao validar coleções oversized, severidade **high**) só é sanado na linha 4.6.6+. Migrar
+  3 → 4 é quebra de API: 38 arquivos importam zod e há 567 chamadas a `z.object`/`z.string()` no código do servidor.
+- `nodemailer` aparece com severidade moderate no mesmo relatório; `--audit-level=high` não trava por ele, mas fica
+  registrado.
+
+Consequência prática: mesmo com 1048 de 1058 testes passando e build completo, **nenhum release sai pela porta oficial**
+até decidir entre (a) abrir uma fatia dedicada de migração do zod 4, com os mesmos critérios de zero regressão, ou
+(b) registrar exceção temporária com risco aceito pelo dono do produto, ajustando o nível do gate de forma auditável.
+Não escolhi por conta própria: (a) mexe em todo o contrato de entrada das rotas e (b) altera o critério de segurança
+do pipeline. Nenhuma das duas é decisão de implementação.
