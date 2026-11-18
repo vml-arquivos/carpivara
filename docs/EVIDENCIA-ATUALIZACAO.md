@@ -30,7 +30,8 @@ Certificação desta entrega:
 | Medição | Resultado |
 |---|---|
 | `npm run build` (API + web + PWA) | ok |
-| Suíte completa com banco limpo | 1033 testes, 1023 passaram, 10 falharam |
+| Suíte completa com banco limpo (Fase 1) | 1033 testes, 1023 passaram, 10 falharam |
+| Suíte completa com banco limpo (Fase estados) | 1058 testes, 1048 passaram, 10 falharam |
 | Comparação com a partida | as mesmas 10 falhas preexistentes, identificadas uma a uma; nenhuma nova |
 | Testes novos | `leitura-nao-cobra.test.mjs` (9) e `report-refresh.test.mjs` convertido (4), 13 de 13 passando isolados |
 
@@ -38,10 +39,13 @@ A prova de que a leitura não cobra é por contagem real, não por leitura de c�
 
 ## O que está preservado e ainda não liberável
 
-`wip/estados-veiculares` (commit `b95307d`) — honestidade de estados de fonte, os doze pontos da auditoria.
+~~`wip/estados-veiculares`~~ **concluído e mesclado** (`bfcc115` → merge `26b0860`): honestidade de estados de fonte, os doze pontos da auditoria.
 
 - Fez o mais difícil: criou vocabulário único em `report/layers.ts` (`OCCURRENCE`, `CONFIRMED_NONE`, `NO_RETURN`, `UNAVAILABLE`, `OUT_OF_SCOPE`) e propagou por `gravame.ts`, `vehicleTotal.ts`, `normalizeV2.ts`, `advice.ts`, `leilao.ts`, `analiseLeilao.ts`, `enrichmentExtras.ts`, `anycarProvider.ts` e `credifyProvider.ts`. Eliminou `DEFAULT_CLEAR` do normalizador, tirou "não informado" da lista de texto limpo, fez 404/410 virar indisponibilidade em vez de ausência, e separou "fora de cobertura" de "sem retorno" no guia de leitura.
-- Estado honesto: 8 de 24 nos testes novos, e 9 falhas em arquivos existentes (`normalizer-v2` 2, `gravame` 1, `veiculototal` 1, `completa-camadas` 2, `basica-gravame-leilao` 3), com uma causa raiz única declarada pelo executor: ancoragem `^...$` nos regex do `classifyText`, que impede reconhecer "NAO INFORMADO". O branch foi preservado para retomar daí, mas **não entra em produção**: enquanto um marcador de "sem retorno" puder virar "nada consta", o risco é de afirmação falsa ao cliente.
+- Certificação final desta fatia: `estados-veicular.test.mjs` em 24 de 24, e suíte inteira com banco limpo em **1058 testes, 1048 passaram, 10 falharam — exatamente as 10 preexistentes, sem nenhuma nova e sem nenhuma perdida**.
+- Correção que destravou quase tudo (`c447316`): `NO_RETURN_TEXT` e `CONFIRMED_NONE_TEXT` tinham a alternação inteira dentro de `^(…)$`, então exigiam igualdade total e "NAO INFORMADO" não casava com o prefixo "NAO INFORMAD". Frases passaram a ser reconhecidas por prefixo e só códigos curtos (`N`, `NAO`, `NADA`, `0`, `N/D`) exigem igualdade.
+- Quatro falhas que a correção expôs e que foram tratadas uma a uma: peça da Credify respondendo "não encontrado" derrubava a consulta em `DATA_PROVIDER_INCOMPLETE`; a AnyCar sem confirmação matava a consulta inteira em vez de degradar para parcial; o predicado de elegibilidade do backfill de gravame ficou cego para consultas legadas; e `RN_MULTAS` sumia em vez de sair como fora de cobertura.
+- Duas expectativas de teste foram alteradas com justificativa escrita no próprio arquivo, ambas porque o teste codificava a confusão proibida pela diretiva: `credify-guard`/`credify-provider` liam HTTP 404 como "placa não encontrada" (`NOT_FOUND`), e `fontes-por-produto` lia `status:true` sem lista como ausência confirmada. O que se mede continua medindo o mesmo (teto de custo, degradação parcial); só o estado atribuído à fonte mudou. Em `contrato-apis`, o caso de "não encontrado" passou a usar `CODIGO=2` no corpo, como a Credify publica, e foi acrescentado um caso novo afirmando que HTTP 404 derruba a consulta em vez de virar nada-consta — a cobertura aumentou.
 
 `wip/custo-por-etapa` (commit `99f9985`) — custo por etapa, teto e travas persistentes.
 
