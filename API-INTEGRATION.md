@@ -1,50 +1,74 @@
-# Integração com provedor veicular
+# Integrações
 
-## Estado atual
+## Provedor de dados veiculares
 
-A aplicação opera com `DATA_PROVIDER=mock`. O provider mock consulta exclusivamente a tabela `sandbox_vehicles`, contendo dados fictícios, e mantém o sistema totalmente utilizável sem serviço externo.
-
-Quando `DATA_PROVIDER=real`, a seleção de provider falha de forma explícita até que exista contrato oficial. Essa decisão impede que endpoint, autenticação ou campos sejam inventados antes da documentação do fornecedor.
-
-## Fronteira de arquitetura
-
-```text
-Interface web → API interna → serviço de consulta → adapter do provider → normalizador → PostgreSQL → relatório
-```
-
-A interface nunca consome os nomes técnicos do fornecedor. Ela recebe somente o relatório normalizado, formado por identificação, características, registro, débitos, restrições e recall.
-
-## Requisitos para implementar o provider real
-
-Antes de alterar o adapter, registre a documentação oficial e valide os itens abaixo.
-
-| Informação necessária | Finalidade |
+| `DATA_PROVIDER` | Comportamento |
 | --- | --- |
-| URL base e versão da API | Configurar `VEHICLE_API_BASE_URL`. |
-| Método de autenticação | Definir uso seguro de login, senha, token ou assinatura. |
-| Contrato de consulta | Determinar placa, parâmetros opcionais e idempotência do fornecedor. |
-| Esquema de resposta e códigos de erro | Mapear campos sem expor o payload técnico ao frontend. |
-| Limites e timeout | Dimensionar `VEHICLE_API_TIMEOUT_MS` e retentativas seguras. |
-| Política comercial | Determinar cobrança, cobertura e regras de reprocessamento. |
-| LGPD e retenção | Definir minimização, armazenamento do original e acesso a dados pessoais. |
+| `mock` | Dados fictícios (`sandbox_vehicles`). **Proibido em produção.** |
+| `disabled` | Sem fonte de dados: consultas pagas ficam "em breve", nada é cobrado. Permitido em produção |
+| `real` | Provedor contratado via `ContractedVehicleProvider`; exige `VEHICLE_API_BASE_URL`, `VEHICLE_API_QUERY_PATH` e credenciais conforme `VEHICLE_API_AUTH_SCHEME` (`bearer` ou `basic`) |
 
-## Procedimento de implementação
+Fronteira: `Interface → API → serviço de consulta → adapter → normalizador → PostgreSQL → relatório v2`. O front nunca vê nomes técnicos do fornecedor. Campos que o provedor não devolve viram `NOT_PROVIDED` ("não fornecido"/"em breve"), nunca "nada consta". O formato de referência da resposta do provedor está em `apps/api/test/fixtures`.
 
-A implementação deve criar uma classe que satisfaça `VehicleDataProvider` em `apps/api/src/types.ts`. O adapter deve receber a placa normalizada, chamar apenas o contrato oficial, mapear erros em códigos internos e devolver `providerQueryId` e `raw`. Em seguida, o normalizador deverá ser estendido para converter o payload oficial no modelo interno.
+Variáveis: `VEHICLE_API_*`, `APIBRASIL_*` (alternativa de token), `VEHICLE_API_TIMEOUT_MS`, `QUERY_CACHE_ENABLED`/`QUERY_CACHE_TTL_SECONDS`, `QUERY_REQUEST_TIMEOUT_MS`, `QUERY_STUCK_MINUTES`, `STORE_RAW_PROVIDER_RESPONSE` (bruto sempre cifrado).
 
-Nunca passe credenciais para o frontend, registre tokens em log ou exponha `raw_response` em rotas comuns. O adapter deve respeitar timeout, permitir o estorno já existente na rota de consulta e manter a idempotência do pedido interno.
+### Tipos de busca
 
-## Variáveis de runtime
+A consulta pode ser pedida por **placa**, **chassi**, **Renavam** ou **CPF/CNPJ do proprietário**. Cada fonte declara o que atende; o que não for atendido fica "em breve" na tela e a API responde `SEARCH_TYPE_NOT_SUPPORTED` antes de cobrar.
 
-As credenciais são lidas somente no servidor e devem ser configuradas pelo ambiente de deploy.
+| Fonte | Placa | Chassi | Renavam | CPF/CNPJ |
+| --- | --- | --- | --- | --- |
+| `mock` (teste) | sim | sim (chassi fictício da placa de exemplo) | não | não |
+| `consultarplaca` | sim | sim (`/v2/consultarChassi`) | não (só devolve o Renavam a partir da placa) | não |
+| `credify` e genérico | sim | conforme `VEHICLE_SEARCH_TYPES` | conforme `VEHICLE_SEARCH_TYPES` | conforme `VEHICLE_SEARCH_TYPES` |
 
-```dotenv
-DATA_PROVIDER=real
-VEHICLE_API_BASE_URL=
-VEHICLE_API_LOGIN=
-VEHICLE_API_PASSWORD=
-VEHICLE_API_TOKEN=
-VEHICLE_API_TIMEOUT_MS=15000
-```
+Para liberar um tipo no contrato (Credify/genérico): inclua-o em `VEHICLE_SEARCH_TYPES` (ex.: `CHASSIS,RENAVAM`) e coloque o marcador no caminho ou no corpo: `{chassis}`/`{{chassis}}`, `{renavam}`/`{{renavam}}`, `{document}`/`{{document}}`. Sem o marcador, o tipo não é chamado.
 
-> Não adicione essas variáveis ao Git, ao Dockerfile, a argumentos de build ou ao bundle do frontend.
+Consulta por CPF/CNPJ do proprietário envolve dado pessoal (LGPD): só ative com base legal definida e contrato que preveja esse uso.
+
+API: `POST /api/queries` aceita `{ "plate": "ABC1D23" }` (formato antigo) ou `{ "searchType": "CHASSIS", "searchValue": "9BWZZZ377VT004251" }`. A API pública v1 aceita `plate`, `chassis` ou `renavam` (um por pedido). `GET /api/search-types` lista o que a fonte atual atende.
+
+Custo por consulta e preços de referência de mercado são informados pelo dono em **Preços** no painel; o sistema não coleta preços de terceiros automaticamente.
+
+## FIPE
+
+`FEATURE_FREE_FIPE=true` habilita a cotação FIPE e o relatório de cotação; fontes configuráveis em `FIPE_PRIMARY_*`/`FIPE_SECONDARY_*`. A FIPE **por placa** consome o provedor e por isso tem limites diários.
+
+## Pagamentos
+
+| `PAYMENT_PROVIDER` | Webhook |
+| --- | --- |
+| `disabled` | Checkout e webhook indisponíveis (503) |
+| `sandbox` | Somente desenvolvimento |
+| `asaas` | `${APP_URL}/api/payments/asaas/webhook` (header `asaas-access-token` = `PAYMENT_WEBHOOK_SECRET`) |
+| `mercadopago` | `${APP_URL}/api/payments/mercadopago/webhook` |
+
+O saldo só é creditado por webhook autenticado e idempotente. Meios, taxas, impostos e recebedor são configurados em **Pagamentos** (alterações de recebedor exigem `ADMIN_SYSTEM`).
+
+## API pública v1 (integradores)
+
+Desligada por padrão (`PUBLIC_API_ENABLED=false` ⇒ 404). Chaves `blb_live_…` são geradas pelo cliente em `/app/api`; autenticação `Authorization: Bearer <chave>`; limite `PUBLIC_API_RATE_LIMIT_MAX`/min.
+
+| Rota | Função |
+| --- | --- |
+| `GET /api/v1/balance` | Saldo em centavos |
+| `GET /api/v1/products` | Produtos ativos e preços |
+| `POST /api/v1/vehicles` | `{ "plate": "ABC1D23", "product": "COMPLETE" }` → relatório (debita o saldo) |
+| `GET /api/v1/vehicles/:id` | Consulta uma consulta já feita (sem nova cobrança) |
+
+Documentação voltada ao cliente em `/desenvolvedores`.
+
+## Integrações preparadas na 1.10.0 (desligadas por padrão)
+
+| Integração | Chave | Estado |
+|---|---|---|
+| Consulta veicular Credify | `VEHICLE_API_PROVIDER=credify`, `CREDIFY_*` | Adaptador do Veículo Total (`POST /veiculototal`) pronto; falta só `CREDIFY_CLIENT_ID`/`CREDIFY_CLIENT_SECRET`, preço e a validação com consulta real. |
+| Consulta veicular ConsultarPlaca (teste) | `VEHICLE_API_PROVIDER=consultarplaca`, `CONSULTARPLACA_EMAIL`, `CONSULTARPLACA_API_KEY` | Pronto. Placa de teste `AAA0000` (sem custo). Só dados do veículo; débitos e restrições ficam "não fornecido". |
+| CNPJ | `CNPJ_PROVIDER=brasilapi` (padrão) | Ligado por padrão (BrasilAPI, gratuita, dados da Receita). Preenche o cadastro ao digitar o CNPJ no painel. Para desligar: `CNPJ_PROVIDER=disabled`. |
+| CEP | `CEP_PROVIDER=brasilapi` (padrão) | Ligado por padrão (BrasilAPI, com ViaCEP de reserva; ambas gratuitas). Preenche rua, bairro, cidade e UF ao digitar o CEP no painel. Para desligar: `CEP_PROVIDER=disabled`. |
+| E-mail | `EMAIL_PROVIDER=smtp`, `EMAIL_WEBHOOK_SECRET` | Fila pronta; falta SMTP e mapear o webhook de entrega do provedor. |
+| Assinatura | `ESIGN_PROVIDER=internal` | Aceite eletrônico simples com trilha. Assinatura avançada/qualificada exige provedor e validação jurídica. |
+| Fiscal | `FISCAL_PROVIDER=manual` | Fila para emissão externa e registro do resultado. Não há adaptador de NFS-e. |
+| Mercado Pago | `MP_ACCESS_TOKEN`, `MP_WEBHOOK_SECRET` | Checkout, webhook, estorno total e conciliação prontos; testar em sandbox. |
+
+Endpoints novos: `/api/support/*` (cliente), `/api/admin/support/*`, `/api/testimonials` (público), `/api/testimonials/mine`, `/api/admin/testimonials*`, `/api/admin/contracts*`, `/api/contracts/*` (link seguro), `/api/admin/fiscal/*`, `/api/fiscal/documents/:token`, `/api/admin/email/*`, `/api/webhooks/email`, `/api/admin/payment-orders/:id/reconcile|refund`, `/api/admin/cnpj/*`, `/api/account/cnpj/*`, `GET /ready`.

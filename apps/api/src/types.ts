@@ -1,3 +1,4 @@
+import type { SearchType } from './searchKey.js';
 export type NormalizedVehicle = {
   identification: { plate:string; renavam?:string; chassis?:string; engine?:string; gearbox?:string; brand?:string; model?:string; fullModel?:string };
   characteristics: { manufactureYear?:string; modelYear?:string; color?:string; fuel?:string; power?:string; displacement?:string; type?:string; species?:string; category?:string; body?:string; axles?:string; passengers?:string; loadCapacity?:string; origin?:string };
@@ -6,6 +7,8 @@ export type NormalizedVehicle = {
   debts: { key:string; label:string; amountCents:number; hasDebt:boolean }[];
   restrictions: { key:string; label:string; status:string; alert:boolean }[];
   recall?:string;
+  /** relatório estruturado v2 (campos do provedor, estados e veredito) */
+  v2?: import('./report/normalizeV2.js').ReportV2;
   coverage?: { identification: 'FOUND' | 'NOT_QUERIED'; debts: 'FOUND' | 'NOT_QUERIED'; restrictions: 'FOUND' | 'NOT_QUERIED'; recall: 'FOUND' | 'NOT_QUERIED' };
 };
 
@@ -36,6 +39,9 @@ export type FipeVehicleDetails = {
   state?: string;
   licensingYear?: string;
   status?: string;
+  /** chassi e motor completos (sem máscara), como a fonte informou */
+  chassis?: string;
+  engine?: string;
 };
 
 export type FipeQuote = {
@@ -59,6 +65,8 @@ export type FipeQuote = {
   blocks: Array<{ key: string; label: string; state: InformationState; message: string }>;
   plate?: string;
   vehicleDetails?: FipeVehicleDetails;
+  /** ficha gratuita: decodificador, tabela FIPE por ano e mês, financiamento e ficha técnica do guia */
+  sheet?: import('./enrichment/sheet.js').VehicleSheet;
 };
 
 export type FipeProviderResult = Omit<FipeQuote, 'documentCode' | 'reportHash' | 'blocks' | 'estimatedNegotiation' | 'plate'> & {
@@ -67,7 +75,14 @@ export type FipeProviderResult = Omit<FipeQuote, 'documentCode' | 'reportHash' |
 
 export interface VehicleDataProvider {
   name: string;
-  queryByPlate(plate: string): Promise<{ providerQueryId?: string; raw: unknown }>;
+  /** Tipos de busca que a fonte atende. Ausente = só placa. */
+  supportedSearchTypes?: readonly SearchType[];
+  /** Valida a autenticação da fonte antes de debitar uma consulta, quando o provedor oferece esse preflight. */
+  validateForQuery?(): Promise<{ expiresInMinutes?: number }>;
+  /** `ctx.productId` deixa a fonte escolher a consulta certa para o pacote vendido (Credify); as demais ignoram. */
+  queryByPlate(plate: string, ctx?: { productId?: string; sources?: readonly string[] | null }): Promise<{ providerQueryId?: string; raw: unknown }>;
+  /** Busca por chassi, Renavam ou documento do proprietário. Só existe se a fonte atende o tipo. */
+  queryBy?(type: SearchType, value: string): Promise<{ providerQueryId?: string; raw: unknown }>;
 }
 
 export interface FipeProvider {

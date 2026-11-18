@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { redactPrivateFields } from './privacy.js';
 
+import { BRAND } from './lib/brand.js';
 export type ReportFieldConfig = {
   key: string;
   label: string;
@@ -37,7 +38,7 @@ export type GenericReportBranding = {
 };
 
 export type GenericReport = {
-  schema: 'buscarr.generic.report.v1';
+  schema: string;
   template: { id: string; productId: string; version: number; name: string };
   title: string;
   subtitle: string;
@@ -90,7 +91,7 @@ export function defaultReportTemplate(productId: string, productName: string): G
     name: `${productName} — relatório padrão`,
     status: 'PUBLISHED',
     title: productName,
-    subtitle: 'Relatório veicular BUSCARR',
+    subtitle: `Relatório veicular ${BRAND.name}`,
     sections: [
       { key: 'identification', label: 'Identificação do veículo', order: 10, visible: true, fields: [
         { key: 'identification.plate', label: 'Placa', visible: true },
@@ -131,10 +132,10 @@ export function buildGenericReport(template: GenericReportTemplate, input: unkno
     }));
   const content = JSON.stringify({ template: template.id, version: template.version, sections });
   return {
-    schema: 'buscarr.generic.report.v1',
+    schema: `${BRAND.slug}.generic.report.v1`,
     template: { id: template.id, productId: template.productId, version: template.version, name: template.name },
     title: template.title || template.name,
-    subtitle: template.subtitle || 'Relatório veicular BUSCARR',
+    subtitle: template.subtitle || `Relatório veicular ${BRAND.name}`,
     generatedAt,
     validation: createHash('sha256').update(content).digest('hex'),
     sections
@@ -142,12 +143,12 @@ export function buildGenericReport(template: GenericReportTemplate, input: unkno
 }
 
 export function reportPrintHtml(report: GenericReport, branding: GenericReportBranding = {}): string {
-  const primary = safeColor(branding.primaryColor, '#168579');
-  const accent = safeColor(branding.accentColor, '#C99A3D');
+  const primary = safeColor(branding.primaryColor, '#0B7A43');
+  const accent = safeColor(branding.accentColor, '#22A862');
   const logoUrl = safeLogo(branding.logoUrl);
   const logo = logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt="" style="max-height:42px;max-width:220px;object-fit:contain;margin-bottom:8px">` : '';
   const sections = report.sections.map((section) => `<section><h2>${escapeHtml(section.label)}</h2><div class="grid">${section.fields.map((field) => `<div class="field"><span>${escapeHtml(field.label)}</span><strong>${escapeHtml(printableValue(field.value))}</strong></div>`).join('')}</div></section>`).join('');
-  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${escapeHtml(report.title)}</title><style>@page{size:A4;margin:18mm}body{font-family:Arial,sans-serif;color:#1f2937;line-height:1.45;max-width:760px;margin:0 auto}header{border-bottom:3px solid ${primary};padding-bottom:12px;margin-bottom:22px}h1{font-size:22px;margin:0;color:${primary}}h2{font-size:15px;margin-top:24px;color:${primary}}.muted{color:#6b7280;font-size:12px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.field{border:1px solid #e5e7eb;border-radius:6px;padding:9px;break-inside:avoid}.field span{display:block;color:#6b7280;font-size:11px}.field strong{display:block;margin-top:3px;font-size:13px;white-space:pre-wrap;word-break:break-word}.notice{background:#f0fdfa;border-left:4px solid ${accent};padding:12px}.print{margin:20px 0;padding:10px 16px;border:0;background:${primary};color:white;border-radius:6px}@media print{.print{display:none}}@media(max-width:560px){.grid{grid-template-columns:1fr}}</style></head><body><header>${logo}<h1>${escapeHtml(branding.name || 'BUSCARR')} — ${escapeHtml(report.title)}</h1><div class="muted">${escapeHtml(report.subtitle)} · Template ${escapeHtml(report.template.version)} · Validação ${escapeHtml(report.validation)}</div></header>${sections}<p class="muted">Gerado em ${escapeHtml(new Date(report.generatedAt).toLocaleString('pt-BR'))}</p><div class="notice">Este relatório apresenta somente dados veiculares autorizados para a modalidade contratada. Dados pessoais do proprietário são omitidos.</div><button class="print" onclick="window.print()">Imprimir</button></body></html>`;
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${escapeHtml(report.title)}</title><style>@page{size:A4;margin:18mm}body{font-family:"DM Sans",Arial,sans-serif;color:#0F2A1D;line-height:1.45;max-width:760px;margin:0 auto;-webkit-print-color-adjust:exact;print-color-adjust:exact}header{background:#04140D;color:#fff;border-bottom:3px solid ${accent};padding:18px 22px;margin-bottom:22px;border-radius:10px 10px 0 0}header .muted{color:#9EC2AE}h1{font-family:"Plus Jakarta Sans",Arial,sans-serif;font-size:22px;margin:0;color:#fff}h2{font-family:"Plus Jakarta Sans",Arial,sans-serif;font-size:13px;text-transform:uppercase;letter-spacing:.02em;margin-top:24px;padding:7px 10px;background:#E3F5EA;border-left:4px solid ${primary};color:#065A33}.muted{color:#566B5F;font-size:12px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.field{border:1px solid #DCE9E1;border-radius:6px;padding:9px;break-inside:avoid}.field span{display:block;color:#566B5F;font-size:11px}.field strong{display:block;margin-top:3px;font-size:13px;white-space:pre-wrap;word-break:break-word}.notice{background:#E3F5EA;border-left:4px solid ${accent};padding:12px}.print{margin:20px 0;padding:10px 16px;border:0;background:${primary};color:white;border-radius:6px}@media print{.print{display:none}}@media(max-width:560px){.grid{grid-template-columns:1fr}}</style></head><body><header>${logo}<h1>${escapeHtml(branding.name || `${BRAND.name}`)} — ${escapeHtml(report.title)}</h1><div class="muted">${escapeHtml(report.subtitle)} · Template ${escapeHtml(report.template.version)} · Validação ${escapeHtml(report.validation)}</div></header>${sections}<p class="muted">Gerado em ${escapeHtml(new Date(report.generatedAt).toLocaleString('pt-BR'))}</p><div class="notice">Este relatório apresenta somente dados veiculares autorizados para a modalidade contratada. Dados pessoais do proprietário são omitidos.</div><button class="print" onclick="window.print()">Imprimir</button></body></html>`;
 }
 
 function pdfText(value: string): string {
@@ -156,7 +157,7 @@ function pdfText(value: string): string {
 
 export function reportPdf(report: GenericReport, branding: GenericReportBranding = {}): Buffer {
   const lines: string[] = [
-    `${branding.name || 'BUSCARR'} — ${report.title}`,
+    `${branding.name || `${BRAND.name}`} — ${report.title}`,
     report.subtitle,
     `Template ${report.template.version} · Validacao ${report.validation.slice(0, 24)}`,
     ''

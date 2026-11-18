@@ -11,32 +11,165 @@ import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
-import { auth, issueSession, revokeSession, type AuthUser } from './auth.js';
+import { settlePaymentEvent } from './payments/settle.js';
+import { adminAuth, adminEdgeGuard, TEAM_ROLES, auth, clientApiGuard, isAdminHost, isTeamRole, issueSession, optionalAuth, revokeSession, type AuthUser } from './auth.js';
+import { hashIp } from './lib/totpFlow.js';
+import { adminAuthRouter } from './routes/adminAuth.js';
+import { financeRouter } from './routes/finance.js';
+import { enforceMarginFloor } from './pricing/guard.js';
+import { partnersRouter, releaseCommissions } from './routes/partners.js';
+import { partnerPortalRouter } from './routes/partnerPortal.js';
+import { adminInvitesRouter, invitesRouter } from './routes/invites.js';
+import { attachInviter, ensureInviteCode } from './lib/invites.js';
+import { adminLeadsRouter, leadsPublicRouter } from './routes/leads.js';
+import { claimLeadLink, sessionKeyFor, upsertLead } from './lib/leads.js';
+import { adminQueriesRouter } from './routes/adminQueries.js';
 import { completeAuthorization, consumeLoginTicket, createAuthorizationRequest, oauthErrorUrl, oauthSuccessUrl, socialProviderStatus, type OAuthProvider } from './oauth.js';
-import { env } from './config.js';
+import { adminHosts, env, publicAppUrl } from './config.js';
 import { sendContactConfirmationEmail, sendContactMessageEmail, sendPasswordResetEmail, isEmailConfigured } from './email.js';
 import { pool, tx } from './db.js';
 import type { PoolClient } from 'pg';
 import { normalizeBdrp } from './normalizer.js';
-import { hasPermission, permissionsFor, requirePermission } from './permissions.js';
+import { hasPermission, outranks, permissionsFor, requirePermission, rolesBelow } from './permissions.js';
 import { getProvider } from './providers/index.js';
+import { startCredifyTokenKeeper } from './providers/credifyProvider.js';
 import { getFipeProvider, quoteWithFallback, type FipeCatalogProvider } from './providers/fipeProvider.js';
 import { fipePdf, fipePrintHtml, makeFipeQuote, reportSnapshot, type ReportBranding } from './fipeReport.js';
+import { parseFipeByPlate } from './fipePlate.js';
 import { getPaymentProvider, getPaymentProviderFor, type PaymentProviderName } from './payments/index.js';
 import { ensureSchema } from './schema.js';
 import { performAdminLookup } from './adminLookup.js';
-import { executeVehicleLookup } from './vehicleLookup.js';
+import { executeVehicleLookup, providerSupports } from './vehicleLookup.js';
+import { enrichWithSheet } from './lib/sheetEnrich.js';
+import { fetchFipeHistory } from './enrichment/fipeHistory.js';
+import { buildVehicleSheet, type VehicleSheet } from './enrichment/sheet.js';
+import { catalogSpecsFor } from './lib/sheetSpecs.js';
+import { financingTeaser } from './lib/sheetFinancing.js';
+import { isPrelaunch, siteOpenFor } from './siteAccess.js';
+import { legalAcceptanceStatus, requireLegalAcceptanceForQuery } from './legalAcceptance.js';
+import { acceptContractAtCheckout, claimContractForOrder, previewPurchaseContract, sendPurchaseReceipt, confirmPurchaseContract, draftPurchaseContract, getUserContract, linkContractToOrder, listUserContracts, reopenContractForOrder, resendPurchaseOtp } from './purchaseContract.js';
+import { maskFreeChassis, maskFreeEngine } from './report/mask.js';
+import { INVALID_CODE, SEARCH_LABELS, SEARCH_TYPES, maskSearchValue, resolveSearchInput, type SearchType } from './searchKey.js';
 import { calculateAffiliateCommission, calculateCouponDiscount, couponHasCapacity, couponWindowIsOpen, effectiveQueryPriceCents, queryAmountAfterCoupon } from './commercial.js';
 import { publicVehicleResult, sanitizeAuditMetadata } from './privacy.js';
-import { buildGenericReport, defaultReportTemplate, reportPdf, reportPrintHtml, type GenericReport, type GenericReportTemplate } from './reportEngine.js';
-import { decryptTotpSecret, encryptTotpSecret, generateRecoveryCodes, generateTotpSetup, hashRecoveryCode, verifyTotpCode } from './totp.js';
-import { renderSeoHtml } from './seo.js';
-import type { FipeQuote, FipeSelectionItem, FipeVehicleDetails, FipeVehicleType, NormalizedVehicle } from './types.js';
+import { NORMALIZER_VERSION, tierForProductCode, viewReport, type ReportV2 } from './report/normalizeV2.js';
+import { defaultReportTemplate } from './reportEngine.js';
+import { renderVehiclePdf, type ReportMeta } from './report/pdf.js';
+import { renderVehicleHtml } from './report/printHtml.js';
+import { encryptRaw } from './lib/rawStore.js';
+import { refundProcessingQuery, sweepStuckQueries } from './lib/queryRefund.js';
+import { runExclusive } from './lib/providerGuard.js';
+import { purgeExpiredRaw } from './lib/rawRetention.js';
+import { adminPeopleRouter } from './routes/adminPeople.js';
+import { adminBillingRouter } from './routes/adminBilling.js';
+import { adminVehiclesRouter } from './routes/adminVehicles.js';
+import { publicVehiclesRouter } from './routes/vehicles.js';
+import { fipeBrands, fipeModels, fipeYears, fipeSearch, getFipePrice } from './lib/fipeLookup.js';
+import { adminSimulatorRouter } from './routes/adminSimulator.js';
+import { garageRouter } from './routes/garage.js';
+import { watchesRouter } from './routes/watches.js';
+import { adminResultsRouter } from './routes/adminResults.js';
+import { renderDossierPdf } from './report/dossier.js';
+import { startPlateWatch } from './lib/plateWatch.js';
+import { isProfile, loadProfileState } from './lib/profiles.js';
+import { dealerRouter } from './routes/dealer.js';
+import { loadMembership } from './dealer/context.js';
+import { dealerLeadsRouter } from './routes/dealerLeads.js';
+import { dealerOpsRouter } from './routes/dealerOps.js';
+import { dealerPublicRouter } from './routes/dealerPublic.js';
+import { adminDealersRouter } from './routes/adminDealers.js';
+import { adminAccessRouter } from './routes/adminAccess.js';
+import { resolveAccess } from './lib/access.js';
+import { adminReportScopeRouter } from './routes/adminReportScope.js';
+import { adminEmailRouter, emailWebhookRouter } from './routes/adminEmail.js';
+import { accountCnpjRouter, adminCnpjRouter } from './routes/cnpj.js';
+import { adminContractsRouter, contractsPublicRouter } from './routes/contracts.js';
+import { adminPaymentOpsRouter } from './routes/adminPaymentOps.js';
+import { adminDataResetRouter } from './routes/adminDataReset.js';
+import { adminFiscalQueueRouter, fiscalPublicRouter } from './routes/adminFiscalQueue.js';
+import { startFiscalWorker } from './lib/fiscal.js';
+import { startFiscalAuto } from './lib/fiscalAuto.js';
+import { startPaymentSyncWorker, syncUserOpenOrders } from './lib/paymentSync.js';
+import { toCsv } from './lib/br.js';
+import { refreshStaleReports } from './lib/reportRefresh.js';
+import { PIX_KEY_TYPES, normalizePixKey } from './lib/pix.js';
+import { RESPONSIBILITY_VERSION, assertCustomerProfile, profileDto, profileRequired, validDocument, validPhone, validateRegistrationProfile } from './lib/customerProfile.js';
+import { supportAdminRouter, supportClientRouter, supportPublicRouter } from './routes/support.js';
+import { testimonialsAdminRouter, testimonialsRouter } from './routes/testimonials.js';
+import { adminIntegrationsRouter } from './routes/adminIntegrations.js';
+import { startEmailWorker } from './lib/emailOutbox.js';
+import { startGarageAlerts } from './lib/garageAlerts.js';
+import { apiKeyAuth, apiKeyRateLimit, apiKeysRouter, requirePublicApiEnabled } from './routes/apiKeys.js';
+import { simulatorRouter } from './routes/simulator.js';
+import { scoreModelMatch } from './lib/vehicleSpecs.js';
+import { articleBodyHtml, plansBodyHtml, vehicleBodyHtml } from './seoBodies.js';
+import { adminContentRouter, articleSeo, publicContentRouter, publishedArticleSlugs } from './routes/content.js';
+import { refreshProductSections, sectionsForProduct, startProductSectionsRefresh } from './lib/productSections.js';
+import { loadFinancingSettings, maybeRefreshInBackground } from './financingSettings.js';
+import { DATA_SOURCES, anycarConfigured, sourcesForProduct, validateDataSources } from './lib/dataSources.js';
+import { contractFor, enforcedSources } from './lib/productContract.js';
+import { defaultSourcesFor } from './lib/dataSourceDefaults.js';
+import { scopeForProduct, sectionSellable } from './lib/reportScope.js';
+import { ensureLienDetail } from './lib/lienRefresh.js';
+import { ensureFipeEnrichment, SHEET_PRODUCTS } from './lib/fipeRefresh.js';
+import { checkAd } from './report/adCheck.js';
+import { consumeSecureLink, createSecureLink } from './lib/secureLinks.js';
+import { seoBodyHtml, seoFaqLd, seoImages, seoRows } from './seoStore.js';
+import { financingBodyHtml, financingContent, isFinancingPath, syncFinancingPages } from './financingPages.js';
+import { isKnownPath, pathFromSeoImageSlug, productImageUrls, renderRobotsTxt, renderSeoHtml, renderSitemapXml, seoImageUrl, setGoogleTags, type SeoOverride } from './seo.js';
+import { appError, asyncRoute, audit, log, requestId, type AppError } from './lib/http.js';
+import { cancelAllProcessing, cancelPaidQuery, cancelProcessingQuery } from './lib/queryCancel.js';
+import type { FipeProviderResult, FipeQuote, FipeSelectionItem, FipeVehicleDetails, FipeVehicleType, NormalizedVehicle, VehicleDataProvider } from './types.js';
 
+import { BRAND } from './lib/brand.js';
 await ensureSchema();
+await refreshProductSections();
+startProductSectionsRefresh();
+startEmailWorker();
+startGarageAlerts(log);
+startPlateWatch((input) => runVehicleQuery(input), log);
+startFiscalWorker();
+startFiscalAuto();
+startPaymentSyncWorker();
 
 const app = express();
 const api = express.Router();
+// Duas frentes: o painel só existe nos hosts de admin; o app do cliente não é servido nesses hosts.
+api.use((req, res, next) => (req.path.startsWith('/admin') ? adminEdgeGuard(req, res, next) : clientApiGuard(req, res, next)));
+api.use('/admin/auth', adminAuthRouter);
+api.use('/admin/finance', financeRouter);
+api.use('/admin/finance', partnersRouter);
+api.use(partnerPortalRouter);
+api.use(invitesRouter);
+api.use(leadsPublicRouter);
+api.use('/admin/crm', adminLeadsRouter);
+api.use('/admin/queries', adminQueriesRouter);
+api.use('/admin/content', adminContentRouter);
+api.use('/admin/vehicles', adminVehiclesRouter);
+api.use('/admin/simulator', adminSimulatorRouter);
+api.use('/admin', adminReportScopeRouter);
+api.use('/admin', adminEmailRouter);
+api.use('/admin', adminCnpjRouter);
+api.use('/admin', adminContractsRouter);
+api.use('/admin', adminPaymentOpsRouter);
+api.use('/admin', adminDataResetRouter);
+api.use('/admin', adminDealersRouter);
+api.use('/admin', adminAccessRouter);
+api.use('/admin', adminResultsRouter);
+api.use('/admin', adminFiscalQueueRouter);
+api.use('/fiscal', fiscalPublicRouter);
+api.use('/admin', supportAdminRouter);
+api.use('/support', supportPublicRouter);
+api.use('/support', supportClientRouter);
+api.use('/admin', testimonialsAdminRouter);
+api.use('/admin', adminIntegrationsRouter);
+api.use('/testimonials', testimonialsRouter);
+api.use('/contracts', contractsPublicRouter);
+api.use('/account', accountCnpjRouter);
+api.use('/webhooks', emailWebhookRouter);
+api.use('/admin', adminPeopleRouter);
+api.use('/admin', adminInvitesRouter);
+api.use('/admin', adminBillingRouter);
 api.use((_req, res, next) => {
   // API responses are not cacheable: authenticated clients must never receive a conditional 304 without a body.
   res.setHeader('Cache-Control', 'no-store, private');
@@ -48,15 +181,47 @@ const plateSchema = z.string().trim().min(7).max(16).transform((value) => value.
 const registerSchema = z.object({
   name: z.string().trim().min(2).max(120),
   email: z.string().trim().email().max(254),
-  password: z.string().min(10).max(128),
+  password: z.string().min(8).max(128),
   acceptTerms: z.literal(true),
   acceptPrivacy: z.literal(true),
   marketingOptIn: z.boolean().optional().default(false),
-  affiliateCode: z.string().trim().min(3).max(40).optional()
+  affiliateCode: z.string().trim().min(3).max(40).optional(),
+  inviteCode: z.string().trim().max(20).optional(),
+  inviteVia: z.enum(['LINK', 'REPORT']).optional(),
+  leadLinkCode: z.string().trim().max(20).optional(),
+  funnelSession: z.string().regex(/^[a-zA-Z0-9-]{16,80}$/).optional(),
+  utm: z.record(z.string().max(60), z.string().max(160)).optional(),
+  accountType: z.enum(['PARTICULAR', 'AUTONOMO', 'EMPRESA']).optional().default('PARTICULAR'),
+  // Conta simples: nome, e-mail e telefone (telefone obrigatório quando CUSTOMER_PROFILE_REQUIRED está ligado). CPF e endereço ficam para a primeira compra; a chave PIX é opcional.
+  phone: z.string().trim().max(30).optional(),
+  pixKey: z.string().trim().max(140).optional(),
+  pixKeyType: z.enum(PIX_KEY_TYPES).optional(),
+  cpfCnpj: z.string().trim().max(30).optional(),
+  companyName: z.string().trim().max(160).optional(),
+  zip: z.string().trim().max(12).optional(),
+  street: z.string().trim().max(160).optional(),
+  streetNumber: z.string().trim().max(20).optional(),
+  complement: z.string().trim().max(80).optional(),
+  district: z.string().trim().max(100).optional(),
+  city: z.string().trim().max(120).optional(),
+  state: z.string().trim().regex(/^[A-Za-z]{2}$/).optional(),
+  acceptResponsibility: z.literal(true).optional()
 });
 const oauthTicketSchema = z.object({ ticket: z.string().regex(/^[A-Za-z0-9_-]{30,160}$/) });
 const loginSchema = z.object({ email: z.string().trim().email().max(254), password: z.string().min(1).max(128) }).strict();
-const requestQuerySchema = z.object({ plate: plateSchema, productId: z.string().trim().regex(/^[A-Z][A-Z0-9_]{1,39}$/), paymentOrderId: z.string().uuid().optional() }).strict();
+/** A chave da consulta chega como `plate` (formato antigo) ou `searchType` + `searchValue` e é validada por tipo. */
+const searchFields = { plate: z.string().trim().max(40).optional(), searchType: z.enum(SEARCH_TYPES).optional(), searchValue: z.string().trim().max(40).optional() };
+function searchErrorCode(body: unknown): string {
+  const type = (body as { searchType?: unknown } | null)?.searchType;
+  if (type === undefined) return 'INVALID_PLATE';
+  return typeof type === 'string' && (SEARCH_TYPES as readonly string[]).includes(type) ? INVALID_CODE[type as SearchType] : 'INVALID_INPUT';
+}
+const requestQuerySchema = z.object({ ...searchFields, productId: z.string().trim().regex(/^[A-Z][A-Z0-9_]{1,39}$/), paymentOrderId: z.string().uuid().optional(), acceptContract: z.literal(true).optional(), acceptPrivacy: z.literal(true).optional() }).strict()
+  .transform((value, ctx) => {
+    const found = resolveSearchInput(value);
+    if (!found) { ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'INVALID_SEARCH' }); return z.NEVER; }
+    return { ...value, plate: found.value, searchType: found.type };
+  });
 const fipeVehicleTypeSchema = z.enum(['cars', 'motorcycles', 'trucks']);
 const fipeItemSchema = z.object({ code: z.string().trim().min(1).max(80), name: z.string().trim().min(1).max(180) });
 const fipeSelectionSchema = z.object({
@@ -66,8 +231,8 @@ const fipeSelectionSchema = z.object({
   year: fipeItemSchema.optional(),
   plate: z.string().trim().max(16).optional()
 }).refine((input) => Boolean(input.plate) || Boolean(input.vehicleType && input.brand && input.model && input.year), 'FIPE_SELECTION_REQUIRED');
-const sandboxCreditSchema = z.object({ credits: z.number().int().min(10).max(10000) }).strict();
-const changePasswordSchema = z.object({ currentPassword: z.string().min(1).max(128).optional(), newPassword: z.string().min(10).max(128) }).strict();
+const sandboxCreditSchema = z.object({ amountCents: z.number().int().min(1000).max(1000000) }).strict();
+const changePasswordSchema = z.object({ currentPassword: z.string().min(1).max(128).optional(), newPassword: z.string().min(8).max(128) }).strict();
 const profileUpdateSchema = z.object({
   name: z.string().trim().min(2).max(120),
   cpfCnpj: z.string().trim().max(30).optional(),
@@ -75,10 +240,18 @@ const profileUpdateSchema = z.object({
   companyName: z.string().trim().max(160).optional(),
   city: z.string().trim().max(120).optional(),
   state: z.string().trim().regex(/^[A-Za-z]{2}$/).optional(),
-  marketingOptIn: z.boolean().optional()
+  zip: z.string().trim().max(12).optional(),
+  street: z.string().trim().max(160).optional(),
+  streetNumber: z.string().trim().max(20).optional(),
+  complement: z.string().trim().max(80).optional(),
+  district: z.string().trim().max(100).optional(),
+  acceptResponsibility: z.literal(true).optional(),
+  marketingOptIn: z.boolean().optional(),
+  pixKey: z.string().trim().max(140).optional(),
+  pixKeyType: z.enum(PIX_KEY_TYPES).optional()
 });
 const forgotPasswordSchema = z.object({ email: z.string().trim().email().max(254) }).strict();
-  const resetPasswordSchema = z.object({ token: z.string().regex(/^[A-Za-z0-9_-]{30,160}$/), newPassword: z.string().min(10).max(128) }).strict();
+  const resetPasswordSchema = z.object({ token: z.string().regex(/^[A-Za-z0-9_-]{30,160}$/), newPassword: z.string().min(8).max(128) }).strict();
   const totpChallengeSchema = z.object({ challenge: z.string().regex(/^[A-Za-z0-9_-]{30,160}$/), code: z.string().trim().min(6).max(16) }).strict();
   const totpEnrollmentSchema = z.object({ challenge: z.string().regex(/^[A-Za-z0-9_-]{30,160}$/), code: z.string().trim().regex(/^\d{6}$/) }).strict();
   const reportFieldAdminSchema = z.object({ key: z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_.]{0,119}$/), label: z.string().trim().min(1).max(120), visible: z.boolean().optional().default(true) }).strict().refine((field) => !/(owner|cpf|cnpj|document|address|endereco|logradouro|phone|telefone|email)/i.test(field.key), 'PRIVATE_FIELD_FORBIDDEN');
@@ -89,11 +262,21 @@ const forgotPasswordSchema = z.object({ email: z.string().trim().email().max(254
     description: z.string().trim().min(2).max(400).optional(),
     referencePriceCents: z.number().int().min(0).max(100000000).nullable().optional(),
     priceCents: z.number().int().min(0).max(100000000).optional(),
+    providerCostCents: z.number().int().min(0).max(100000000).optional(),
+    supplierCostCents: z.number().int().min(0).max(100000000).optional(),
+    overrideMarginLock: z.object({ reason: z.string().trim().min(10).max(280) }).optional(),
     slug: z.string().trim().min(2).max(80).regex(/^[a-z0-9-]+$/).optional(),
     features: z.array(z.string().trim().min(1).max(180)).max(30).optional(),
     source: z.string().trim().max(240).nullable().optional(),
     coverage: z.string().trim().max(500).nullable().optional(),
     commercialStatus: z.enum(['ACTIVE', 'SOON', 'FREE', 'HIDDEN']).optional(),
+    tagline: z.string().trim().max(160).optional(),
+    longDescription: z.string().trim().max(2000).optional(),
+    badge: z.string().trim().max(30).nullable().optional(),
+    listPriceCents: z.number().int().min(0).max(100000000).nullable().optional(),
+    showOnHome: z.boolean().optional(),
+    reportSections: z.array(z.string()).max(12).nullable().optional(),
+    dataSources: z.array(z.string().max(30)).max(12).nullable().optional(),
     featured: z.boolean().optional(),
     displayOrder: z.number().int().min(-10000).max(10000).optional(),
     isFree: z.boolean().optional(),
@@ -110,12 +293,21 @@ const forgotPasswordSchema = z.object({ email: z.string().trim().email().max(254
     name: z.string().trim().min(2).max(120),
     description: z.string().trim().min(2).max(400),
     priceCents: z.number().int().min(0).max(100000000),
+    providerCostCents: z.number().int().min(0).max(100000000).default(0),
+    supplierCostCents: z.number().int().min(0).max(100000000).default(0),
+    overrideMarginLock: z.object({ reason: z.string().trim().min(10).max(280) }).optional(),
     referencePriceCents: z.number().int().min(0).max(100000000).nullable().optional(),
     slug: z.string().trim().min(2).max(80).regex(/^[a-z0-9-]+$/),
     features: z.array(z.string().trim().min(1).max(180)).max(30).default([]),
     source: z.string().trim().max(240).nullable().optional(),
     coverage: z.string().trim().max(500).nullable().optional(),
     commercialStatus: z.enum(['ACTIVE', 'SOON', 'FREE', 'HIDDEN']).default('SOON'),
+    tagline: z.string().trim().max(160).default(''),
+    longDescription: z.string().trim().max(2000).default(''),
+    badge: z.string().trim().max(30).nullable().optional(),
+    listPriceCents: z.number().int().min(0).max(100000000).nullable().optional(),
+    showOnHome: z.boolean().default(true),
+    reportSections: z.array(z.string()).max(12).nullable().optional(),
     featured: z.boolean().default(false),
     displayOrder: z.number().int().min(-10000).max(10000).default(100),
     isFree: z.boolean().default(false),
@@ -130,8 +322,13 @@ const adminUserUpdateSchema = z.object({
   amountCents: z.number().int().min(-100000000).max(100000000).refine((value) => value !== 0, 'ZERO_ADJUSTMENT'),
   description: z.string().trim().min(8).max(280)
 }).strict();
-  const checkoutSchema = z.object({ packageSlug: z.string().trim().min(2).max(80), couponCode: z.string().trim().min(3).max(40).optional(), affiliateCode: z.string().trim().min(3).max(40).optional() }).strict();
-  const queryCheckoutSchema = z.object({ productId: z.string().trim().regex(/^[A-Z][A-Z0-9_]{1,39}$/), plate: plateSchema, couponCode: z.string().trim().min(3).max(40).optional(), affiliateCode: z.string().trim().min(3).max(40).optional() }).strict();
+  const checkoutSchema = z.object({ contractId: z.string().uuid().optional(), acceptContract: z.literal(true).optional(), acceptPrivacy: z.literal(true).optional(), packageSlug: z.string().trim().min(2).max(80), couponCode: z.string().trim().min(3).max(40).optional(), affiliateCode: z.string().trim().min(3).max(40).optional() }).strict();
+  const queryCheckoutSchema = z.object({ ...searchFields, contractId: z.string().uuid().optional(), acceptContract: z.literal(true).optional(), acceptPrivacy: z.literal(true).optional(), productId: z.string().trim().regex(/^[A-Z][A-Z0-9_]{1,39}$/), couponCode: z.string().trim().min(3).max(40).optional(), affiliateCode: z.string().trim().min(3).max(40).optional() }).strict()
+    .transform((value, ctx) => {
+      const found = resolveSearchInput(value);
+      if (!found) { ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'INVALID_SEARCH' }); return z.NEVER; }
+      return { ...value, plate: found.value, searchType: found.type };
+    });
   const couponFieldsSchema = z.object({ code: z.string().trim().min(3).max(40).regex(/^[A-Za-z0-9_-]+$/), discountType: z.enum(['PERCENT', 'FIXED']), discountValue: z.number().int().positive().max(100000), maxRedemptions: z.number().int().positive().max(1000000).nullable().optional(), startsAt: z.string().datetime().nullable().optional(), expiresAt: z.string().datetime().nullable().optional(), active: z.boolean().optional().default(true) });
   const couponCreateSchema = couponFieldsSchema.superRefine((value, ctx) => { if (value.discountType === 'PERCENT' && value.discountValue > 100) ctx.addIssue({ code: z.ZodIssueCode.too_big, maximum: 100, type: 'number', inclusive: true, path: ['discountValue'], message: 'PERCENT_MAX_100' }); });
   const couponUpdateSchema = couponFieldsSchema.partial().refine((input) => Object.keys(input).length > 0, 'EMPTY_UPDATE');
@@ -156,129 +353,66 @@ const adminUserUpdateSchema = z.object({
     supportEmail: z.string().trim().email().max(254).nullable().optional(),
     maintenanceNotice: z.string().trim().max(280).nullable().optional(),
     defaultAffiliateRateBps: z.number().int().min(0).max(5000).optional(),
-    fipeGuestDailyLimit: z.number().int().min(1).max(100000).optional()
+    fipeGuestDailyLimit: z.number().int().min(1).max(100000).optional(),
+    fipeAuthDailyLimit: z.number().int().min(1).max(100000).optional()
   }).refine((input) => Object.keys(input).length > 0, 'EMPTY_UPDATE');
 
-type AppError = Error & { code?: string; http?: number; expose?: boolean };
 type RawBodyRequest = Request & { rawBody?: Buffer };
 type FipeStoredResult = { __type: 'FIPE_QUOTE'; quote: FipeQuote };
-type QueryRow = { id: string; status: string; credits_cost: number; price_cents?: number; charge_source?: string; product_id?: string; normalized: NormalizedVehicle | FipeStoredResult | null };
-
-function appError(message: string, options: Pick<AppError, 'code' | 'http' | 'expose'> = {}): AppError {
-  const error = new Error(message) as AppError;
-  Object.assign(error, options);
-  return error;
-}
-
-function asyncRoute(handler: RequestHandler): RequestHandler {
-  return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
-}
-
-function requestId(req: Request): string {
-  return String(req.res?.locals.requestId ?? 'unknown');
-}
-
-function log(level: 'info' | 'warn' | 'error', event: string, metadata: Record<string, unknown>): void {
-  const permitted = Object.fromEntries(Object.entries(metadata).filter(([key]) => !/password|token|authorization|document|chassis|renavam/i.test(key)));
-  const payload = { timestamp: new Date().toISOString(), level, event, ...permitted };
-  if (level === 'error') console.error(JSON.stringify(payload));
-  else if (level === 'warn') console.warn(JSON.stringify(payload));
-  else console.info(JSON.stringify(payload));
-}
-
-async function audit(userId: string | null, action: string, entity: string, entityId: string | null, metadata: Record<string, unknown> = {}): Promise<void> {
-  if (!env.AUDIT_LOG_ENABLED) return;
-  await pool.query('INSERT INTO audit_logs(user_id,action,entity,entity_id,metadata) VALUES($1,$2,$3,$4,$5::jsonb)', [userId, action, entity, entityId, JSON.stringify(sanitizeAuditMetadata(metadata) ?? {})]);
-}
+type QueryRow = { id: string; status: string; credits_cost: number; price_cents?: number; charge_source?: string; product_id?: string; error_code?: string | null; normalized: NormalizedVehicle | FipeStoredResult | null };
 
 function publicUser(row: { id: string; email: string; name: string; role: string }): AuthUser {
   return { id: row.id, email: row.email, name: row.name, role: row.role };
 }
 
-function isTeamRole(role: string): boolean {
-  return ['OPERADOR', 'ADMIN', 'SUPER_ADMIN'].includes(role);
-}
-
-function challengeHash(challenge: string): string {
-  return createHash('sha256').update(challenge).digest('hex');
-}
-
-async function createAuthChallenge(userId: string, kind: 'TOTP_LOGIN' | 'TOTP_ENROLL', ip: string): Promise<string> {
-  const challenge = randomBytes(48).toString('base64url');
-  await pool.query(`INSERT INTO auth_challenges(user_id,kind,token_hash,expires_at,ip_hash) VALUES($1,$2,$3,now()+interval '10 minutes',$4)`, [userId, kind, challengeHash(challenge), hashIp(ip)]);
-  return challenge;
-}
-
 async function authResultForUser(user: AuthUser, flow: string, req: Request): Promise<Record<string, unknown>> {
-  if (!isTeamRole(user.role) || !env.TEAM_TOTP_REQUIRED) {
-    const issued = await issueSession(user, { flow, requestId: requestId(req), totpVerified: !env.TEAM_TOTP_REQUIRED });
-    return { token: issued.token, user };
-  }
-  const existing = await pool.query('SELECT enabled_at FROM team_totp WHERE user_id=$1', [user.id]);
-  if (existing.rowCount && existing.rows[0].enabled_at) {
-    const challenge = await createAuthChallenge(user.id, 'TOTP_LOGIN', req.ip ?? 'unknown');
-    return { user, totpRequired: 'VERIFY', challenge, expiresInSeconds: 600 };
-  }
-  const setup = generateTotpSetup(user.email);
-  await pool.query(`INSERT INTO team_totp(user_id,encrypted_secret,enabled_at) VALUES($1,$2,NULL)
-    ON CONFLICT(user_id) DO UPDATE SET encrypted_secret=EXCLUDED.encrypted_secret,enabled_at=NULL,updated_at=now()`, [user.id, encryptTotpSecret(setup.secret)]);
-  const challenge = await createAuthChallenge(user.id, 'TOTP_ENROLL', req.ip ?? 'unknown');
-  return { user, totpRequired: 'ENROLL', challenge, setup, expiresInSeconds: 600 };
+  // O app do cliente só emite sessões `client`. Contas de equipe entram exclusivamente pelo painel (/api/admin/auth).
+  if (isTeamRole(user.role)) throw appError('INVALID_CREDENTIALS', { code: 'INVALID_CREDENTIALS', http: 401, expose: true });
+  const issued = await issueSession(user, { flow, requestId: requestId(req) }, 'client');
+  return { token: issued.token, user };
 }
 
-async function completeTotpEnrollment(challenge: string, code: string): Promise<{ user: AuthUser; recoveryCodes: string[] }> {
-  return tx(async (client) => {
-    const found = await client.query(`SELECT c.id,c.user_id,u.id AS uid,u.email,u.name,u.role,t.encrypted_secret
-      FROM auth_challenges c JOIN users u ON u.id=c.user_id JOIN team_totp t ON t.user_id=u.id
-      WHERE c.token_hash=$1 AND c.kind='TOTP_ENROLL' AND c.used_at IS NULL AND c.expires_at>now() AND u.active=true FOR UPDATE`, [challengeHash(challenge)]);
-    if (!found.rowCount) throw appError('TOTP_CHALLENGE_INVALID', { code: 'TOTP_CHALLENGE_INVALID', http: 401, expose: true });
-    const row = found.rows[0] as Record<string, unknown>;
-    let valid = false;
-    try { valid = verifyTotpCode(decryptTotpSecret(String(row.encrypted_secret)), code); } catch { valid = false; }
-    if (!valid) throw appError('TOTP_CODE_INVALID', { code: 'TOTP_CODE_INVALID', http: 401, expose: true });
-    const recoveryCodes = generateRecoveryCodes();
-    await client.query('UPDATE team_totp SET enabled_at=now(),last_verified_at=now(),updated_at=now() WHERE user_id=$1', [row.user_id]);
-    await client.query('DELETE FROM team_totp_recovery_codes WHERE user_id=$1', [row.user_id]);
-    for (const recoveryCode of recoveryCodes) await client.query('INSERT INTO team_totp_recovery_codes(user_id,code_hash) VALUES($1,$2)', [row.user_id, hashRecoveryCode(recoveryCode)]);
-    await client.query('UPDATE auth_challenges SET used_at=now() WHERE id=$1', [row.id]);
-    return { user: { id: String(row.uid), email: String(row.email), name: String(row.name), role: String(row.role) } as AuthUser, recoveryCodes };
-  });
+const RETRY_MESSAGE = 'Não foi possível concluir a consulta agora. Nada foi perdido: se o valor saiu do saldo, ele foi estornado; se você pagou direto, a consulta paga continua disponível para tentar de novo ou cancelar.';
+function safeQueryFailureMessage(code?: string | null): string | undefined {
+  if (!code) return undefined;
+  if (code === 'DATA_PROVIDER_AUTH_FAILED') return 'A autenticação da fonte de dados falhou antes da consulta. Nenhum valor foi cobrado; tente novamente em instantes.';
+  if (code === 'DATA_PROVIDER_INVALID_RESPONSE') return 'A Credify respondeu, mas uma ou mais bases retornaram erro. O valor foi estornado; tente novamente ou informe o código desta consulta ao suporte.';
+  if (code === 'DATA_PROVIDER_UNAVAILABLE') return 'A Credify ficou indisponível. O valor foi estornado; tente novamente em instantes.';
+  if (code === 'DATA_PROVIDER_RATE_LIMITED') return 'A Credify informou limite temporário de consultas. O valor foi estornado; tente novamente mais tarde.';
+  if (code === 'DATA_PROVIDER_QUOTA_EXHAUSTED') return 'A Credify informou limite ou saldo de consultas indisponível. O valor foi estornado; contate o suporte.';
+  if (code === 'PROVIDER_TIMEOUT' || code === 'QUERY_STUCK_TIMEOUT') return 'A Credify não respondeu dentro do prazo. O valor foi estornado; tente novamente.';
+  if (code === 'PROVIDER_BUDGET_EXCEEDED') return 'Atingimos o limite de segurança de consultas à fonte de dados. O valor foi estornado; tente novamente mais tarde.';
+  if (code === 'DATA_PROVIDER_INCOMPLETE') return 'Uma das bases desta consulta não respondeu e não entregamos o relatório incompleto. O valor foi estornado; tente novamente em instantes.';
+  if (code === 'NOT_FOUND') return 'Não encontramos dados para esta placa nas bases consultadas.';
+  return 'A consulta não pôde ser concluída. Se houve débito, o valor foi estornado.';
 }
-
-async function completeTotpLogin(challenge: string, code: string): Promise<AuthUser> {
-  const result = await tx(async (client) => {
-    const found = await client.query(`SELECT c.id,c.user_id,u.id AS uid,u.email,u.name,u.role,t.encrypted_secret,t.enabled_at
-      FROM auth_challenges c JOIN users u ON u.id=c.user_id LEFT JOIN team_totp t ON t.user_id=u.id
-      WHERE c.token_hash=$1 AND c.kind='TOTP_LOGIN' AND c.used_at IS NULL AND c.expires_at>now() AND u.active=true FOR UPDATE`, [challengeHash(challenge)]);
-    if (!found.rowCount) throw appError('TOTP_CHALLENGE_INVALID', { code: 'TOTP_CHALLENGE_INVALID', http: 401, expose: true });
-    const row = found.rows[0] as Record<string, unknown>;
-    if (!row.encrypted_secret || !row.enabled_at) throw appError('TOTP_ENROLLMENT_REQUIRED', { code: 'TOTP_ENROLLMENT_REQUIRED', http: 403, expose: true });
-    let valid = false;
-    try { valid = verifyTotpCode(decryptTotpSecret(String(row.encrypted_secret)), code); } catch { valid = false; }
-    if (!valid) {
-      const recovery = await client.query(`SELECT id FROM team_totp_recovery_codes WHERE user_id=$1 AND used_at IS NULL AND code_hash=$2 LIMIT 1 FOR UPDATE`, [row.user_id, hashRecoveryCode(code)]);
-      if (!recovery.rowCount) throw appError('TOTP_CODE_INVALID', { code: 'TOTP_CODE_INVALID', http: 401, expose: true });
-      await client.query('UPDATE team_totp_recovery_codes SET used_at=now() WHERE id=$1', [recovery.rows[0].id]);
-    }
-    await client.query('UPDATE auth_challenges SET used_at=now() WHERE id=$1', [row.id]);
-    await client.query('UPDATE team_totp SET last_verified_at=now() WHERE user_id=$1', [row.user_id]);
-    return { id: String(row.uid), email: String(row.email), name: String(row.name), role: String(row.role) } as AuthUser;
-  });
-  return result;
-}
-
+/** Falhas da consulta usam 424 (e não 5xx) para a resposta e a mensagem sempre chegarem ao app, sem serem trocadas por páginas de erro do proxy. */
 function toSafeQueryError(error: unknown): { status: number; code: string; message: string } {
   const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : undefined;
-  if (code === 'NOT_FOUND') return { status: 404, code: 'PLACA_NAO_ENCONTRADA_SANDBOX', message: 'Esta placa não está disponível no ambiente de testes.' };
+  if (code === 'NOT_FOUND') {
+    if (env.DATA_PROVIDER === 'real') return { status: 404, code: 'PLACA_NAO_ENCONTRADA', message: 'Não encontramos dados para esta placa nas bases consultadas. Se houve débito de saldo, ele foi estornado; pagamento direto confirmado permanece disponível para nova tentativa.' };
+    return { status: 404, code: 'PLACA_NAO_ENCONTRADA_SANDBOX', message: 'Esta placa não está disponível no ambiente de testes.' };
+  }
   if (code === 'INVALID_PLATE') return { status: 400, code, message: 'Informe uma placa válida no padrão brasileiro.' };
   if (code === 'INSUFFICIENT_BALANCE' || code === 'INSUFFICIENT_CREDITS') return { status: 402, code: 'INSUFFICIENT_BALANCE', message: 'Seu saldo pré-pago não é suficiente para esta consulta.' };
   if (code === 'QUERY_PAYMENT_NOT_READY') return { status: 409, code, message: 'A confirmação do pagamento ainda não está disponível. Aguarde a atualização do provedor.' };
+  if (code === 'QUERY_PAYMENT_REFUND_PENDING') return { status: 409, code, message: 'Esta consulta está em processo de estorno e não pode ser usada agora.' };
   if (code === 'QUERY_PAYMENT_ALREADY_USED') return { status: 409, code, message: 'Este pagamento já foi utilizado ou não pode ser reutilizado.' };
-  if (code === 'PROVIDER_TIMEOUT') return { status: 502, code: 'QUERY_RETRY_AVAILABLE', message: 'Não foi possível concluir a consulta agora. O saldo será estornado quando debitado; uma consulta já paga permanece disponível para nova tentativa.' };
-  if (code === 'DATA_PROVIDER_NOT_CONFIGURED') return { status: 503, code, message: 'A consulta oficial está em ativação. Tente novamente quando a fonte de dados estiver disponível.' };
-  if (code === 'DATA_PROVIDER_AUTH_FAILED' || code === 'DATA_PROVIDER_UNAVAILABLE' || code === 'DATA_PROVIDER_INVALID_RESPONSE') return { status: 502, code: 'QUERY_RETRY_AVAILABLE', message: 'A consulta oficial não respondeu de forma válida. Se houve débito de saldo, ele foi estornado; pagamento direto confirmado permanece disponível para nova tentativa.' };
+  if (code === 'QUERY_CANCELLED') return { status: 409, code, message: 'Esta consulta foi cancelada.' };
+  if (code === 'PROVIDER_TIMEOUT') return { status: 424, code: 'QUERY_RETRY_AVAILABLE', message: `A fonte de dados demorou para responder. ${RETRY_MESSAGE}` };
+  if (code === 'DATA_PROVIDER_NOT_CONFIGURED') return { status: 503, code, message: 'A consulta está em ativação. Tente novamente quando a fonte de dados estiver disponível.' };
+  if (code === 'DATA_PROVIDER_AUTH_FAILED') return { status: 424, code: 'QUERY_AUTHENTICATION_FAILED', message: 'A autenticação da fonte de dados falhou antes da consulta. Nenhum valor foi cobrado; tente novamente em instantes.' };
+  if (code === 'DATA_PROVIDER_RATE_LIMITED') return { status: 424, code: 'QUERY_RETRY_AVAILABLE', message: `A fonte de dados está com muitas consultas no momento. ${RETRY_MESSAGE}` };
+  if (code === 'DATA_PROVIDER_INVALID_RESPONSE') return { status: 424, code: 'QUERY_PROVIDER_DATA_ERROR', message: 'A Credify respondeu, mas uma ou mais bases retornaram erro. O valor foi estornado; tente novamente ou informe o código desta consulta ao suporte.' };
+  if (code === 'DATA_PROVIDER_UNAVAILABLE') return { status: 424, code: 'QUERY_RETRY_AVAILABLE', message: `A Credify ficou indisponível. ${RETRY_MESSAGE}` };
+  if (code === 'DATA_PROVIDER_QUOTA_EXHAUSTED') return { status: 424, code: 'QUERY_RETRY_AVAILABLE', message: `A Credify informou limite ou saldo de consultas indisponível. ${RETRY_MESSAGE}` };
+  if (code === 'QUERY_IN_PROGRESS') return { status: 409, code, message: 'Já existe uma consulta desta placa em andamento. Aguarde terminar; você não será cobrado duas vezes.' };
+  if (code === 'DATA_PROVIDER_INCOMPLETE') return { status: 424, code: 'QUERY_RETRY_AVAILABLE', message: `Uma das bases desta consulta não respondeu, e não entregamos o relatório incompleto. ${RETRY_MESSAGE}` };
+  if (code === 'PROVIDER_BUDGET_EXCEEDED') return { status: 424, code: 'QUERY_RETRY_AVAILABLE', message: `Atingimos o limite de segurança de consultas à fonte de dados. ${RETRY_MESSAGE}` };
   if (code === 'PRODUCT_NOT_FOUND') return { status: 404, code, message: 'Este produto de consulta não está disponível.' };
-  return { status: 502, code: 'QUERY_RETRY_AVAILABLE', message: 'Não foi possível concluir a consulta agora. Se houve débito de saldo, ele foi estornado; pagamento direto confirmado permanece disponível para nova tentativa.' };
+  if (code === 'PRODUCT_NOT_AVAILABLE') return { status: 409, code, message: 'Esta consulta ainda não está à venda. Nada foi cobrado.' };
+  if (code === 'DATA_PROVIDER_PRODUCT_NOT_ROUTED') return { status: 409, code: 'PRODUCT_NOT_AVAILABLE', message: 'Esta consulta ainda não está à venda. Nada foi cobrado.' };
+  return { status: 424, code: 'QUERY_RETRY_AVAILABLE', message: RETRY_MESSAGE };
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
@@ -293,7 +427,8 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
   }
 }
 
-function diagnostic(result: NormalizedVehicle): { level: 'CLEAR' | 'ATTENTION' | 'HIGH_RISK'; title: string; reason: string } {
+function diagnostic(result: NormalizedVehicle): { level: 'CLEAR' | 'ATTENTION' | 'HIGH_RISK' | 'INCONCLUSIVE'; title: string; reason: string } {
+  if (result.v2) return { level: result.v2.verdict.level, title: result.v2.verdict.title, reason: result.v2.verdict.reason };
   const debts = result.debts.filter((item) => item.hasDebt);
   const restrictions = result.restrictions.filter((item) => item.alert);
   if (restrictions.length > 0) {
@@ -308,12 +443,16 @@ function serializeQuery(row: QueryRow & Record<string, unknown>): Record<string,
   const normalized = row.normalized;
   const isFipe = Boolean(normalized && typeof normalized === 'object' && '__type' in normalized && normalized.__type === 'FIPE_QUOTE');
   const vehicle = !isFipe && normalized ? normalized as NormalizedVehicle : null;
+  const searchType = (SEARCH_TYPES as readonly string[]).includes(String(row.search_type)) ? row.search_type as SearchType : 'PLATE';
   const result = isFipe
     ? { fipe: publicFipeQuote((normalized as FipeStoredResult).quote), blocks: (normalized as FipeStoredResult).quote.blocks, diagnostic: { level: 'CLEAR', title: 'Valor FIPE consultado', reason: 'A Tabela FIPE foi consultada; a situação documental não está incluída nesta modalidade.' } }
-    : vehicle ? { ...publicVehicleResult(vehicle), coverage: vehicle.coverage ?? { identification: vehicle.identification ? 'FOUND' : 'NOT_QUERIED', debts: vehicle.debts.length ? 'FOUND' : 'NOT_QUERIED', restrictions: vehicle.restrictions.length ? 'FOUND' : 'NOT_QUERIED', recall: vehicle.recall ? 'FOUND' : 'NOT_QUERIED' }, diagnostic: diagnostic(vehicle) } : null;
+    : vehicle ? { ...publicVehicleResult(vehicle, tierForProductCode(String(row.product_id ?? '')), scopeForProduct(String(row.product_id ?? ''), row.created_at as Date).sections, scopeForProduct(String(row.product_id ?? ''), row.created_at as Date).template), coverage: vehicle.coverage ?? { identification: vehicle.identification ? 'FOUND' : 'NOT_QUERIED', debts: vehicle.debts.length ? 'FOUND' : 'NOT_QUERIED', restrictions: vehicle.restrictions.length ? 'FOUND' : 'NOT_QUERIED', recall: vehicle.recall ? 'FOUND' : 'NOT_QUERIED' }, diagnostic: diagnostic(vehicle) } : null;
   return {
     id: row.id,
-    plate: row.plate,
+    // Em busca por chassi/Renavam a "placa" mostrada é a que a fonte devolveu; a chave pesquisada vai em searchValue.
+    plate: searchType === 'PLATE' ? row.plate : (vehicle?.identification.plate ?? ''),
+    searchType,
+    searchValue: maskSearchValue(searchType, String(row.plate ?? '')),
     productId: row.product_id,
     productName: row.product_name,
     status: row.status,
@@ -322,11 +461,92 @@ function serializeQuery(row: QueryRow & Record<string, unknown>): Record<string,
     createdAt: row.created_at,
     completedAt: row.completed_at,
     verificationCode: !isFipe ? String(row.id).slice(0, 8).toUpperCase() : undefined,
+    failureCode: row.status === 'PROCESSING' || row.status === 'SUCCESS' ? undefined : row.error_code ?? undefined,
+    failureMessage: row.status === 'PROCESSING' || row.status === 'SUCCESS' ? undefined : safeQueryFailureMessage(row.error_code),
     result
   };
 }
 
 app.set('trust proxy', env.TRUST_PROXY);
+// Pré-lançamento: nenhuma resposta é indexável, mesmo que alguém ache o endereço.
+app.use((_req, res, next) => { if (isPrelaunch()) res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive'); next(); });
+/** Com o site fechado (pré-lançamento), só e-mails da lista criam conta, pagam e consultam. */
+function assertSiteOpenFor(email: string | undefined): void {
+  if (!siteOpenFor(String(email ?? ''))) throw appError('SITE_NOT_OPEN', { code: 'SITE_NOT_OPEN', http: 403, expose: true });
+}
+/** Canais de atendimento por telefone/WhatsApp, definidos por variável de ambiente. */
+function supportChannels(): { phone: string | null; whatsapp: string | null; whatsappUrl: string | null; hours: string | null } {
+  const digits = (v?: string) => String(v ?? '').replace(/\D/g, '');
+  const wa = digits(env.SUPPORT_WHATSAPP);
+  const full = wa.length >= 10 && wa.length <= 11 ? `55${wa}` : wa;
+  return {
+    phone: env.SUPPORT_PHONE?.trim() || null,
+    whatsapp: wa ? env.SUPPORT_WHATSAPP!.trim() : null,
+    whatsappUrl: full.length >= 12 && full.length <= 15 ? `https://wa.me/${full}` : null,
+    hours: env.SUPPORT_HOURS?.trim() || null
+  };
+}
+api.get('/support-info', (_req, res) => { res.setHeader('Cache-Control', 'public, max-age=300'); res.json(supportChannels()); });
+const purchaseContractLimit = rateLimit({ windowMs: 10 * 60_000, limit: 40, standardHeaders: true, legacyHeaders: false, skip: () => env.NODE_ENV === 'test' });
+const contractIdParam = (req: Request): string => { const id = String(req.params.id ?? ''); if (!/^[0-9a-f-]{36}$/i.test(id)) throw appError('PURCHASE_CONTRACT_NOT_FOUND', { code: 'PURCHASE_CONTRACT_NOT_FOUND', http: 404, expose: true }); return id; };
+api.get('/legal/acceptance', auth, asyncRoute(async (req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json(await legalAcceptanceStatus(req.user!.id)); }));
+const acceptEvidence = (req: Request) => ({ ip: String(req.ip ?? '').slice(0, 64) || null, ipHash: hashIp(req.ip), userAgent: String(req.headers['user-agent'] ?? '').slice(0, 300) || null });
+/** Texto do contrato para o link "ler o contrato" do checkout (não grava nada; ler é opcional). */
+api.post('/purchase-contracts/preview', auth, requirePermission('BUY_CREDITS'), purchaseContractLimit, asyncRoute(async (req, res) => {
+  const isPackage = typeof (req.body as { packageSlug?: unknown } | null)?.packageSlug === 'string';
+  res.setHeader('Cache-Control', 'no-store');
+  if (isPackage) {
+    const parsed = checkoutSchema.safeParse(req.body);
+    if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+    const q = await computePackageQuote(req.user!.id, parsed.data);
+    res.json(await previewPurchaseContract({ userId: req.user!.id, item: { kind: 'PACKAGE', name: q.packageName, description: '', creditsCents: q.credits * 100 }, amounts: { subtotalCents: q.subtotalCents, discountCents: q.discountCents, amountCents: q.amountCents, couponCode: q.couponCode ?? null } }));
+    return;
+  }
+  const parsed = queryCheckoutSchema.safeParse(req.body);
+  if (!parsed.success) { const code = searchErrorCode(req.body); throw appError(code, { code, http: 400, expose: true }); }
+  const q = await computeQueryQuote(req.user!.id, parsed.data);
+  const desc = await pool.query('SELECT description FROM query_products WHERE id=$1', [q.productId]);
+  res.json(await previewPurchaseContract({ userId: req.user!.id, item: { kind: 'QUERY', name: q.productName, description: String(desc.rows[0]?.description ?? ''), creditsCents: 0 }, amounts: { subtotalCents: q.subtotalCents, discountCents: q.discountCents, amountCents: q.amountCents, couponCode: q.couponCode ?? null } }));
+}));
+/** Monta o contrato da compra (dados do cliente + da empresa + do pedido) e envia o código de confirmação ao e-mail do cliente. */
+api.post('/purchase-contracts/draft', auth, requirePermission('BUY_CREDITS'), purchaseContractLimit, asyncRoute(async (req, res) => {
+  assertSiteOpenFor(req.user!.email);
+  const isPackage = typeof (req.body as { packageSlug?: unknown } | null)?.packageSlug === 'string';
+  if (isPackage) {
+    const parsed = checkoutSchema.safeParse(req.body);
+    if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+    const q = await computePackageQuote(req.user!.id, parsed.data);
+    const out = await draftPurchaseContract({ userId: req.user!.id, kind: 'PACKAGE', itemKey: q.packageSlug, item: { kind: 'PACKAGE', name: q.packageName, description: '', creditsCents: q.credits * 100 }, amounts: { subtotalCents: q.subtotalCents, discountCents: q.discountCents, amountCents: q.amountCents, couponCode: q.couponCode } });
+    res.status(201).json({ ...out, amountCents: q.amountCents });
+    return;
+  }
+  const parsed = queryCheckoutSchema.safeParse(req.body);
+  if (!parsed.success) { const code = searchErrorCode(req.body); throw appError(code, { code, http: 400, expose: true }); }
+  const q = await computeQueryQuote(req.user!.id, parsed.data);
+  const desc = await pool.query('SELECT description FROM query_products WHERE id=$1', [q.productId]);
+  const out = await draftPurchaseContract({ userId: req.user!.id, kind: 'QUERY', itemKey: q.productId, item: { kind: 'QUERY', name: q.productName, description: String(desc.rows[0]?.description ?? ''), creditsCents: 0 }, amounts: { subtotalCents: q.subtotalCents, discountCents: q.discountCents, amountCents: q.amountCents, couponCode: q.couponCode } });
+  res.status(201).json({ ...out, amountCents: q.amountCents });
+}));
+api.post('/purchase-contracts/:id/resend', auth, requirePermission('BUY_CREDITS'), purchaseContractLimit, asyncRoute(async (req, res) => {
+  res.json(await resendPurchaseOtp(req.user!.id, contractIdParam(req)));
+}));
+const confirmContractSchema = z.object({ code: z.string().trim().regex(/^\d{6}$/), accept: z.literal(true) }).strict();
+api.post('/purchase-contracts/:id/confirm', auth, requirePermission('BUY_CREDITS'), purchaseContractLimit, asyncRoute(async (req, res) => {
+  const parsed = confirmContractSchema.safeParse(req.body);
+  if (!parsed.success) throw appError('PURCHASE_OTP_INVALID', { code: 'PURCHASE_OTP_INVALID', http: 400, expose: true });
+  const id = contractIdParam(req);
+  try {
+    const out = await confirmPurchaseContract(req.user!.id, id, parsed.data.code, { ipHash: hashIp(req.ip), userAgent: String(req.headers['user-agent'] ?? '').slice(0, 300) || null });
+    await audit(req.user!.id, 'PURCHASE_CONTRACT_ACCEPTED', 'PURCHASE_CONTRACT', id, { number: out.number, requestId: requestId(req) });
+    res.json({ accepted: true, contractId: id, number: out.number });
+  } catch (error) {
+    const left = (error as { attemptsLeft?: number }).attemptsLeft;
+    if (left !== undefined && (error as { code?: string }).code === 'PURCHASE_OTP_INVALID') { res.status(400).json({ error: 'PURCHASE_OTP_INVALID', message: humanMessage('PURCHASE_OTP_INVALID'), attemptsLeft: left }); return; }
+    throw error;
+  }
+}));
+api.get('/purchase-contracts', auth, asyncRoute(async (req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json({ items: await listUserContracts(req.user!.id) }); }));
+api.get('/purchase-contracts/:id', auth, asyncRoute(async (req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json(await getUserContract(req.user!.id, contractIdParam(req))); }));
 app.disable('x-powered-by');
 app.use((req, res, next) => {
   const id = typeof req.headers['x-request-id'] === 'string' && /^[a-zA-Z0-9_-]{8,80}$/.test(req.headers['x-request-id'])
@@ -338,6 +558,10 @@ app.use((req, res, next) => {
   res.on('finish', () => log('info', 'request_complete', { requestId: id, method: req.method, path: req.path, status: res.statusCode, durationMs: Math.round(performance.now() - started) }));
   next();
 });
+setGoogleTags({ gaId: env.GA_MEASUREMENT_ID, adsId: env.GOOGLE_ADS_ID, adsPurchaseLabel: env.GOOGLE_ADS_PURCHASE_LABEL, googleVerification: env.GOOGLE_SITE_VERIFICATION, bingVerification: env.BING_SITE_VERIFICATION });
+const googleTagsOn = Boolean(env.GA_MEASUREMENT_ID || env.GOOGLE_ADS_ID);
+const GOOGLE_SCRIPT = ['https://www.googletagmanager.com'];
+const GOOGLE_CONNECT = ['https://www.google-analytics.com', 'https://*.google-analytics.com', 'https://*.analytics.google.com', 'https://*.googletagmanager.com', 'https://www.google.com', 'https://googleads.g.doubleclick.net', 'https://*.g.doubleclick.net'];
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -346,11 +570,11 @@ app.use(helmet({
       objectSrc: ["'none'"],
       frameAncestors: ["'none'"],
       formAction: ["'self'"],
-      scriptSrc: ["'self'"],
+      scriptSrc: ["'self'", ...(googleTagsOn ? GOOGLE_SCRIPT : [])],
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
       fontSrc: ["'self'", 'data:', 'https:'],
-      connectSrc: ["'self'", env.WEB_ORIGIN],
+      connectSrc: ["'self'", env.WEB_ORIGIN, ...(googleTagsOn ? GOOGLE_CONNECT : [])],
       ...(env.NODE_ENV === 'production' ? { upgradeInsecureRequests: [] } : {})
     }
   },
@@ -359,21 +583,36 @@ app.use(helmet({
 app.use(cors({ origin: env.WEB_ORIGIN, credentials: false }));
 app.use(express.json({
   limit: '256kb',
-  type: 'application/json',
+  // O import do catálogo de frota (CSV de vários MB) tem parser próprio na rota, com limite maior.
+  type: (req) => /^application\/json/i.test(req.headers['content-type'] ?? '') && !String(req.url).split('?')[0]!.endsWith('/admin/vehicles/catalog/import'),
   verify: (req, _res, body) => {
-    if (req.url?.split('?')[0] === '/api/payments/mercadopago/webhook') {
+    if (['/api/payments/mercadopago/webhook', '/api/webhooks/email'].includes(req.url?.split('?')[0] ?? '')) {
       (req as RawBodyRequest).rawBody = Buffer.from(body);
     }
   }
 }));
 app.use(express.urlencoded({ extended: false, limit: '32kb' }));
 if (env.RATE_LIMIT_ENABLED) {
-  app.use(rateLimit({ windowMs: env.RATE_LIMIT_WINDOW_MS, limit: env.RATE_LIMIT_MAX_REQUESTS, standardHeaders: true, legacyHeaders: false, skip: (req) => req.path === '/health' }));
+  app.use(rateLimit({ windowMs: env.RATE_LIMIT_WINDOW_MS, limit: env.RATE_LIMIT_MAX_REQUESTS, standardHeaders: true, legacyHeaders: false, skip: (req) => req.path === '/health' || req.path === '/ready' }));
 }
 
 app.get('/health', asyncRoute(async (_req, res) => {
   await pool.query('SELECT 1');
   res.json({ ok: true, app: env.APP_NAME, database: 'ok' });
+}));
+
+/** Prontidão: banco acessível e todas as migrações aplicadas. Não expõe configuração nem segredos. */
+app.get('/ready', asyncRoute(async (_req, res) => {
+  try {
+    const applied = await pool.query('SELECT id FROM schema_migrations');
+    const { migrations: all } = await import('./migrations.js');
+    const have = new Set(applied.rows.map((r) => String(r.id)));
+    const missing = all.filter((m) => !have.has(m.id)).map((m) => m.id);
+    const ok = missing.length === 0;
+    res.status(ok ? 200 : 503).json({ ok, database: 'ok', migrationsApplied: have.size, migrationsExpected: all.length, ...(ok ? {} : { migrationsMissing: missing.slice(0, 10) }) });
+  } catch {
+    res.status(503).json({ ok: false, database: 'error' });
+  }
 }));
 
 const loginRateLimit = rateLimit({
@@ -440,39 +679,23 @@ api.post('/auth/oauth/consume', loginRateLimit, asyncRoute(async (req, res) => {
   if (!parsed.success) throw appError('OAUTH_TICKET_INVALID', { code: 'OAUTH_TICKET_INVALID', http: 401, expose: true });
   const user = await consumeLoginTicket(parsed.data.ticket);
   const result = await authResultForUser(user, 'social', req);
-  await audit(user.id, 'OAUTH_LOGIN', 'USER', user.id, { requestId: requestId(req), totpRequired: isTeamRole(user.role) && env.TEAM_TOTP_REQUIRED });
+  await audit(user.id, 'OAUTH_LOGIN', 'USER', user.id, { requestId: requestId(req), flow: 'client' });
   res.json(result);
-}));
-
-api.post('/auth/totp/verify', loginRateLimit, asyncRoute(async (req, res) => {
-  const parsed = totpChallengeSchema.safeParse(req.body);
-  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
-  const user = await completeTotpLogin(parsed.data.challenge, parsed.data.code);
-  const issued = await issueSession(user, { flow: 'totp_login', requestId: requestId(req), totpVerified: true });
-  await audit(user.id, 'TOTP_LOGIN', 'USER', user.id, { requestId: requestId(req), recoveryCodeUsed: !/^\d{6}$/.test(parsed.data.code) });
-  res.json({ token: issued.token, user });
-}));
-
-api.post('/auth/totp/enroll/confirm', loginRateLimit, asyncRoute(async (req, res) => {
-  const parsed = totpEnrollmentSchema.safeParse(req.body);
-  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
-  const enrolled = await completeTotpEnrollment(parsed.data.challenge, parsed.data.code);
-  const issued = await issueSession(enrolled.user, { flow: 'totp_enrollment', requestId: requestId(req), totpVerified: true });
-  await audit(enrolled.user.id, 'TOTP_ENROLLED', 'USER', enrolled.user.id, { requestId: requestId(req) });
-  res.json({ token: issued.token, user: enrolled.user, recoveryCodes: enrolled.recoveryCodes });
-}));
-
-api.get('/auth/totp/status', auth, asyncRoute(async (req, res) => {
-  if (!isTeamRole(req.user!.role) || !env.TEAM_TOTP_REQUIRED) { res.json({ required: false, enabled: false, recoveryCodesRemaining: 0 }); return; }
-  const result = await pool.query(`SELECT t.enabled_at,(SELECT count(*) FROM team_totp_recovery_codes c WHERE c.user_id=t.user_id AND c.used_at IS NULL) AS recovery_codes
-    FROM team_totp t WHERE t.user_id=$1`, [req.user!.id]);
-  res.json({ required: true, enabled: Boolean(result.rows[0]?.enabled_at), recoveryCodesRemaining: Number(result.rows[0]?.recovery_codes ?? 0) });
 }));
 
 api.post('/auth/register', asyncRoute(async (req, res) => {
   const parsed = registerSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
   const email = parsed.data.email.toLowerCase();
+  assertSiteOpenFor(email);
+  const d = parsed.data;
+  if (profileRequired()) {
+    const invalid = validateRegistrationProfile({ phone: d.phone, cpfCnpj: d.cpfCnpj, pixKey: d.pixKey, pixKeyType: d.pixKeyType }, d.accountType);
+    if (invalid) throw appError(invalid, { code: invalid, http: 400, expose: true });
+  }
+  // Chave PIX é opcional, mas se vier precisa ser válida (vale também com o cadastro obrigatório desligado).
+  const pix = d.pixKey ? normalizePixKey(d.pixKey, d.pixKeyType) : null;
+  if (d.pixKey && !pix) throw appError('INVALID_PIX_KEY', { code: 'INVALID_PIX_KEY', http: 400, expose: true });
   const passwordHash = await bcrypt.hash(parsed.data.password, 12);
   try {
     const created = await tx(async (client) => {
@@ -484,15 +707,23 @@ api.post('/auth/register', asyncRoute(async (req, res) => {
       }
       const user = await client.query('INSERT INTO users(email,password_hash,name,role,affiliate_id) VALUES($1,$2,$3,$4,$5) RETURNING id,email,name,role', [email, passwordHash, parsed.data.name, 'CLIENTE', affiliateId]);
       await client.query('INSERT INTO wallets(user_id,balance) VALUES($1,0)', [user.rows[0].id]);
-      await client.query('INSERT INTO user_profiles(user_id,marketing_opt_in) VALUES($1,$2)', [user.rows[0].id, parsed.data.marketingOptIn]);
+      if (parsed.data.inviteCode) await attachInviter(String(user.rows[0].id), parsed.data.inviteCode, parsed.data.inviteVia, client);
+      await client.query(`INSERT INTO user_profiles(user_id,marketing_opt_in,customer_type,cpf_cnpj,phone,company_name,zip,street,street_number,complement,district,city,state,responsibility_accepted_at,responsibility_version,pix_key,pix_key_type,pix_key_updated_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,CASE WHEN $16::text IS NOT NULL THEN now() END)`,
+        [user.rows[0].id, d.marketingOptIn, d.accountType, d.cpfCnpj || null, d.phone || null, d.companyName || null, d.zip ? d.zip.replace(/\D/g, '') : null, d.street || null, d.streetNumber || null, d.complement || null, d.district || null, d.city || null, d.state ? d.state.toUpperCase() : null, d.acceptResponsibility ? new Date() : null, d.acceptResponsibility ? RESPONSIBILITY_VERSION : null, pix?.key ?? null, pix?.type ?? null]);
       await client.query(`INSERT INTO user_consents(user_id,consent_type,granted,policy_version,source,ip_hash)
         VALUES($1,'TERMS_OF_SERVICE',true,'2026-08','registration',$2),
               ($1,'PRIVACY_POLICY',true,'2026-08','registration',$2),
               ($1,'MARKETING_EMAIL',$3,'2026-08','registration',$2)`, [user.rows[0].id, hashIp(req.ip), parsed.data.marketingOptIn]);
       return user.rows[0] as AuthUser;
     });
+    // CRM: a conta nova entra na esteira (e liga ao link que a equipe mandou, se veio de um). Falha aqui nunca derruba o cadastro.
+    try {
+      await upsertLead({ userId: created.id, email, name: parsed.data.name, phone: d.phone, source: 'CADASTRO', sessionKey: sessionKeyFor(d.funnelSession), utm: d.utm, stage: 'CADASTRADO', consent: { granted: d.marketingOptIn, ipHash: hashIp(req.ip), text: 'Aceite no cadastro' } });
+      if (d.leadLinkCode) await claimLeadLink(created.id, d.leadLinkCode, { sessionKey: sessionKeyFor(d.funnelSession), utm: d.utm });
+    } catch (leadError) { log('warn', 'lead_register_sync_failed', { requestId: requestId(req), reason: leadError instanceof Error ? leadError.message : 'unknown' }); }
     const issued = await issueSession(created, { flow: 'password_registration', requestId: requestId(req) });
-    await audit(created.id, 'REGISTER', 'USER', created.id, { requestId: requestId(req) });
+    await audit(created.id, 'REGISTER', 'USER', created.id, { requestId: requestId(req), responsibilityAccepted: Boolean(d.acceptResponsibility), pixKeyInformed: Boolean(pix) });
     res.status(201).json({ token: issued.token, user: created });
   } catch (error: unknown) {
     if (typeof error === 'object' && error !== null && 'code' in error && error.code === '23505') throw appError('EMAIL_ALREADY_EXISTS', { code: 'EMAIL_ALREADY_EXISTS', http: 409, expose: true });
@@ -521,7 +752,7 @@ api.post('/auth/login', loginRateLimit, asyncRoute(async (req, res) => {
   const user = publicUser({ id: String(account.id), email: String(account.email), name: String(account.name), role: String(account.role) });
   await pool.query('UPDATE users SET failed_login_attempts=0, locked_until=NULL, last_login_at=now() WHERE id=$1', [user.id]);
   const resultForUser = await authResultForUser(user, 'password', req);
-  await audit(user.id, 'LOGIN', 'USER', user.id, { requestId: requestId(req), totpRequired: isTeamRole(user.role) && env.TEAM_TOTP_REQUIRED });
+  await audit(user.id, 'LOGIN', 'USER', user.id, { requestId: requestId(req), flow: 'client' });
   res.json(resultForUser);
 }));
 
@@ -532,24 +763,44 @@ api.post('/auth/logout', auth, asyncRoute(async (req, res) => {
 }));
 
 api.get('/profile', auth, asyncRoute(async (req, res) => {
-  const result = await pool.query(`SELECT u.id,u.email,u.name,u.role,u.password_enabled,p.cpf_cnpj,p.phone,p.company_name,p.city,p.state,p.marketing_opt_in
+  const result = await pool.query(`SELECT u.id,u.email,u.name,u.role,u.password_enabled,p.*
     FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id WHERE u.id=$1 AND u.active=true`, [req.user!.id]);
   if (!result.rowCount) throw appError('ACCOUNT_NOT_FOUND', { code: 'ACCOUNT_NOT_FOUND', http: 404, expose: true });
   const row = result.rows[0];
-  res.json({ profile: { id: String(row.id), email: String(row.email), name: String(row.name), role: String(row.role), passwordEnabled: Boolean(row.password_enabled), cpfCnpj: row.cpf_cnpj ?? '', phone: row.phone ?? '', companyName: row.company_name ?? '', city: row.city ?? '', state: row.state ?? '', marketingOptIn: Boolean(row.marketing_opt_in) } });
+  res.json({ profile: profileDto({ id: String(row.id), email: String(row.email), name: String(row.name), role: String(row.role), passwordEnabled: Boolean(row.password_enabled) }, row) });
 }));
 
 api.put('/profile', auth, asyncRoute(async (req, res) => {
   const parsed = profileUpdateSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
   const input = parsed.data;
+  if (profileRequired() && req.user!.role === 'CLIENTE') {
+    // Dados informados precisam ser válidos; o que falta aparece como pendência no app (e trava a consulta).
+    if (input.cpfCnpj && !validDocument(input.cpfCnpj)) throw appError('INVALID_OWNER_DOC', { code: 'INVALID_OWNER_DOC', http: 400, expose: true });
+    if (input.phone && !validPhone(input.phone)) throw appError('INVALID_PHONE', { code: 'INVALID_PHONE', http: 400, expose: true });
+    if (input.zip && input.zip.replace(/\D/g, '').length !== 8) throw appError('INVALID_ZIP', { code: 'INVALID_ZIP', http: 400, expose: true });
+  }
+  // PIX: não enviado = mantém; enviado vazio = apaga; enviado = precisa ser uma chave válida.
+  const pixSent = input.pixKey !== undefined;
+  const pix = pixSent && input.pixKey ? normalizePixKey(input.pixKey, input.pixKeyType) : null;
+  if (pixSent && input.pixKey && !pix) throw appError('INVALID_PIX_KEY', { code: 'INVALID_PIX_KEY', http: 400, expose: true });
+  const zip = input.zip === undefined ? null : input.zip.replace(/\D/g, '');
   const profile = await tx(async (client) => {
+    const prevPix = (await client.query('SELECT pix_key FROM user_profiles WHERE user_id=$1', [req.user!.id])).rows[0]?.pix_key ?? null;
     const user = await client.query('UPDATE users SET name=$2 WHERE id=$1 AND active=true RETURNING id,email,name,role,password_enabled', [req.user!.id, input.name]);
     if (!user.rowCount) throw appError('ACCOUNT_NOT_FOUND', { code: 'ACCOUNT_NOT_FOUND', http: 404, expose: true });
-    const updated = await client.query(`INSERT INTO user_profiles(user_id,cpf_cnpj,phone,company_name,city,state,marketing_opt_in)
-      VALUES($1,$2,$3,$4,$5,$6,COALESCE($7,false))
-      ON CONFLICT(user_id) DO UPDATE SET cpf_cnpj=EXCLUDED.cpf_cnpj,phone=EXCLUDED.phone,company_name=EXCLUDED.company_name,city=EXCLUDED.city,state=EXCLUDED.state,marketing_opt_in=COALESCE($7,user_profiles.marketing_opt_in),updated_at=now()
-      RETURNING cpf_cnpj,phone,company_name,city,state,marketing_opt_in`, [req.user!.id, input.cpfCnpj ?? null, input.phone ?? null, input.companyName ?? null, input.city ?? null, input.state?.toUpperCase() ?? null, input.marketingOptIn ?? null]);
+    const updated = await client.query(`INSERT INTO user_profiles(user_id,cpf_cnpj,phone,company_name,city,state,marketing_opt_in,zip,street,street_number,complement,district,responsibility_accepted_at,responsibility_version,pix_key,pix_key_type,pix_key_updated_at)
+      VALUES($1,$2,$3,$4,$5,$6,COALESCE($7,false),$8,$9,$10,$11,$12,CASE WHEN $13::boolean THEN now() END,CASE WHEN $13::boolean THEN $14 END,CASE WHEN $15::boolean THEN $16 END,CASE WHEN $15::boolean THEN $17 END,CASE WHEN $15::boolean AND $16::text IS NOT NULL THEN now() END)
+      ON CONFLICT(user_id) DO UPDATE SET cpf_cnpj=EXCLUDED.cpf_cnpj,phone=EXCLUDED.phone,company_name=EXCLUDED.company_name,city=EXCLUDED.city,state=EXCLUDED.state,marketing_opt_in=COALESCE($7,user_profiles.marketing_opt_in),
+        zip=COALESCE($8,user_profiles.zip),street=COALESCE($9,user_profiles.street),street_number=COALESCE($10,user_profiles.street_number),complement=COALESCE($11,user_profiles.complement),district=COALESCE($12,user_profiles.district),
+        responsibility_accepted_at=CASE WHEN $13::boolean THEN now() ELSE user_profiles.responsibility_accepted_at END,
+        responsibility_version=CASE WHEN $13::boolean THEN $14 ELSE user_profiles.responsibility_version END,updated_at=now()
+        ,pix_key=CASE WHEN $15::boolean THEN $16 ELSE user_profiles.pix_key END,
+        pix_key_type=CASE WHEN $15::boolean THEN $17 ELSE user_profiles.pix_key_type END,
+        pix_key_updated_at=CASE WHEN $15::boolean THEN now() ELSE user_profiles.pix_key_updated_at END
+      RETURNING *`, [req.user!.id, input.cpfCnpj ?? null, input.phone ?? null, input.companyName ?? null, input.city ?? null, input.state?.toUpperCase() ?? null, input.marketingOptIn ?? null,
+        zip, input.street ?? null, input.streetNumber ?? null, input.complement ?? null, input.district ?? null, input.acceptResponsibility === true, RESPONSIBILITY_VERSION, pixSent, pix?.key ?? null, pix?.type ?? null]);
+    if (pixSent) await client.query('UPDATE affiliates SET pix_key=$2,updated_at=now() WHERE user_id=$1 AND (pix_key IS NULL OR pix_key=$3)', [req.user!.id, pix?.key ?? null, prevPix]);
     if (input.marketingOptIn !== undefined) {
       await client.query(`INSERT INTO user_consents(user_id,consent_type,granted,policy_version,source,ip_hash)
         VALUES($1,'MARKETING_EMAIL',$2,'2026-08','profile_update',$3)`, [req.user!.id, input.marketingOptIn, hashIp(req.ip)]);
@@ -557,8 +808,8 @@ api.put('/profile', auth, asyncRoute(async (req, res) => {
     return { user: user.rows[0], profile: updated.rows[0] };
   });
   const publicAccount = publicUser({ id: String(profile.user.id), email: String(profile.user.email), name: String(profile.user.name), role: String(profile.user.role) });
-  await audit(req.user!.id, 'PROFILE_UPDATED', 'USER', req.user!.id, { requestId: requestId(req) });
-  res.json({ user: publicAccount, profile: { id: publicAccount.id, email: publicAccount.email, name: publicAccount.name, role: publicAccount.role, passwordEnabled: Boolean(profile.user.password_enabled), cpfCnpj: profile.profile.cpf_cnpj ?? '', phone: profile.profile.phone ?? '', companyName: profile.profile.company_name ?? '', city: profile.profile.city ?? '', state: profile.profile.state ?? '', marketingOptIn: Boolean(profile.profile.marketing_opt_in) } });
+  await audit(req.user!.id, 'PROFILE_UPDATED', 'USER', req.user!.id, { requestId: requestId(req), responsibilityAccepted: input.acceptResponsibility === true, ...(pixSent ? { pixKey: pix ? 'ATUALIZADA' : 'REMOVIDA' } : {}) });
+  res.json({ user: publicAccount, profile: profileDto({ id: publicAccount.id, email: publicAccount.email, name: publicAccount.name, role: publicAccount.role, passwordEnabled: Boolean(profile.user.password_enabled) }, profile.profile) });
 }));
 
 api.post('/auth/forgot-password', passwordResetRateLimit, asyncRoute(async (req, res) => {
@@ -611,8 +862,14 @@ api.post('/auth/reset-password', passwordResetRateLimit, asyncRoute(async (req, 
     return row as { id: string; user_id: string; email: string; name: string; role: string };
   });
   const user = publicUser({ id: String(result.user_id), email: String(result.email), name: String(result.name), role: String(result.role) });
+  if (isTeamRole(user.role)) {
+    // Equipe define a senha pelo link, mas entra só pelo painel: a senha já foi gravada, então não é erro.
+    await audit(user.id, 'PASSWORD_RESET_COMPLETED', 'USER', user.id, { requestId: requestId(req), flow: 'team' });
+    res.json({ message: 'Senha definida. Entre pelo painel da equipe com o seu e-mail e a nova senha.', panel: true });
+    return;
+  }
   const resultForUser = await authResultForUser(user, 'password_reset', req);
-  await audit(user.id, 'PASSWORD_RESET_COMPLETED', 'USER', user.id, { requestId: requestId(req), totpRequired: isTeamRole(user.role) });
+  await audit(user.id, 'PASSWORD_RESET_COMPLETED', 'USER', user.id, { requestId: requestId(req), flow: 'client' });
   res.json({ ...resultForUser, message: 'Senha redefinida com sucesso.' });
 }));
 
@@ -630,9 +887,21 @@ api.post('/auth/change-password', auth, asyncRoute(async (req, res) => {
   res.status(204).end();
 }));
 
+/** Troca o perfil de uso (cliente, lojista, afiliado). Só aceita perfis que a conta realmente tem; quem não tem loja ou link não consegue se dar esse perfil. */
+api.put('/me/profile', auth, asyncRoute(async (req, res) => {
+  const parsed = z.object({ profile: z.string() }).strict().safeParse(req.body);
+  if (!parsed.success || !isProfile(parsed.data.profile)) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const membership = await loadMembership(req.user!.id).catch(() => null);
+  const state = await loadProfileState(req.user!.id, { hasStore: Boolean(membership && membership.store.active && !membership.store.archivedAt) });
+  if (!state.profiles.includes(parsed.data.profile)) throw appError('PROFILE_NOT_AVAILABLE', { code: 'PROFILE_NOT_AVAILABLE', http: 403, expose: true });
+  await pool.query('UPDATE users SET active_profile=$2 WHERE id=$1', [req.user!.id, parsed.data.profile]);
+  await audit(req.user!.id, 'PROFILE_SWITCHED', 'USER', req.user!.id, { from: state.activeProfile, to: parsed.data.profile, requestId: requestId(req) });
+  res.json({ profiles: state.profiles, activeProfile: parsed.data.profile });
+}));
+
 api.get('/me', auth, asyncRoute(async (req, res) => {
   const [account, wallet, identities] = await Promise.all([
-    pool.query(`SELECT u.id,u.email,u.name,u.role,p.cpf_cnpj,p.phone,p.company_name,p.city,p.state,p.marketing_opt_in
+    pool.query(`SELECT u.id,u.email,u.name,u.role,u.password_enabled,u.access_overrides,p.*
       FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id WHERE u.id=$1 AND u.active=true`, [req.user!.id]),
     pool.query('SELECT balance_cents FROM wallets WHERE user_id=$1', [req.user!.id]),
     pool.query('SELECT provider FROM user_identities WHERE user_id=$1 ORDER BY provider', [req.user!.id])
@@ -640,7 +909,10 @@ api.get('/me', auth, asyncRoute(async (req, res) => {
   if (!account.rowCount) throw appError('ACCOUNT_NOT_FOUND', { code: 'ACCOUNT_NOT_FOUND', http: 404, expose: true });
   const row = account.rows[0];
   const user = publicUser({ id: String(row.id), email: String(row.email), name: String(row.name), role: String(row.role) });
-  res.json({ user, balanceCents: Number(wallet.rows[0]?.balance_cents ?? 0), permissions: permissionsFor(user.role), sandbox: env.DATA_PROVIDER === 'mock', identities: identities.rows.map((identity) => identity.provider), profile: { id: user.id, email: user.email, name: user.name, role: user.role, passwordEnabled: Boolean(row.password_enabled), cpfCnpj: row.cpf_cnpj ?? '', phone: row.phone ?? '', companyName: row.company_name ?? '', city: row.city ?? '', state: row.state ?? '', marketingOptIn: Boolean(row.marketing_opt_in) } });
+  const membership = await loadMembership(user.id).catch(() => null);
+  const storeAccess = membership ? { name: membership.store.name, role: membership.role, active: membership.store.active && !membership.store.archivedAt } : null;
+  const profileState = await loadProfileState(user.id, { hasStore: Boolean(storeAccess?.active) });
+  res.json({ user, storeAccess, features: resolveAccess(row.access_overrides), profiles: profileState.profiles, activeProfile: profileState.activeProfile, balanceCents: Number(wallet.rows[0]?.balance_cents ?? 0), permissions: permissionsFor(user.role), sandbox: env.DATA_PROVIDER === 'mock', identities: identities.rows.map((identity) => identity.provider), profile: profileDto({ id: user.id, email: user.email, name: user.name, role: user.role, passwordEnabled: Boolean(row.password_enabled) }, row) });
 }));
 
 function fipeUnavailable(): AppError {
@@ -763,47 +1035,9 @@ async function effectiveQueryPrice(client: PoolClient, userId: string, productId
   return Number.isInteger(negotiated) && negotiated >= 0 ? { priceCents: negotiated, negotiated: true } : { priceCents: base, negotiated: false };
 }
 
-async function loadGenericReportTemplate(productId: string, productName: string): Promise<GenericReportTemplate> {
-  try {
-    const result = await pool.query(`SELECT t.id,t.product_id,t.version,t.name,t.status,t.config
-      FROM product_report_configs c JOIN report_templates t ON t.id=c.template_id
-      WHERE c.product_id=$1 AND t.status='PUBLISHED'`, [productId]);
-    if (result.rowCount) {
-      const row = result.rows[0] as Record<string, unknown>;
-      const config = row.config as Record<string, unknown>;
-      if (config && Array.isArray(config.sections)) return { id: String(row.id), productId: String(row.product_id), version: Number(row.version), name: String(row.name), status: 'PUBLISHED', title: typeof config.title === 'string' ? config.title : productName, subtitle: typeof config.subtitle === 'string' ? config.subtitle : 'Relatório veicular BUSCARR', sections: config.sections as GenericReportTemplate['sections'] };
-    }
-  } catch (error) {
-    log('warn', 'report_template_fallback', { productId, error: error instanceof Error ? error.message : 'unknown' });
-  }
-  return defaultReportTemplate(productId, productName);
-}
-
-async function saveGenericVehicleReport(queryId: string, userId: string, productId: string, productName: string, normalized: NormalizedVehicle, provider: string): Promise<void> {
-  const template = await loadGenericReportTemplate(productId, productName);
-  const report = buildGenericReport(template, publicVehicleResult(normalized));
-  const documentCode = `RPT-${randomBytes(6).toString('hex').toUpperCase()}`;
-  await pool.query(`INSERT INTO report_documents(document_code,query_id,user_id,report_kind,report_version,provider,report_hash,snapshot,product_id,template_id,template_version)
-    VALUES($1,$2,$3,'VEHICLE_QUERY',$4,$5,$6,$7::jsonb,$8,$9,$10)`, [documentCode, queryId, userId, template.version, provider, report.validation, JSON.stringify({ report }), productId, template.id.startsWith('default-') ? null : template.id, template.version]);
-}
-
-async function genericReportForQuery(queryId: string, userId: string): Promise<GenericReport> {
-  const stored = await pool.query(`SELECT d.snapshot FROM report_documents d WHERE d.query_id=$1 AND d.user_id=$2 AND d.report_kind='VEHICLE_QUERY' ORDER BY d.created_at DESC LIMIT 1`, [queryId, userId]);
-  if (stored.rowCount) {
-    const report = (stored.rows[0].snapshot as Record<string, unknown>)?.report as GenericReport | undefined;
-    if (report?.schema === 'buscarr.generic.report.v1') return report;
-  }
-  const query = await pool.query(`SELECT q.product_id,p.name,r.normalized,q.provider FROM vehicle_queries q JOIN query_products p ON p.id=q.product_id JOIN vehicle_query_results r ON r.query_id=q.id WHERE q.id=$1 AND q.user_id=$2 AND q.status='SUCCESS'`, [queryId, userId]);
-  if (!query.rowCount) throw appError('REPORT_NOT_FOUND', { code: 'REPORT_NOT_FOUND', http: 404, expose: true });
-  const row = query.rows[0] as Record<string, unknown>;
-  const normalized = publicVehicleResult(row.normalized as NormalizedVehicle);
-  const template = await loadGenericReportTemplate(String(row.product_id), String(row.name));
-  return buildGenericReport(template, normalized);
-}
-
-async function saveFipeDocument(quote: FipeQuote): Promise<void> {
-  await pool.query(`INSERT INTO report_documents(document_code,report_kind,provider,report_hash,snapshot)
-    VALUES($1,'FIPE_FREE',$2,$3,$4::jsonb) ON CONFLICT(document_code) DO NOTHING`, [quote.documentCode, quote.provider, quote.reportHash, JSON.stringify(reportSnapshot(quote))]);
+async function saveFipeDocument(quote: FipeQuote, userId: string | null = null): Promise<void> {
+  await pool.query(`INSERT INTO report_documents(document_code,report_kind,provider,report_hash,snapshot,user_id)
+    VALUES($1,'FIPE_FREE',$2,$3,$4::jsonb,$5) ON CONFLICT(document_code) DO NOTHING`, [quote.documentCode, quote.provider, quote.reportHash, JSON.stringify(reportSnapshot(quote)), userId]);
 }
 
 function snapshotQuote(document: Record<string, unknown>): FipeQuote {
@@ -838,17 +1072,8 @@ async function createContactTicket(userId: string | null, input: { name: string;
   }
 }
 
-const publicOfferDescriptions: Record<string, string> = {
-  FIPE_FREE: 'Veja o valor médio FIPE e a referência vigente para orientar sua negociação.',
-  CADASTRAL: 'Confirme as características principais do veículo e compare com o anúncio.',
-  RESTRICTIONS: 'Verifique impedimentos que podem afetar a negociação ou a transferência.',
-  DEBTS: 'Consulte débitos e pendências relevantes antes de avançar na compra.',
-  COMPLETE: 'Reúna identificação, características, débitos, restrições e situação em uma única análise.',
-  PREMIUM: 'Acesse a análise mais completa disponível para tomar uma decisão com mais segurança.'
-};
-
-function publicOfferDescription(id: string, fallback: string): string {
-  return publicOfferDescriptions[id] ?? fallback.replace(/\b(provedor|provider|fonte|source|API)\b/gi, 'consulta');
+function publicOfferDescription(_id: string, fallback: string): string {
+  return fallback.replace(/\b(provedor|provider|fonte|source|API)\b/gi, 'consulta');
 }
 
 function normalizeMatchText(value: string): string {
@@ -911,7 +1136,9 @@ function fipeVehicleDetails(vehicle: NormalizedVehicle): FipeVehicleDetails {
     city: vehicle.registration.city,
     state: vehicle.registration.state,
     licensingYear: vehicle.registration.licensingYear,
-    status: vehicle.registration.status
+    status: vehicle.registration.status,
+    chassis: vehicle.identification.chassis,
+    engine: vehicle.identification.engine
   };
 }
 
@@ -934,11 +1161,30 @@ function inferFipeVehicleType(vehicle: NormalizedVehicle): FipeVehicleType {
   return 'cars';
 }
 
+/** Ficha gratuita da consulta FIPE: tabela por ano e por mês, financiamento, decodificador do chassi (só na busca por placa) e ficha técnica do guia. Falhas só tiram a parte afetada. */
+async function freeVehicleSheet(result: { fipeCode: string; valueCents: number; fuel?: string; modelYear?: number; year: FipeSelectionItem; brand: FipeSelectionItem; model: FipeSelectionItem; vehicleType: FipeVehicleType }, details?: FipeVehicleDetails): Promise<VehicleSheet | undefined> {
+  try {
+    const modelYear = result.modelYear ?? (Number(String(result.year.name).match(/\d{4}/)?.[0]) || undefined);
+    const history = modelYear ? await fetchFipeHistory({ fipeCode: result.fipeCode, modelYear, fuel: result.fuel, type: result.vehicleType }).catch(() => undefined) : undefined;
+    const [financing, specs] = await Promise.all([
+      financingTeaser(result.valueCents),
+      catalogSpecsFor({ brand: details?.brand ?? result.brand.name, model: details?.model ?? result.model.name, fullModel: details?.fullModel ?? result.model.name, year: modelYear ?? null })
+    ]);
+    return buildVehicleSheet({
+      chassis: details?.chassis, hideKey: true, engine: details?.engine, brand: details?.brand ?? result.brand.name, fullModel: details?.fullModel ?? details?.model, fuel: details?.fuel ?? result.fuel,
+      modelYear: details?.modelYear ?? modelYear, manufactureYear: details?.manufactureYear, fipeCode: result.fipeCode, fipeModel: `${result.brand.name} ${result.model.name}`.replace(/\s+/g, ' ').trim(),
+      fipeCurrentCents: result.valueCents, history: history ?? null, financing, specs
+    });
+  } catch {
+    return undefined;
+  }
+}
+
 async function resolveFipeSelectionFromPlate(plate: string): Promise<{ provider: 'parallelum' | 'brasilapi'; vehicleType: FipeVehicleType; brand: FipeSelectionItem; model: FipeSelectionItem; year: FipeSelectionItem; vehicleDetails: FipeVehicleDetails }> {
   let normalized: NormalizedVehicle;
   try {
     const vehicleProvider = getProvider();
-    const output = await withTimeout(vehicleProvider.queryByPlate(plate), env.QUERY_REQUEST_TIMEOUT_MS);
+    const output = await withTimeout(vehicleProvider.queryByPlate(plate, { productId: 'BASIC' }), env.QUERY_REQUEST_TIMEOUT_MS);
     normalized = normalizeBdrp(output.raw);
   } catch (error) {
     const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : '';
@@ -974,6 +1220,36 @@ async function resolveFipeSelectionFromPlate(plate: string): Promise<{ provider:
   throw appError('FIPE_PLATE_VEHICLE_NOT_IDENTIFIED', { code: 'FIPE_PLATE_VEHICLE_NOT_IDENTIFIED', http: 422, expose: true });
 }
 
+/** Com a Credify como fonte, a FIPE grátis pela placa compra só a consulta de FIPE (código 454) e não lê nenhum dado do cadastro. */
+function fipeByPlateUsesCredify(): boolean {
+  return env.DATA_PROVIDER === 'real' && env.VEHICLE_API_PROVIDER === 'credify';
+}
+
+/** FIPE pela placa, só FIPE: uma consulta da Credify (454). A falha vira um código claro e o motivo real vai para o log e para a saúde da fonte. */
+async function fipeResultFromPlate(plate: string): Promise<FipeProviderResult> {
+  const startedAt = Date.now();
+  let output: { raw: unknown };
+  try {
+    output = await withTimeout(getProvider().queryByPlate(plate, { productId: 'FIPE_FREE' }), env.QUERY_REQUEST_TIMEOUT_MS);
+  } catch (error) {
+    const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'UNKNOWN';
+    const detail = error instanceof Error && typeof (error as { detail?: unknown }).detail === 'string' ? String((error as unknown as { detail: string }).detail).slice(0, 300) : undefined;
+    log('warn', 'fipe_plate_provider_failed', { code, ...(detail ? { detail } : {}) });
+    await recordProviderHealth('credify', 'FAILED', Date.now() - startedAt, code);
+    if (code === 'NOT_FOUND') throw appError('FIPE_PLATE_NOT_FOUND', { code: 'FIPE_PLATE_NOT_FOUND', http: 404, expose: true });
+    throw appError('FIPE_PLATE_UNAVAILABLE', { code: 'FIPE_PLATE_UNAVAILABLE', http: 502, expose: true });
+  }
+  try {
+    return parseFipeByPlate(output.raw, plate);
+  } catch (error) {
+    const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'FIPE_PLATE_DATA_INVALID';
+    const detail = error instanceof Error && typeof (error as { detail?: unknown }).detail === 'string' ? String((error as unknown as { detail: string }).detail).slice(0, 500) : undefined;
+    log('warn', 'fipe_plate_unreadable', { code, ...(detail ? { detail } : {}) });
+    await recordProviderHealth('credify', 'FAILED', Date.now() - startedAt, code);
+    throw error;
+  }
+}
+
 api.get('/fipe/status', (_req, res) => {
   res.json({ enabled: env.FEATURE_FREE_FIPE, pdfEnabled: env.FEATURE_FREE_FIPE && env.FEATURE_REPORT_PDF });
 });
@@ -990,8 +1266,7 @@ api.get('/fipe/brands', asyncRoute(async (req, res) => {
   if (!env.FEATURE_FREE_FIPE) throw fipeUnavailable();
   const vehicleType = fipeVehicleTypeSchema.safeParse(req.query.vehicleType);
   if (!vehicleType.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
-  const providerName = 'parallelum';
-  try { res.json({ brands: await getFipeProvider(providerName).brands(vehicleType.data, typeof req.query.reference === 'string' ? req.query.reference : undefined) }); }
+  try { res.json({ brands: await fipeBrands(vehicleType.data, typeof req.query.reference === 'string' ? req.query.reference : undefined) }); }
   catch (error) { throw fipeProviderError(error); }
 }));
 
@@ -1000,8 +1275,7 @@ api.get('/fipe/models', asyncRoute(async (req, res) => {
   const vehicleType = fipeVehicleTypeSchema.safeParse(req.query.vehicleType);
   const brandCode = typeof req.query.brandCode === 'string' ? req.query.brandCode : '';
   if (!vehicleType.success || !brandCode) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
-  const providerName = 'parallelum';
-  try { res.json({ models: await getFipeProvider(providerName).models(vehicleType.data, { code: brandCode, name: 'selected' }, typeof req.query.reference === 'string' ? req.query.reference : undefined) }); }
+  try { res.json({ models: await fipeModels(vehicleType.data, brandCode, typeof req.query.reference === 'string' ? req.query.reference : undefined) }); }
   catch (error) { throw fipeProviderError(error); }
 }));
 
@@ -1011,32 +1285,89 @@ api.get('/fipe/years', asyncRoute(async (req, res) => {
   const brandCode = typeof req.query.brandCode === 'string' ? req.query.brandCode : '';
   const modelCode = typeof req.query.modelCode === 'string' ? req.query.modelCode : '';
   if (!vehicleType.success || !brandCode || !modelCode) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
-  const providerName = 'parallelum';
-  try { res.json({ years: await getFipeProvider(providerName).years(vehicleType.data, { code: brandCode, name: 'selected' }, { code: modelCode, name: 'selected' }, typeof req.query.reference === 'string' ? req.query.reference : undefined) }); }
+  try { res.json({ years: await fipeYears(vehicleType.data, brandCode, modelCode, typeof req.query.reference === 'string' ? req.query.reference : undefined) }); }
   catch (error) { throw fipeProviderError(error); }
 }));
 
-api.post('/fipe/quote', asyncRoute(async (req, res) => {
+const fipeLookupLimiter = rateLimit({
+  windowMs: 60 * 1000, limit: 90, standardHeaders: true, legacyHeaders: false, skip: () => !env.RATE_LIMIT_ENABLED,
+  message: { error: 'TOO_MANY_ATTEMPTS', message: 'Muitas consultas em pouco tempo. Aguarde um instante e tente de novo.' }
+});
+const fipeCodeSchema = z.string().regex(/^[A-Za-z0-9._-]{1,24}$/);
+
+/** Busca por texto na própria Tabela FIPE: "onix 2020", "honda cg 160", "chevrolet onix". Devolve modelos (com a marca) e o ano digitado, se houver. */
+api.get('/fipe/search', fipeLookupLimiter, asyncRoute(async (req, res) => {
+  if (!env.FEATURE_FREE_FIPE) throw fipeUnavailable();
+  const vehicleType = fipeVehicleTypeSchema.safeParse(req.query.vehicleType ?? 'cars');
+  const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 80) : '';
+  if (!vehicleType.success || q.length < 2) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  try {
+    const found = await fipeSearch(vehicleType.data, q);
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.json(found);
+  } catch (error) { throw fipeProviderError(error); }
+}));
+
+/**
+ * Valor FIPE de um veículo já escolhido (marca, modelo, ano), para mostrar no simulador.
+ * Não gasta a cota da consulta gratuita e não cria relatório: é só leitura de preço, com cache do mês.
+ */
+api.get('/fipe/price', fipeLookupLimiter, asyncRoute(async (req, res) => {
+  if (!env.FEATURE_FREE_FIPE) throw fipeUnavailable();
+  const vehicleType = fipeVehicleTypeSchema.safeParse(req.query.vehicleType ?? 'cars');
+  const brandCode = fipeCodeSchema.safeParse(req.query.brandCode);
+  const modelCode = fipeCodeSchema.safeParse(req.query.modelCode);
+  const yearCode = fipeCodeSchema.safeParse(req.query.yearCode);
+  if (!vehicleType.success || !brandCode.success || !modelCode.success || !yearCode.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  try {
+    const startedAt = Date.now();
+    const { result, cached: cachedResult } = await getFipePrice(vehicleType.data, brandCode.data, modelCode.data, yearCode.data);
+    if (!cachedResult) await recordProviderHealth(result.provider, 'SUCCESS', Date.now() - startedAt);
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.json({
+      valueCents: result.valueCents, valueLabel: result.valueLabel, referenceMonth: result.referenceMonth, fipeCode: result.fipeCode,
+      brand: result.brand, model: result.model, year: result.year, fuel: result.fuel ?? null, modelYear: result.modelYear ?? null,
+      source: result.source, cached: cachedResult
+    });
+  } catch (error) { throw fipeProviderError(error); }
+}));
+
+api.post('/fipe/quote', optionalAuth, asyncRoute(async (req, res) => {
   if (!env.FEATURE_FREE_FIPE) throw fipeUnavailable();
   const parsed = fipeSelectionSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
   const normalizedPlate = parsed.data.plate ? plateSchema.safeParse(parsed.data.plate) : null;
   if (parsed.data.plate && !normalizedPlate?.success) throw appError('INVALID_PLATE', { code: 'INVALID_PLATE', http: 400, expose: true });
   const plate = normalizedPlate?.success ? normalizedPlate.data : undefined;
+  // Consulta pela placa precisa de conta (grátis). Sem conta, só por marca, modelo e ano. Vale antes de gastar cota ou consultar qualquer fonte.
+  if (plate && !req.user) {
+    await recordFunnelEvent(null, req, 'FREE_QUERY_LOGIN_REQUIRED', { plateLookup: true });
+    throw appError('Para consultar a FIPE pela placa, entre ou crie sua conta grátis. Por marca, modelo e ano você consulta sem conta.', { code: 'FIPE_PLATE_LOGIN_REQUIRED', http: 401, expose: true, showMessage: true });
+  }
   // O prefixo v2 isola contadores criados antes da correção de proxy e evita
   // que um IP compartilhado do Cloudflare consuma a cota de todos os visitantes.
-  const scopeKey = `v2:ip:${hashIp(requestSourceIp(req)) ?? 'unknown'}`;
+  // Visitante sem conta: limite por IP. Quem está logado: limite próprio da conta (definido pelo administrador) ou o padrão do sistema, contado por usuário.
   const safeBusiness = await safeBusinessSettings();
-  const configuredGuestLimit = safeBusiness.fipeGuestDailyLimit;
-  const guestLimit = typeof configuredGuestLimit === 'number' && Number.isInteger(configuredGuestLimit) && configuredGuestLimit > 0 ? configuredGuestLimit : env.FIPE_GUEST_DAILY_LIMIT;
-  await reserveFipeQuota(scopeKey, guestLimit);
+  const positive = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : fallback);
+  let scopeKey = `v2:ip:${hashIp(requestSourceIp(req)) ?? 'unknown'}`;
+  let dailyLimit = positive(safeBusiness.fipeGuestDailyLimit, env.FIPE_GUEST_DAILY_LIMIT);
+  if (req.user) {
+    const own = await pool.query('SELECT fipe_daily_limit FROM users WHERE id=$1', [req.user.id]);
+    scopeKey = `v2:user:${req.user.id}`;
+    dailyLimit = positive(own.rows[0]?.fipe_daily_limit, positive(safeBusiness.fipeAuthDailyLimit, env.FIPE_AUTH_DAILY_LIMIT));
+  }
+  await reserveFipeQuota(scopeKey, dailyLimit);
   let quotaReserved = true;
   let input: { vehicleType: FipeVehicleType; brand: FipeSelectionItem; model: FipeSelectionItem; year: FipeSelectionItem };
   let vehicleDetails: FipeVehicleDetails | undefined;
   let preferredProvider: 'parallelum' | 'brasilapi' = 'parallelum';
+  let plateResult: FipeProviderResult | undefined;
   try {
     if (parsed.data.vehicleType && parsed.data.brand && parsed.data.model && parsed.data.year) {
       input = { vehicleType: parsed.data.vehicleType, brand: parsed.data.brand, model: parsed.data.model, year: parsed.data.year };
+    } else if (plate && fipeByPlateUsesCredify()) {
+      plateResult = await fipeResultFromPlate(plate);
+      input = { vehicleType: plateResult.vehicleType, brand: plateResult.brand, model: plateResult.model, year: plateResult.year };
     } else if (plate) {
       const resolved = await resolveFipeSelectionFromPlate(plate);
       input = { vehicleType: resolved.vehicleType, brand: resolved.brand, model: resolved.model, year: resolved.year };
@@ -1047,12 +1378,17 @@ api.post('/fipe/quote', asyncRoute(async (req, res) => {
     }
     await recordFunnelEvent(null, req, 'FREE_QUERY_STARTED', { vehicleType: input.vehicleType, plateLookup: Boolean(plate) });
     const providerStartedAt = Date.now();
-    const cached = preferredProvider === 'parallelum' ? await findCachedFipeResult(input) : null;
-    const result = cached ?? await quoteWithFallback({ ...input, provider: preferredProvider });
-    if (!cached) await cacheFipeResult(result);
-    const quote = makeFipeQuote(result, plate, vehicleDetails);
+    const cached = plateResult ? null : preferredProvider === 'parallelum' ? await findCachedFipeResult(input) : null;
+    const result = plateResult ?? cached ?? await quoteWithFallback({ ...input, provider: preferredProvider });
+    if (!cached && !plateResult) await cacheFipeResult(result);
+    // Consulta grátis: o chassi real só alimenta o decodificador; o que aparece (tela, PDF, impressão) vai mascarado.
+    const shownDetails = vehicleDetails ? { ...vehicleDetails, chassis: maskFreeChassis(vehicleDetails.chassis), engine: maskFreeEngine(vehicleDetails.engine) } : undefined;
+    const quote = makeFipeQuote(result, plate, shownDetails);
+    quote.sheet = await freeVehicleSheet(result, vehicleDetails);
+    // FIPE pela placa (Credify) é só FIPE: não há chassi, então não mostra o decodificador de chassi.
+    if (plateResult && quote.sheet) quote.sheet = { ...quote.sheet, decoder: [] };
     await recordProviderHealth(quote.provider, 'SUCCESS', Date.now() - providerStartedAt);
-    await saveFipeDocument(quote);
+    await saveFipeDocument(quote, req.user?.id ?? null);
     await recordFunnelEvent(null, req, 'FREE_QUERY_COMPLETED', { provider: quote.provider, documentCode: quote.documentCode, cached: Boolean(cached), plateLookup: Boolean(plate) });
     res.status(201).json(publicFipeQuote(quote));
   } catch (error) {
@@ -1066,7 +1402,7 @@ api.post('/fipe/quote', asyncRoute(async (req, res) => {
 }));
 
 api.post('/fipe/quotes/:code/save', auth, requirePermission('VIEW_HISTORY'), asyncRoute(async (req, res) => {
-  const document = await pool.query('SELECT * FROM report_documents WHERE document_code=$1 AND report_kind=\'FIPE_FREE\'', [req.params.code]);
+  const document = await pool.query('SELECT * FROM report_documents WHERE document_code=$1 AND report_kind=\'FIPE_FREE\' AND (user_id IS NULL OR user_id=$2)', [req.params.code, req.user!.id]);
   if (!document.rowCount) throw appError('REPORT_NOT_FOUND', { code: 'REPORT_NOT_FOUND', http: 404, expose: true });
   const row = document.rows[0] as Record<string, unknown>;
   if (row.user_id && row.user_id !== req.user!.id) throw appError('REPORT_NOT_FOUND', { code: 'REPORT_NOT_FOUND', http: 404, expose: true });
@@ -1087,21 +1423,23 @@ api.post('/fipe/quotes/:code/save', auth, requirePermission('VIEW_HISTORY'), asy
 
 api.get('/fipe/reports/:code/pdf', auth, asyncRoute(async (req, res) => {
   if (!env.FEATURE_FREE_FIPE || !env.FEATURE_REPORT_PDF) throw fipeUnavailable();
-  const document = await pool.query('SELECT snapshot FROM report_documents WHERE document_code=$1 AND report_kind=\'FIPE_FREE\'', [req.params.code]);
+  const document = await pool.query('SELECT snapshot FROM report_documents WHERE document_code=$1 AND report_kind=\'FIPE_FREE\' AND user_id=$2', [req.params.code, req.user!.id]);
   if (!document.rowCount) throw appError('REPORT_NOT_FOUND', { code: 'REPORT_NOT_FOUND', http: 404, expose: true });
   const quote = snapshotQuote(document.rows[0] as Record<string, unknown>);
   await recordFunnelEvent(null, req, 'FREE_REPORT_DOWNLOADED', { documentCode: quote.documentCode });
-  res.setHeader('Content-Disposition', `attachment; filename="carpivara-${quote.documentCode}.pdf"`);
+  res.setHeader('Cache-Control', 'no-store, private');
+  res.setHeader('Content-Disposition', `attachment; filename="${BRAND.fileSlug}-${quote.documentCode}.pdf"`);
   const branding = await organizationBrandingForUser(req.user!.id);
-  res.type('application/pdf').send(fipePdf(quote, branding));
+  res.type('application/pdf').send(await fipePdf(quote, { ...branding, siteUrl: (env.APP_URL ?? env.WEB_ORIGIN).replace(/\/$/, '') }));
 }));
 
 api.get('/fipe/reports/:code/print', auth, asyncRoute(async (req, res) => {
   if (!env.FEATURE_FREE_FIPE) throw fipeUnavailable();
-  const document = await pool.query('SELECT snapshot FROM report_documents WHERE document_code=$1 AND report_kind=\'FIPE_FREE\'', [req.params.code]);
+  const document = await pool.query('SELECT snapshot FROM report_documents WHERE document_code=$1 AND report_kind=\'FIPE_FREE\' AND user_id=$2', [req.params.code, req.user!.id]);
   if (!document.rowCount) throw appError('REPORT_NOT_FOUND', { code: 'REPORT_NOT_FOUND', http: 404, expose: true });
   const quote = snapshotQuote(document.rows[0] as Record<string, unknown>);
   await recordFunnelEvent(null, req, 'REPORT_PRINTED', { documentCode: quote.documentCode });
+  res.setHeader('Cache-Control', 'no-store, private');
   const branding = await organizationBrandingForUser(req.user!.id);
   res.type('html').send(fipePrintHtml(quote, branding));
 }));
@@ -1115,6 +1453,7 @@ api.post('/contact', contactRateLimit, asyncRoute(async (req, res) => {
   const parsed = contactMessageSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
   const result = await createContactTicket(null, parsed.data);
+  await upsertLead({ email: parsed.data.email, name: parsed.data.name, source: 'CONTATO', interest: parsed.data.subject }).catch(() => undefined);
   res.status(201).json({ ticketId: result.id, emailSent: result.emailSent, message: result.emailSent ? 'Solicitação recebida. Enviamos uma confirmação para o e-mail informado.' : 'Solicitação recebida. O protocolo foi registrado; o retorno por e-mail será ativado quando o canal estiver configurado.' });
 }));
 
@@ -1131,6 +1470,7 @@ api.post('/plan-interest', asyncRoute(async (req, res) => {
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
   // O interesse comercial é aceito, mas analytics não recebe e-mail nem outro identificador direto.
   await recordFunnelEvent(null, req, parsed.data.plan === 'RISK' ? 'RISK_INTEREST' : 'PREMIUM_INTEREST', { plan: parsed.data.plan });
+  await upsertLead({ email: parsed.data.email, source: 'PLANOS', interest: `Plano ${parsed.data.plan}` }).catch(() => undefined);
   res.status(201).json({ ok: true });
 }));
 
@@ -1160,7 +1500,8 @@ api.get('/validar-relatorio/:code', asyncRoute(async (req, res) => {
 }));
 
 api.get('/query-products', auth, asyncRoute(async (req, res) => {
-  const products = await pool.query(`SELECT p.id,p.name,p.description,p.price_cents,p.slug,p.features,p.display_order,p.is_free,p.source,p.coverage,p.commercial_status,p.featured,
+  const products = await pool.query(`SELECT p.id,p.name,p.description,p.price_cents,p.slug,p.features,p.display_order,p.is_free,p.source,p.coverage,
+      CASE WHEN p.is_free OR ($2::boolean AND EXISTS (SELECT 1 FROM query_source_rules rule WHERE rule.product_id=p.id AND rule.active=true)) THEN p.commercial_status ELSE 'SOON' END AS commercial_status,p.featured,
       CASE WHEN p.is_free THEN 0 ELSE COALESCE(orgp.price_cents,p.price_cents) END AS effective_price_cents,
       (orgp.price_cents IS NOT NULL AND NOT p.is_free) AS negotiated
     FROM query_products p
@@ -1170,128 +1511,365 @@ api.get('/query-products', auth, asyncRoute(async (req, res) => {
         AND (qp.starts_at IS NULL OR qp.starts_at <= now()) AND (qp.ends_at IS NULL OR qp.ends_at > now())
       WHERE m.user_id=$1 ORDER BY o.created_at LIMIT 1
     ) orgp ON true
-    WHERE p.active=true ORDER BY p.display_order,p.price_cents`, [req.user!.id]);
+    WHERE p.active=true ORDER BY p.display_order,p.price_cents`, [req.user!.id, env.DATA_PROVIDER !== 'disabled']);
   res.json(products.rows.map((product) => ({ id: product.id, name: product.name, description: product.description, basePriceCents: Number(product.price_cents ?? 0), priceCents: Number(product.effective_price_cents ?? 0), negotiated: Boolean(product.negotiated), slug: product.slug, features: product.features, isFree: Boolean(product.is_free), commercialStatus: product.commercial_status, featured: Boolean(product.featured) })));
 }));
 
+api.use(publicContentRouter);
+
+/** Guia de veículos: a rota por placa fica aqui porque usa o provedor de dados e a cota diária, e precisa vir antes das rotas `/vehicles/:slug`. */
+const VEHICLE_PLATE_DAILY_LIMIT = 5;
+api.post('/vehicles/by-plate', auth, asyncRoute(async (req, res) => {
+  const plate = plateSchema.safeParse((req.body as { plate?: unknown } | undefined)?.plate);
+  if (!plate.success) throw appError('INVALID_PLATE', { code: 'INVALID_PLATE', http: 400, expose: true });
+  const scopeKey = `vguide:plate:${req.user!.id}`;
+  await reserveFipeQuota(scopeKey, VEHICLE_PLATE_DAILY_LIMIT);
+  let normalized: NormalizedVehicle;
+  try {
+    const output = await withTimeout(getProvider().queryByPlate(plate.data, { productId: 'BASIC' }), env.QUERY_REQUEST_TIMEOUT_MS);
+    normalized = normalizeBdrp(output.raw);
+  } catch (error) {
+    await releaseFipeQuota(scopeKey);
+    const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : '';
+    if (code === 'NOT_FOUND') throw appError('FIPE_PLATE_NOT_FOUND', { code: 'FIPE_PLATE_NOT_FOUND', http: 404, expose: true });
+    throw appError('VEHICLE_PLATE_UNAVAILABLE', { code: 'VEHICLE_PLATE_UNAVAILABLE', http: 503, expose: true });
+  }
+  const brand = normalized.identification.brand ?? normalized.identification.fullModel?.split(/\s+/)[0] ?? '';
+  const model = fipeModelTarget(normalized);
+  const fullModel = normalized.identification.fullModel ?? model;
+  const year = Number(normalized.characteristics.modelYear ?? normalized.characteristics.manufactureYear ?? '') || null;
+  const candidates = brand ? await pool.query(`SELECT m.id,m.slug,m.brand,m.name FROM vehicle_models m WHERE m.status='PUBLISHED' AND m.archived_at IS NULL AND m.brand ILIKE $1`, [`%${brand.split(/\s+/)[0]!.replace(/[%_\\]/g, '')}%`]) : { rows: [] as Array<Record<string, any>> };
+  const scored = candidates.rows
+    .map((c) => ({ c, score: Math.max(scoreModelMatch({ brand, model }, { brand: c.brand, name: c.name }), scoreModelMatch({ brand, model: fullModel }, { brand: c.brand, name: c.name })) }))
+    .filter((x) => x.score > 0).sort((a, b) => b.score - a.score).slice(0, 5);
+  const versions = scored.length ? await pool.query('SELECT id,model_id,name,year_model,fuel FROM vehicle_versions WHERE model_id = ANY($1::uuid[]) AND active ORDER BY year_model DESC NULLS LAST, display_order, name', [scored.map((x) => x.c.id)]) : { rows: [] as Array<Record<string, any>> };
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.json({
+    vehicle: { plate: plate.data, brand: normalized.identification.brand ?? null, model: fullModel || null, year, fuel: normalized.characteristics.fuel ?? null },
+    matches: scored.map((x) => ({
+      slug: x.c.slug, brand: x.c.brand, name: x.c.name,
+      versions: versions.rows.filter((v) => v.model_id === x.c.id).map((v) => ({ id: v.id, name: v.name, yearModel: v.year_model, fuel: v.fuel, sameYear: year != null && v.year_model === year }))
+    }))
+  });
+}));
+api.use(publicVehiclesRouter);
+api.use(simulatorRouter);
+api.use(garageRouter);
+api.use(watchesRouter);
+api.use(dealerPublicRouter);
+api.use(dealerRouter);
+api.use(dealerLeadsRouter);
+api.use(dealerOpsRouter);
+
 api.get('/fipe/offers', asyncRoute(async (_req, res) => {
   const products = await pool.query(`SELECT p.id,p.name,p.description,p.price_cents,p.is_free,p.features,
-      CASE WHEN p.is_free OR EXISTS (SELECT 1 FROM query_source_rules rule WHERE rule.product_id=p.id AND rule.active=true) THEN p.commercial_status ELSE 'SOON' END AS commercial_status,p.featured
-    FROM query_products p WHERE p.id IN ('FIPE_FREE','CADASTRAL','RESTRICTIONS','DEBTS','COMPLETE','PREMIUM') ORDER BY p.display_order,p.price_cents`);
+      CASE WHEN p.is_free OR ($1::boolean AND EXISTS (SELECT 1 FROM query_source_rules rule WHERE rule.product_id=p.id AND rule.active=true)) THEN p.commercial_status ELSE 'SOON' END AS commercial_status,p.featured
+    FROM query_products p WHERE p.active=true ORDER BY p.display_order,p.price_cents`, [env.DATA_PROVIDER !== 'disabled']);
   res.json({ offers: products.rows.map((product) => ({ id: product.id, name: product.name, description: publicOfferDescription(product.id, product.description), priceCents: Boolean(product.is_free) ? 0 : Number(product.price_cents ?? 0), features: product.features, commercialStatus: product.commercial_status, featured: Boolean(product.featured) })) });
 }));
 
-api.post('/queries', auth, requirePermission('QUERY_VEHICLE'), asyncRoute(async (req, res) => {
-  const parsed = requestQuerySchema.safeParse(req.body);
-  if (!parsed.success) throw appError('INVALID_PLATE', { code: 'INVALID_PLATE', http: 400, expose: true });
-  const idempotencyKeyHeader = req.headers['idempotency-key'];
-  const idempotencyKey = typeof idempotencyKeyHeader === 'string' && /^[a-zA-Z0-9_-]{12,128}$/.test(idempotencyKeyHeader) ? idempotencyKeyHeader : null;
+type RunQueryInput = { userId: string; plate: string; searchType: SearchType; productId: string; paymentOrderId?: string; idempotencyKey: string | null; reqId: string; source: 'WEB' | 'API' };
+
+/** Executa uma consulta de ponta a ponta (cobrança, provedor, armazenamento, estorno em falha). Usada pelo web e pela API pública. */
+/** Pacotes cujo relatório mostra histórico da FIPE (busca extra além da Credify). */
+/** Consultas que recebem a ficha gratuita (decodificador de chassi, tabela FIPE, financiamento, ficha técnica). Gravame/Leilão seguem enxutos. */
+const ENRICHED_PRODUCTS = new Set(SHEET_PRODUCTS);
+
+async function runVehicleQuery(input: RunQueryInput): Promise<{ status: number; body: Record<string, unknown> }> {
+  const { userId, idempotencyKey } = input;
+  // A FIPE grátis só roda pelo fluxo próprio (/fipe/quote): aqui ela chamaria o provedor sem cobrar do cliente.
+  if (String(input.productId).toUpperCase() === 'FIPE_FREE') throw appError('PRODUCT_NOT_AVAILABLE', { code: 'PRODUCT_NOT_AVAILABLE', http: 409, expose: true });
   const provider = getProvider();
+  // Antes de qualquer cobrança: a fonte contratada precisa atender este tipo de busca.
+  if (!providerSupports(provider, input.searchType)) throw appError('SEARCH_TYPE_NOT_SUPPORTED', { code: 'SEARCH_TYPE_NOT_SUPPORTED', http: 409, expose: true });
   let queryId: string | null = null;
   let cost = 0;
   let chargeSource = 'WALLET_MONEY';
   let entitlementId: string | null = null;
 
   if (idempotencyKey) {
-    const duplicate = await pool.query(`SELECT q.id,q.plate,q.product_id,q.status,q.credits_cost,q.price_cents,q.charge_source,q.provider,q.created_at,q.completed_at,p.name AS product_name,r.normalized
+    const duplicate = await pool.query(`SELECT q.id,q.plate,q.search_type,q.product_id,q.status,q.credits_cost,q.price_cents,q.charge_source,q.provider,q.created_at,q.completed_at,p.name AS product_name,r.normalized
       FROM vehicle_queries q JOIN query_products p ON p.id=q.product_id LEFT JOIN vehicle_query_results r ON r.query_id=q.id
-      WHERE q.user_id=$1 AND q.idempotency_key=$2`, [req.user!.id, idempotencyKey]);
+      WHERE q.user_id=$1 AND q.idempotency_key=$2`, [userId, idempotencyKey]);
     if (duplicate.rowCount) {
       const existing = serializeQuery(duplicate.rows[0] as QueryRow & Record<string, unknown>);
-      if (existing.status === 'SUCCESS') return res.status(200).json({ ...existing, idempotent: true });
+      if (existing.status === 'SUCCESS') return { status: 200, body: { ...existing, idempotent: true } };
       throw appError('QUERY_IN_PROGRESS', { code: 'QUERY_IN_PROGRESS', http: 409, expose: true });
     }
   }
 
   try {
+    // A autenticação deve ser validada antes de qualquer débito. No Credify, o método força o login,
+    // confirma ClientID/ClientSecret/IP autorizado e deixa o mesmo JWT disponível para a chamada paga.
+    if (provider.validateForQuery) {
+      const auth = await provider.validateForQuery();
+      log('info', 'query_provider_auth_validated', { provider: provider.name, expiresInMinutes: auth.expiresInMinutes ?? null, requestId: input.reqId });
+    }
     await tx(async (client) => {
-      const product = await client.query('SELECT price_cents,is_free FROM query_products WHERE id=$1 AND active=true', [parsed.data.productId]);
+      const product = await client.query(`SELECT p.price_cents,p.is_free,p.commercial_status,EXISTS (SELECT 1 FROM query_source_rules rule WHERE rule.product_id=p.id AND rule.active=true) AS has_source
+        FROM query_products p WHERE p.id=$1 AND p.active=true`, [input.productId]);
       if (!product.rowCount) throw appError('PRODUCT_NOT_FOUND', { code: 'PRODUCT_NOT_FOUND', http: 404 });
-      const pricing = await effectiveQueryPrice(client, req.user!.id, parsed.data.productId, Number(product.rows[0].price_cents ?? 0), Boolean(product.rows[0].is_free));
+      // Nunca cobrar por algo que a fonte não entrega: produto pago só vende com status "à venda", fonte ativa e provedor configurado.
+      const sellable = Boolean(product.rows[0].is_free) || (product.rows[0].commercial_status === 'ACTIVE' && Boolean(product.rows[0].has_source) && env.DATA_PROVIDER !== 'disabled');
+      if (!sellable) throw appError('PRODUCT_NOT_AVAILABLE', { code: 'PRODUCT_NOT_AVAILABLE', http: 409 });
+      const pricing = await effectiveQueryPrice(client, userId, input.productId, Number(product.rows[0].price_cents ?? 0), Boolean(product.rows[0].is_free));
       cost = pricing.priceCents;
       let before = 0;
       let after = 0;
-      if (parsed.data.paymentOrderId) {
-        const entitlement = await client.query(`SELECT e.id,e.status,e.user_id,e.product_id,e.plate,o.status AS order_status,o.amount_cents
+      if (input.paymentOrderId) {
+        const entitlement = await client.query(`SELECT e.id,e.status,e.user_id,e.product_id,e.plate,o.status AS order_status,o.amount_cents,
+            EXISTS (SELECT 1 FROM payment_refunds pr WHERE pr.order_id=o.id AND pr.status IN ('REQUESTED','CONFIRMED')) AS refund_pending
           FROM query_payment_entitlements e JOIN payment_orders o ON o.id=e.order_id
-          WHERE e.order_id=$1 AND e.user_id=$2 AND e.product_id=$3 AND e.plate=$4 FOR UPDATE`, [parsed.data.paymentOrderId, req.user!.id, parsed.data.productId, parsed.data.plate]);
+          WHERE e.order_id=$1 AND e.user_id=$2 AND e.product_id=$3 AND e.plate=$4 AND e.search_type=$5 FOR UPDATE`, [input.paymentOrderId, userId, input.productId, input.plate, input.searchType]);
         if (!entitlement.rowCount) throw appError('QUERY_PAYMENT_NOT_READY', { code: 'QUERY_PAYMENT_NOT_READY', http: 409, expose: true });
+        if (entitlement.rows[0].refund_pending === true) throw appError('QUERY_PAYMENT_REFUND_PENDING', { code: 'QUERY_PAYMENT_REFUND_PENDING', http: 409, expose: true });
         if (String(entitlement.rows[0].status) !== 'READY' || String(entitlement.rows[0].order_status) !== 'PAID') throw appError('QUERY_PAYMENT_ALREADY_USED', { code: 'QUERY_PAYMENT_ALREADY_USED', http: 409, expose: true });
         cost = Number(entitlement.rows[0].amount_cents);
         chargeSource = 'DIRECT_PAYMENT';
         entitlementId = String(entitlement.rows[0].id);
       } else {
-        const wallet = await client.query('SELECT balance_cents FROM wallets WHERE user_id=$1 FOR UPDATE', [req.user!.id]);
+        const wallet = await client.query('SELECT balance_cents FROM wallets WHERE user_id=$1 FOR UPDATE', [userId]);
         if (!wallet.rowCount || Number(wallet.rows[0].balance_cents) < cost) throw appError('INSUFFICIENT_BALANCE', { code: 'INSUFFICIENT_BALANCE', http: 402, expose: true });
         before = Number(wallet.rows[0].balance_cents);
         after = before - cost;
       }
-      const created = await client.query(`INSERT INTO vehicle_queries(user_id,plate,product_id,status,credits_cost,price_cents,charge_source,provider,idempotency_key,payment_order_id,request_metadata)
-        VALUES($1,$2,$3,'PROCESSING',0,$4,$5,$6,$7,$8,$9::jsonb) RETURNING id`, [req.user!.id, parsed.data.plate, parsed.data.productId, cost, chargeSource, provider.name, idempotencyKey, parsed.data.paymentOrderId ?? null, JSON.stringify({ requestId: requestId(req), negotiated: pricing.negotiated })]);
+      // Trava contra consulta repetida: a mesma placa/produto do mesmo cliente não entra de novo enquanto a anterior ainda processa
+      // (clique duplo, duas abas, "tentar de novo" antes da hora). Sem isso, cada repetição gastaria uma consulta paga na Credify.
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`vq:${userId}:${input.plate}:${input.productId}:${input.searchType}`]);
+      const inFlight = await client.query(`SELECT 1 FROM vehicle_queries WHERE user_id=$1 AND plate=$2 AND product_id=$3 AND search_type=$4 AND status='PROCESSING' AND created_at > now() - make_interval(mins => $5::int) LIMIT 1`,
+        [userId, input.plate, input.productId, input.searchType, env.QUERY_STUCK_MINUTES]);
+      if (inFlight.rowCount) throw appError('QUERY_IN_PROGRESS', { code: 'QUERY_IN_PROGRESS', http: 409, expose: true });
+      const created = await client.query(`INSERT INTO vehicle_queries(user_id,plate,product_id,status,credits_cost,price_cents,charge_source,provider,idempotency_key,payment_order_id,request_metadata,source,search_type)
+        VALUES($1,$2,$3,'PROCESSING',0,$4,$5,$6,$7,$8,$9::jsonb,$10,$11) RETURNING id`, [userId, input.plate, input.productId, cost, chargeSource, provider.name, idempotencyKey, input.paymentOrderId ?? null, JSON.stringify({ requestId: input.reqId, negotiated: pricing.negotiated }), input.source, input.searchType]);
       queryId = created.rows[0].id as string;
-      if (!parsed.data.paymentOrderId) {
-        await client.query('UPDATE wallets SET balance_cents=$2,updated_at=now() WHERE user_id=$1', [req.user!.id, after]);
+      if (!input.paymentOrderId) {
+        await client.query('UPDATE wallets SET balance_cents=$2,updated_at=now() WHERE user_id=$1', [userId, after]);
         await client.query(`INSERT INTO wallet_transactions(user_id,kind,amount,balance_before,balance_after,amount_cents,balance_before_cents,balance_after_cents,query_id,description,metadata)
-          VALUES($1,'QUERY',0,0,0,$2,$3,$4,$5,$6,$7::jsonb)`, [req.user!.id, -cost, before, after, queryId, `Consulta ${parsed.data.plate}`, JSON.stringify({ productId: parsed.data.productId, negotiated: pricing.negotiated, requestId: requestId(req) })]);
+          VALUES($1,'QUERY',0,0,0,$2,$3,$4,$5,$6,$7::jsonb)`, [userId, -cost, before, after, queryId, `Consulta ${input.plate}`, JSON.stringify({ productId: input.productId, negotiated: pricing.negotiated, requestId: input.reqId })]);
       } else {
         await client.query(`UPDATE query_payment_entitlements SET status='CONSUMED',query_id=$2,consumed_at=now() WHERE id=$1 AND status='READY'`, [entitlementId, queryId]);
       }
     });
+  } catch (error: unknown) {
+    const safe = toSafeQueryError(error);
+    return { status: safe.status, body: { error: safe.code, message: safe.message, refunded: false } };
+  }
 
-    const output = await executeVehicleLookup({ provider, plate: parsed.data.plate, timeoutMs: env.QUERY_REQUEST_TIMEOUT_MS, normalize: normalizeBdrp });
+  /** A fonte pode levar dezenas de segundos (o Veículo Total reúne várias bases). Roda com prazo longo e nunca rejeita: sucesso grava o resultado, falha estorna. */
+  const finish = async (): Promise<{ status: number; body: Record<string, unknown> }> => {
+  const startedAt = Date.now();
+  try {
+    const output = await executeVehicleLookup({ provider, plate: input.plate, searchType: input.searchType, productId: input.productId, sources: sourcesForProduct(input.productId), enrich: ENRICHED_PRODUCTS.has(String(input.productId).toUpperCase()) && input.searchType === 'PLATE' ? (raw) => enrichWithSheet(raw, { fipeHistory: env.ENRICH_FIPE_HISTORY }) : undefined, timeoutMs: env.QUERY_REQUEST_TIMEOUT_MS, normalize: normalizeBdrp });
     const normalized = output.normalized;
     const resultHash = crypto.createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
     await tx(async (client) => {
-      await client.query('INSERT INTO vehicle_query_results(query_id,normalized,raw_response) VALUES($1,$2::jsonb,$3::jsonb)', [queryId, JSON.stringify(normalized), JSON.stringify(env.STORE_RAW_PROVIDER_RESPONSE ? output.raw : { stored: false })]);
-      await client.query(`UPDATE vehicle_queries SET status='SUCCESS',provider_query_id=$2,result_hash=$3,completed_at=now() WHERE id=$1`, [queryId, output.providerQueryId ?? null, resultHash]);
+      // Se o cliente cancelou enquanto a fonte respondia, descarta o resultado (a consulta já foi estornada).
+      const still = await client.query(`SELECT status FROM vehicle_queries WHERE id=$1 FOR UPDATE`, [queryId]);
+      if (still.rows[0]?.status !== 'PROCESSING') throw Object.assign(new Error('QUERY_CANCELLED'), { code: 'QUERY_CANCELLED' });
+      await client.query('INSERT INTO vehicle_query_results(query_id,normalized,raw_response,raw_enc,normalizer_version) VALUES($1,$2::jsonb,$3::jsonb,$4,$5)', [queryId, JSON.stringify(normalized), JSON.stringify({ stored: env.STORE_RAW_PROVIDER_RESPONSE, encrypted: env.STORE_RAW_PROVIDER_RESPONSE }), env.STORE_RAW_PROVIDER_RESPONSE ? encryptRaw(output.raw) : null, NORMALIZER_VERSION]);
+      const execSeconds = ((output.raw as { data?: { RESPOSTA?: { VEICULOSBDRP?: { RETORNO?: { TEMPOEXECUCAO?: unknown } } } } } | undefined)?.data?.RESPOSTA?.VEICULOSBDRP?.RETORNO?.TEMPOEXECUCAO) ?? null;
+      await client.query(`UPDATE vehicle_queries SET status='SUCCESS',provider_query_id=$2,result_hash=$3,completed_at=now(),request_metadata=coalesce(request_metadata,'{}'::jsonb) || $4::jsonb WHERE id=$1`, [queryId, output.providerQueryId ?? null, resultHash, JSON.stringify({ timing: output.timing, credifyExecSeconds: execSeconds })]);
     });
-    await audit(req.user!.id, 'VEHICLE_QUERY', 'VEHICLE_QUERY', queryId, { plate: parsed.data.plate, productId: parsed.data.productId, provider: provider.name, requestId: requestId(req) });
-    const completed = await pool.query(`SELECT q.id,q.plate,q.product_id,q.status,q.credits_cost,q.price_cents,q.charge_source,q.provider,q.created_at,q.completed_at,p.name AS product_name,r.normalized
+    const savedAt = Date.now();
+    const auditing = audit(userId, 'VEHICLE_QUERY', 'VEHICLE_QUERY', queryId, { plate: input.plate, productId: input.productId, provider: provider.name, requestId: input.reqId });
+    const completed = await pool.query(`SELECT q.id,q.plate,q.search_type,q.product_id,q.status,q.credits_cost,q.price_cents,q.charge_source,q.provider,q.created_at,q.completed_at,p.name AS product_name,r.normalized
       FROM vehicle_queries q JOIN query_products p ON p.id=q.product_id JOIN vehicle_query_results r ON r.query_id=q.id WHERE q.id=$1`, [queryId]);
     const completedRow = completed.rows[0] as QueryRow & Record<string, unknown>;
-    try {
-      await saveGenericVehicleReport(String(queryId), req.user!.id, String(completedRow.product_id), String(completedRow.product_name), completedRow.normalized as NormalizedVehicle, String(completedRow.provider));
-    } catch (error) {
-      log('error', 'generic_report_snapshot_failed', { queryId, error: error instanceof Error ? error.message : 'unknown' });
-    }
-    res.status(201).json(serializeQuery(completedRow));
+    await auditing;
+    log('info', 'query_completed', { queryId, productId: input.productId, provider: provider.name, ms: Date.now() - startedAt, ...output.timing, saveMs: Date.now() - savedAt });
+    return { status: 201, body: serializeQuery(completedRow) };
   } catch (error: unknown) {
     if (queryId) {
-      await tx(async (client) => {
-        const query = await client.query('SELECT status FROM vehicle_queries WHERE id=$1 FOR UPDATE', [queryId]);
-        if (!query.rowCount || query.rows[0].status !== 'PROCESSING') return;
-        if (chargeSource === 'DIRECT_PAYMENT') {
-          if (entitlementId) await client.query(`UPDATE query_payment_entitlements SET status='READY',query_id=NULL,consumed_at=NULL WHERE id=$1 AND status='CONSUMED'`, [entitlementId]);
-        } else {
-          const wallet = await client.query('SELECT balance_cents FROM wallets WHERE user_id=$1 FOR UPDATE', [req.user!.id]);
-          const before = Number(wallet.rows[0]?.balance_cents ?? 0);
-          const after = before + cost;
-          await client.query('UPDATE wallets SET balance_cents=$2,updated_at=now() WHERE user_id=$1', [req.user!.id, after]);
-          await client.query(`INSERT INTO wallet_transactions(user_id,kind,amount,balance_before,balance_after,amount_cents,balance_before_cents,balance_after_cents,query_id,description,metadata)
-            VALUES($1,'REFUND',0,0,0,$2,$3,$4,$5,$6,$7::jsonb)`, [req.user!.id, cost, before, after, queryId, `Estorno consulta ${parsed.data.plate}`, JSON.stringify({ requestId: requestId(req) })]);
-        }
-        const errorCode = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'PROVIDER_ERROR';
-        await client.query(`UPDATE vehicle_queries SET status='REFUNDED',error_code=$2,error_message=$3,completed_at=now() WHERE id=$1`, [queryId, errorCode, 'Consulta não concluída; cobrança estornada.']);
-      });
-      await audit(req.user!.id, 'QUERY_REFUND', 'VEHICLE_QUERY', queryId, { plate: parsed.data.plate, requestId: requestId(req) });
+      const errorCode = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'PROVIDER_ERROR';
+      const detail = error instanceof Error ? ((error as Error & { detail?: string }).detail ?? (error.message && error.message !== errorCode ? error.message : undefined)) : undefined;
+      await pool.query(`UPDATE vehicle_queries SET request_metadata=coalesce(request_metadata,'{}'::jsonb) || $2::jsonb WHERE id=$1`, [queryId, JSON.stringify({ failedAfterMs: Date.now() - startedAt })]).catch(() => undefined);
+      const refundedNow = await tx((client) => refundProcessingQuery(client, queryId!, errorCode, detail));
+      if (refundedNow) {
+        log('warn', 'query_failed_refunded', { queryId, errorCode, detail: detail?.slice(0, 200) });
+        await audit(userId, 'QUERY_REFUND', 'VEHICLE_QUERY', queryId, { plate: input.plate, requestId: input.reqId });
+      }
     }
     const safe = toSafeQueryError(error);
-    res.status(safe.status).json({ error: safe.code, message: safe.message, refunded: Boolean(queryId) && chargeSource !== 'DIRECT_PAYMENT' });
+    return { status: safe.status, body: { error: safe.code, message: safe.message, refunded: Boolean(queryId) && chargeSource !== 'DIRECT_PAYMENT' } };
   }
+  };
+
+  // Responde na hora se a fonte for rápida; se passar do tempo de espera, devolve 202 e a tela acompanha pela consulta (o trabalho segue no servidor).
+  const work = finish();
+  const quick = await Promise.race([work, new Promise<null>((resolve) => { setTimeout(() => resolve(null), env.QUERY_SYNC_WAIT_MS).unref(); })]);
+  if (quick) return quick;
+  log('info', 'query_running_in_background', { queryId, productId: input.productId });
+  return { status: 202, body: { id: queryId, status: 'PROCESSING', plate: input.plate, productId: input.productId } };
+}
+
+/** A tela de Nova consulta chama ao abrir: deixa o login da fonte pronto para a consulta não gastar tempo entrando. */
+api.post('/queries/warm', auth, requirePermission('QUERY_VEHICLE'), (_req, res) => {
+  try { const p = getProvider() as { warm?: () => Promise<void> }; void p.warm?.().catch(() => undefined); } catch { /* fonte não configurada */ }
+  res.status(204).end();
+});
+
+api.post('/queries', auth, requirePermission('QUERY_VEHICLE'), asyncRoute(async (req, res) => {
+  assertSiteOpenFor(req.user!.email);
+  await assertCustomerProfile(req.user!.id, req.user!.role, { productId: (req.body as { productId?: unknown } | undefined)?.productId });
+  const parsed = requestQuerySchema.safeParse(req.body);
+  if (!parsed.success) { const code = searchErrorCode(req.body); throw appError(code, { code, http: 400, expose: true }); }
+  const idempotencyKeyHeader = req.headers['idempotency-key'];
+  const idempotencyKey = typeof idempotencyKeyHeader === 'string' && /^[a-zA-Z0-9_-]{12,128}$/.test(idempotencyKeyHeader) ? idempotencyKeyHeader : null;
+  // Consulta paga com saldo: precisa de aceite vigente (ou das duas caixas marcadas agora). Consulta já paga no checkout aceitou lá.
+  if (!parsed.data.paymentOrderId) await requireLegalAcceptanceForQuery(req.user!.id, { acceptContract: parsed.data.acceptContract, acceptPrivacy: parsed.data.acceptPrivacy }, acceptEvidence(req));
+  const out = await runVehicleQuery({ userId: req.user!.id, plate: parsed.data.plate, searchType: parsed.data.searchType, productId: parsed.data.productId, paymentOrderId: parsed.data.paymentOrderId, idempotencyKey, reqId: requestId(req), source: 'WEB' });
+  res.status(out.status).json(out.body);
 }));
 
-api.get('/queries', auth, requirePermission('VIEW_HISTORY'), asyncRoute(async (req, res) => {
-  const plate = typeof req.query.plate === 'string' ? req.query.plate.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7) : '';
-  const status = typeof req.query.status === 'string' && ['PROCESSING', 'SUCCESS', 'FAILED', 'REFUNDED'].includes(req.query.status) ? req.query.status : null;
-  const results = await pool.query(`SELECT q.id,q.plate,q.product_id,q.status,q.credits_cost,q.price_cents,q.charge_source,q.provider,q.created_at,q.completed_at,p.name AS product_name,r.normalized
+/** API pública v1 para integradores: chaves geradas pelo cliente em /app/api; mesma cobrança, auditoria e relatório do app. */
+api.use('/account/api-keys', apiKeysRouter);
+const v1 = express.Router();
+v1.use(requirePublicApiEnabled, apiKeyAuth, apiKeyRateLimit);
+v1.get('/balance', asyncRoute(async (req, res) => {
+  const wallet = await pool.query('SELECT balance_cents FROM wallets WHERE user_id=$1', [req.user!.id]);
+  res.json({ object: 'balance', balanceCents: Number(wallet.rows[0]?.balance_cents ?? 0), currency: 'BRL' });
+}));
+v1.get('/products', asyncRoute(async (req, res) => {
+  const products = await pool.query(`SELECT p.id,p.name,p.description,p.is_free,p.commercial_status,
+      CASE WHEN p.is_free THEN 0 ELSE COALESCE(orgp.price_cents,p.price_cents) END AS effective_price_cents
+    FROM query_products p
+    LEFT JOIN LATERAL (
+      SELECT qp.price_cents FROM organization_members m JOIN organizations o ON o.id=m.organization_id AND o.active=true
+      JOIN organization_query_prices qp ON qp.organization_id=o.id AND qp.product_id=p.id AND qp.active=true
+        AND (qp.starts_at IS NULL OR qp.starts_at <= now()) AND (qp.ends_at IS NULL OR qp.ends_at > now())
+      WHERE m.user_id=$1 ORDER BY o.created_at LIMIT 1
+    ) orgp ON true
+    WHERE p.active=true AND p.commercial_status <> 'HIDDEN' ORDER BY p.display_order,p.price_cents`, [req.user!.id]);
+  const available = env.DATA_PROVIDER !== 'disabled';
+  res.json({ object: 'list', data: products.rows.map((p) => ({ id: p.id, name: p.name, description: p.description, priceCents: Number(p.effective_price_cents ?? 0), currency: 'BRL', free: Boolean(p.is_free), available: Boolean(p.is_free) || (available && p.commercial_status === 'ACTIVE'), sections: sectionsForProduct(String(p.id)) })) });
+}));
+const v1QuerySchema = z.object({ plate: z.string().trim().max(40).optional(), chassis: z.string().trim().max(40).optional(), renavam: z.string().trim().max(40).optional(), product: z.string().trim().regex(/^[A-Z][A-Z0-9_]{1,39}$/) }).strict()
+  .transform((value, ctx) => {
+    const given = (['plate', 'chassis', 'renavam'] as const).filter((k) => value[k] !== undefined);
+    const type: SearchType | undefined = given.length === 1 ? ({ plate: 'PLATE', chassis: 'CHASSIS', renavam: 'RENAVAM' } as const)[given[0]!] : undefined;
+    const found = type ? resolveSearchInput({ searchType: type, searchValue: value[given[0]!] }) : null;
+    if (!found) { ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'INVALID_SEARCH' }); return z.NEVER; }
+    return { product: value.product, plate: found.value, searchType: found.type };
+  });
+function v1Query(body: Record<string, any>) {
+  return {
+    object: 'vehicle_query', id: body.id, plate: body.plate, product: body.productId, productName: body.productName, status: body.status,
+    priceCents: body.priceCents, verificationCode: body.verificationCode, createdAt: body.createdAt, completedAt: body.completedAt,
+    idempotent: body.idempotent === true ? true : undefined, result: body.result
+  };
+}
+v1.post('/vehicles', asyncRoute(async (req, res) => {
+  assertSiteOpenFor(req.user!.email);
+  const parsed = v1QuerySchema.safeParse(req.body);
+  if (!parsed.success) throw appError('INVALID_REQUEST', { code: 'INVALID_REQUEST', http: 400, expose: true });
+  const key = req.headers['idempotency-key'];
+  const idempotencyKey = typeof key === 'string' && /^[a-zA-Z0-9_-]{12,128}$/.test(key) ? key : null;
+  if (typeof key === 'string' && !idempotencyKey) throw appError('INVALID_IDEMPOTENCY_KEY', { code: 'INVALID_IDEMPOTENCY_KEY', http: 400, expose: true });
+  const out = await runVehicleQuery({ userId: req.user!.id, plate: parsed.data.plate, searchType: parsed.data.searchType, productId: parsed.data.product, idempotencyKey, reqId: requestId(req), source: 'API' });
+  res.status(out.status).json(out.status < 300 ? v1Query(out.body) : out.body);
+}));
+v1.get('/vehicles/:id', asyncRoute(async (req, res) => {
+  const query = await pool.query(`SELECT q.id,q.plate,q.search_type,q.product_id,q.status,q.credits_cost,q.price_cents,q.charge_source,q.provider,q.created_at,q.completed_at,p.name AS product_name,r.normalized
     FROM vehicle_queries q JOIN query_products p ON p.id=q.product_id LEFT JOIN vehicle_query_results r ON r.query_id=q.id
-    WHERE q.user_id=$1 AND ($2='' OR q.plate LIKE $2 || '%') AND ($3::text IS NULL OR q.status=$3)
-    ORDER BY q.created_at DESC LIMIT 100`, [req.user!.id, plate, status]);
-  res.json(results.rows.map((row) => serializeQuery(row as QueryRow & Record<string, unknown>)));
+    WHERE q.id=$1 AND q.user_id=$2 AND q.source='API'`, [req.params.id, req.user!.id]);
+  if (!query.rowCount) throw appError('QUERY_NOT_FOUND', { code: 'QUERY_NOT_FOUND', http: 404, expose: true });
+  await audit(req.user!.id, 'API_VIEW_QUERY', 'VEHICLE_QUERY', String(req.params.id), { requestId: requestId(req) });
+  res.json(v1Query(serializeQuery(query.rows[0] as QueryRow & Record<string, unknown>)));
+}));
+v1.get('/vehicles/:id/pdf', asyncRoute(async (req, res) => {
+  const { report, meta } = await vehicleReportForQuery(String(req.params.id), req.user!.id);
+  await audit(req.user!.id, 'API_EXPORT_QUERY_PDF', 'VEHICLE_QUERY', String(req.params.id), { requestId: requestId(req) });
+  res.type('application/pdf').send(await renderVehiclePdf(report, meta));
+}));
+api.use('/v1', v1);
+
+/** Filtros comuns de lista do cliente: período (dias ou datas), situação, tipo e placa. */
+const periodFields = {
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  days: z.coerce.number().int().refine((v) => [7, 30, 60, 90, 180, 365].includes(v)).optional()
+};
+const queryListSchema = z.object({
+  ...periodFields,
+  plate: z.string().max(24).optional(),
+  status: z.enum(['PROCESSING', 'SUCCESS', 'FAILED', 'REFUNDED']).optional(),
+  product: z.string().regex(/^[A-Z][A-Z0-9_]{1,39}$/).optional(),
+  archived: z.enum(['1', '0']).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(100),
+  offset: z.coerce.number().int().min(0).max(100000).default(0)
+});
+/** Monta "AND ..." de período para a coluna dada. Colunas vêm do código, nunca da requisição. */
+function periodSql(col: string, f: { from?: string; to?: string; days?: number }, values: unknown[]): string {
+  const parts: string[] = [];
+  if (f.days) { values.push(f.days); parts.push(`${col} >= now() - ($${values.length}::int * interval '1 day')`); }
+  if (f.from) { values.push(f.from); parts.push(`${col} >= $${values.length}::date`); }
+  if (f.to) { values.push(f.to); parts.push(`${col} < $${values.length}::date + 1`); }
+  return parts.length ? ` AND ${parts.join(' AND ')}` : '';
+}
+async function listClientQueries(userId: string, raw: unknown, max?: number) {
+  const parsed = queryListSchema.safeParse(raw);
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const f = parsed.data;
+  const plate = (f.plate ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 17);
+  const values: unknown[] = [userId, plate, f.status ?? null, f.product ?? null, f.archived === '1'];
+  const period = periodSql('q.created_at', f, values);
+  values.push(max ?? f.limit, max ? 0 : f.offset);
+  const results = await pool.query(`SELECT q.id,q.plate,q.search_type,q.product_id,q.status,q.credits_cost,q.price_cents,q.charge_source,q.provider,q.created_at,q.completed_at,p.name AS product_name,r.normalized
+    FROM vehicle_queries q JOIN query_products p ON p.id=q.product_id LEFT JOIN vehicle_query_results r ON r.query_id=q.id
+    WHERE q.user_id=$1 AND ($2='' OR q.plate LIKE '%' || $2 || '%') AND ($3::text IS NULL OR q.status=$3) AND ($4::text IS NULL OR q.product_id=$4) AND (($5::boolean AND q.archived_at IS NOT NULL) OR (NOT $5::boolean AND q.archived_at IS NULL))${period}
+    ORDER BY q.created_at DESC LIMIT $${values.length - 1} OFFSET $${values.length}`, values);
+  return results.rows;
+}
+
+api.get('/queries', auth, requirePermission('VIEW_HISTORY'), asyncRoute(async (req, res) => {
+  const rows = await listClientQueries(req.user!.id, req.query);
+  res.json(rows.map((row) => serializeQuery(row as QueryRow & Record<string, unknown>)));
+}));
+
+/** Arquiva (esconde do histórico) todas as consultas estornadas ou com falha. Nada é apagado: dinheiro e auditoria ficam guardados. */
+api.post('/queries/archive-failed', auth, requirePermission('VIEW_HISTORY'), asyncRoute(async (req, res) => {
+  const r = await pool.query(`UPDATE vehicle_queries SET archived_at=now() WHERE user_id=$1 AND status IN ('REFUNDED','FAILED') AND archived_at IS NULL`, [req.user!.id]);
+  res.json({ archived: r.rowCount ?? 0 });
+}));
+
+/** Arquiva uma consulta (qualquer uma que não esteja em andamento). */
+api.post('/queries/:id/archive', auth, requirePermission('VIEW_HISTORY'), asyncRoute(async (req, res) => {
+  const id = z.string().uuid().safeParse(req.params.id);
+  if (!id.success) throw appError('QUERY_NOT_FOUND', { code: 'QUERY_NOT_FOUND', http: 404, expose: true });
+  const own = await pool.query('SELECT status FROM vehicle_queries WHERE id=$1 AND user_id=$2', [id.data, req.user!.id]);
+  if (!own.rowCount) throw appError('QUERY_NOT_FOUND', { code: 'QUERY_NOT_FOUND', http: 404, expose: true });
+  if (own.rows[0].status === 'PROCESSING') throw appError('QUERY_IN_PROGRESS', { code: 'QUERY_IN_PROGRESS', http: 409, expose: true });
+  await pool.query('UPDATE vehicle_queries SET archived_at=COALESCE(archived_at,now()) WHERE id=$1 AND user_id=$2', [id.data, req.user!.id]);
+  res.json({ id: id.data, archived: true });
+}));
+
+api.post('/queries/:id/unarchive', auth, requirePermission('VIEW_HISTORY'), asyncRoute(async (req, res) => {
+  const id = z.string().uuid().safeParse(req.params.id);
+  if (!id.success) throw appError('QUERY_NOT_FOUND', { code: 'QUERY_NOT_FOUND', http: 404, expose: true });
+  const r = await pool.query('UPDATE vehicle_queries SET archived_at=NULL WHERE id=$1 AND user_id=$2', [id.data, req.user!.id]);
+  if (!r.rowCount) throw appError('QUERY_NOT_FOUND', { code: 'QUERY_NOT_FOUND', http: 404, expose: true });
+  res.json({ id: id.data, archived: false });
+}));
+
+/** Tipos de consulta que o cliente já fez (para o filtro). */
+api.get('/queries/types', auth, requirePermission('VIEW_HISTORY'), asyncRoute(async (req, res) => {
+  const r = await pool.query(`SELECT p.id,p.name FROM query_products p WHERE p.id IN (SELECT DISTINCT product_id FROM vehicle_queries WHERE user_id=$1) ORDER BY p.display_order,p.name`, [req.user!.id]);
+  res.json(r.rows.map((x) => ({ id: x.id, name: x.name })));
+}));
+
+api.get('/queries.csv', auth, requirePermission('VIEW_HISTORY'), asyncRoute(async (req, res) => {
+  const rows = await listClientQueries(req.user!.id, req.query, 5000);
+  const status: Record<string, string> = { SUCCESS: 'Concluída', PROCESSING: 'Processando', FAILED: 'Falhou', REFUNDED: 'Estornada' };
+  const csv = toCsv(['Data', 'Placa', 'Consulta', 'Situação', 'Valor (R$)', 'Código'],
+    rows.map((r) => [new Date(r.created_at).toISOString().slice(0, 16).replace('T', ' '), r.plate, r.product_name, status[String(r.status)] ?? r.status, (Number(r.price_cents ?? 0) / 100).toFixed(2).replace('.', ','), String(r.id).slice(0, 8).toUpperCase()]));
+  await audit(req.user!.id, 'EXPORT_QUERIES_CSV', 'VEHICLE_QUERY', null, { rows: rows.length, requestId: requestId(req) });
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="consultas.csv"');
+  res.send(csv);
 }));
 
 api.get('/queries/:id', auth, requirePermission('VIEW_HISTORY'), asyncRoute(async (req, res) => {
-  const query = await pool.query(`SELECT q.id,q.plate,q.product_id,q.status,q.credits_cost,q.price_cents,q.charge_source,q.provider,q.created_at,q.completed_at,p.name AS product_name,r.normalized
+  const query = await pool.query(`SELECT q.id,q.plate,q.search_type,q.product_id,q.status,q.credits_cost,q.price_cents,q.charge_source,q.error_code,q.provider,q.created_at,q.completed_at,p.name AS product_name,r.normalized
     FROM vehicle_queries q JOIN query_products p ON p.id=q.product_id LEFT JOIN vehicle_query_results r ON r.query_id=q.id
     WHERE q.id=$1 AND q.user_id=$2`, [req.params.id, req.user!.id]);
   if (!query.rowCount) throw appError('QUERY_NOT_FOUND', { code: 'QUERY_NOT_FOUND', http: 404, expose: true });
@@ -1300,52 +1878,233 @@ api.get('/queries/:id', auth, requirePermission('VIEW_HISTORY'), asyncRoute(asyn
 }));
 
 api.get('/queries/:id/export', auth, requirePermission('VIEW_HISTORY'), asyncRoute(async (req, res) => {
-  const query = await pool.query(`SELECT q.id,q.plate,q.product_id,q.status,q.credits_cost,q.price_cents,q.charge_source,q.provider,q.created_at,q.completed_at,p.name AS product_name,r.normalized
+  const query = await pool.query(`SELECT q.id,q.plate,q.search_type,q.product_id,q.status,q.credits_cost,q.price_cents,q.charge_source,q.provider,q.created_at,q.completed_at,p.name AS product_name,r.normalized
     FROM vehicle_queries q JOIN query_products p ON p.id=q.product_id LEFT JOIN vehicle_query_results r ON r.query_id=q.id
     WHERE q.id=$1 AND q.user_id=$2`, [req.params.id, req.user!.id]);
   if (!query.rowCount) throw appError('QUERY_NOT_FOUND', { code: 'QUERY_NOT_FOUND', http: 404, expose: true });
   await audit(req.user!.id, 'EXPORT_QUERY_JSON', 'VEHICLE_QUERY', String(req.params.id), { requestId: requestId(req) });
-  res.setHeader('Content-Disposition', `attachment; filename="carpivara-${req.params.id}.json"`);
+  res.setHeader('Content-Disposition', `attachment; filename="${BRAND.fileSlug}-${req.params.id}.json"`);
   res.type('application/json').send(JSON.stringify(serializeQuery(query.rows[0] as QueryRow & Record<string, unknown>), null, 2));
 }));
 
+async function vehicleReportForQuery(queryId: string, userId: string) {
+  const load = () => pool.query(`SELECT q.id,q.plate,q.search_type,q.product_id,q.created_at,q.completed_at,q.result_hash,p.name AS product_name,r.normalized
+    FROM vehicle_queries q JOIN query_products p ON p.id=q.product_id JOIN vehicle_query_results r ON r.query_id=q.id
+    WHERE q.id=$1 AND q.user_id=$2 AND q.status='SUCCESS'`, [queryId, userId]);
+  let query = await load();
+  if (!query.rowCount) throw appError('REPORT_NOT_FOUND', { code: 'REPORT_NOT_FOUND', http: 404, expose: true });
+  // Consulta antiga com gravame sem banco/contrato/datas: completa com o /gravame uma única vez (só depois de confirmar que a consulta é do usuário).
+  try { if (await ensureLienDetail(queryId, getProvider())) query = await load(); } catch { /* fonte não configurada: segue com o que já está guardado */ }
+  // Consulta Completa antiga sem FIPE: acrescenta valor e projeção (Tabela FIPE pública, sem custo no provedor).
+  try { if (SHEET_PRODUCTS.includes(String((query.rows[0] as Record<string, unknown>).product_id)) && await ensureFipeEnrichment(queryId)) query = await load(); } catch { /* segue com o que já está guardado */ }
+  const row = query.rows[0] as Record<string, unknown>;
+  const vehicle = row.normalized as NormalizedVehicle | null;
+  if (!vehicle?.v2) throw appError('REPORT_UNAVAILABLE', { code: 'REPORT_UNAVAILABLE', http: 409, expose: true });
+  const scope = scopeForProduct(String(row.product_id), row.created_at as Date);
+  const report = viewReport(vehicle.v2, { audience: 'client', tier: tierForProductCode(String(row.product_id)), sections: scope.sections, template: scope.template });
+  const code = String(row.id).slice(0, 8).toUpperCase();
+  const base = (env.APP_URL ?? env.WEB_ORIGIN).replace(/\/$/, '');
+  const meta: ReportMeta = { productName: String(row.product_name), verificationCode: code, verificationUrl: `${base}/validar/${code}`, consultedAt: new Date(String(row.completed_at ?? row.created_at)), resultHash: row.result_hash ? String(row.result_hash) : null, audience: 'client' };
+  return { report, meta };
+}
+
+api.get('/queries/:id/report', auth, requirePermission('VIEW_HISTORY'), asyncRoute(async (req, res) => {
+  const { report, meta } = await vehicleReportForQuery(String(req.params.id), req.user!.id);
+  await recordFunnelEvent(req.user!.id, req, 'REPORT_OPENED', { queryId: String(req.params.id) });
+  res.json({ report, verificationCode: meta.verificationCode, verificationUrl: meta.verificationUrl, consultedAt: meta.consultedAt, productName: meta.productName });
+}));
+
+const disputeBody = z.object({ field: z.string().trim().max(80).default(''), message: z.string().trim().min(10).max(800) }).strict();
+/** Contestação: a pessoa aponta um dado que parece errado; vira um chamado no Suporte com a placa e o código do relatório. */
+api.post('/queries/:id/report/dispute', auth, requirePermission('VIEW_HISTORY'), asyncRoute(async (req, res) => {
+  const parsed = disputeBody.safeParse(req.body);
+  if (!parsed.success) throw appError('Descreva o que parece errado (mínimo 10 caracteres).', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const { report, meta } = await vehicleReportForQuery(String(req.params.id), req.user!.id);
+  const recent = await pool.query(`SELECT count(*)::int AS n FROM contact_messages WHERE user_id=$1 AND subject LIKE 'Contestação de dado%' AND created_at > now() - interval '1 day'`, [req.user!.id]);
+  if (Number(recent.rows[0].n) >= 5) throw appError('Você já enviou várias contestações hoje. Aguarde o retorno do suporte.', { code: 'TOO_MANY_ATTEMPTS', http: 429, expose: true });
+  const ticket = await createContactTicket(req.user!.id, {
+    name: req.user!.name, email: req.user!.email, category: 'SUPPORT',
+    subject: `Contestação de dado - placa ${report.plate} - código ${meta.verificationCode}`,
+    message: `${parsed.data.field ? `Campo: ${parsed.data.field}\n` : ''}${parsed.data.message}\n\nProduto: ${meta.productName}\nConsultado em: ${meta.consultedAt}`
+  });
+  await recordFunnelEvent(req.user!.id, req, 'REPORT_DISPUTED', { productName: meta.productName });
+  res.status(201).json({ id: ticket.id });
+}));
+
 api.get('/queries/:id/report/pdf', auth, requirePermission('VIEW_HISTORY'), asyncRoute(async (req, res) => {
-  const report = await genericReportForQuery(String(req.params.id), req.user!.id);
-  const branding = await organizationBrandingForUser(req.user!.id);
+  const { report, meta } = await vehicleReportForQuery(String(req.params.id), req.user!.id);
   await audit(req.user!.id, 'EXPORT_QUERY_REPORT_PDF', 'VEHICLE_QUERY', String(req.params.id), { requestId: requestId(req) });
-  res.setHeader('Content-Disposition', `attachment; filename="buscarr-${String(req.params.id).slice(0, 8)}.pdf"`);
-  res.type('application/pdf').send(reportPdf(report, branding));
+  res.setHeader('Content-Disposition', `attachment; filename="${BRAND.fileSlug}-${meta.verificationCode}.pdf"`);
+  res.type('application/pdf').send(await renderVehiclePdf(report, meta));
 }));
 
 api.get('/queries/:id/report/print', auth, requirePermission('VIEW_HISTORY'), asyncRoute(async (req, res) => {
-  const report = await genericReportForQuery(String(req.params.id), req.user!.id);
-  const branding = await organizationBrandingForUser(req.user!.id);
+  const { report, meta } = await vehicleReportForQuery(String(req.params.id), req.user!.id);
   await audit(req.user!.id, 'PRINT_QUERY_REPORT', 'VEHICLE_QUERY', String(req.params.id), { requestId: requestId(req) });
-  res.type('html').send(reportPrintHtml(report, branding));
+  res.type('html').send(renderVehicleHtml(report, meta));
 }));
 
+/**
+ * Dossiê da placa: reúne em um PDF os relatórios das consultas da própria pessoa para aquela placa (o mais recente de cada tipo, até 6),
+ * com uma capa de resumo. Não consulta o provedor de novo e não cobra.
+ */
+const DOSSIER_MAX = 6;
+api.get('/vehicles/:plate/dossier.pdf', auth, requirePermission('VIEW_HISTORY'), asyncRoute(async (req, res) => {
+  const plate = plateSchema.safeParse(req.params.plate);
+  if (!plate.success) throw appError('INVALID_PLATE', { code: 'INVALID_PLATE', http: 400, expose: true });
+  const rows = await pool.query(`SELECT DISTINCT ON (q.product_id) q.id,coalesce(q.completed_at,q.created_at) AS at FROM vehicle_queries q JOIN vehicle_query_results r ON r.query_id=q.id
+    WHERE q.user_id=$1 AND q.plate=$2 AND q.status='SUCCESS' AND r.normalized->'v2' IS NOT NULL ORDER BY q.product_id, coalesce(q.completed_at,q.created_at) DESC`, [req.user!.id, plate.data]);
+  if (!rows.rowCount) throw appError('REPORT_NOT_FOUND', { code: 'REPORT_NOT_FOUND', http: 404, expose: true });
+  const newest = [...rows.rows].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()).slice(0, DOSSIER_MAX);
+  const entries = [];
+  let vehicle = '';
+  for (const r of newest) {
+    const { report, meta } = await vehicleReportForQuery(String(r.id), req.user!.id);
+    if (!vehicle) vehicle = [report.headline.brand, report.headline.model ?? report.headline.fullModel, report.headline.modelYear ?? report.headline.manufactureYear, report.headline.color].filter(Boolean).join(' · ');
+    entries.push({ productName: meta.productName, consultedAt: meta.consultedAt, code: meta.verificationCode, verdict: report.verdict.title, checks: report.advice?.checks ?? [], pdf: await renderVehiclePdf(report, meta) });
+  }
+  const base = (env.APP_URL ?? env.WEB_ORIGIN).replace(/\/$/, '');
+  const pdf = await renderDossierPdf({ plate: plate.data, vehicle, entries, generatedAt: new Date(), validateUrl: `${base}/validar` });
+  await audit(req.user!.id, 'DOSSIER_PDF', 'VEHICLE', null, { plate: plate.data, queries: entries.length, requestId: requestId(req) });
+  res.setHeader('Content-Disposition', `attachment; filename="dossie-${plate.data}.pdf"`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.type('application/pdf').send(pdf);
+}));
+
+/**
+ * Link do vendedor: quem fez a consulta gera um link para o comprador ver o relatório, sem criar conta.
+ * O link expira (até 15 dias), limita as visualizações (100) e pode ser revogado. O comprador não vê dados de pessoas.
+ */
+const SHARE_MAX_ACTIVE = 5;
+const shareBody = z.object({ days: z.coerce.number().int().min(1).max(15).default(7) }).strict();
+async function ownedSuccessfulQuery(queryId: string, userId: string) {
+  const r = await pool.query(`SELECT id FROM vehicle_queries WHERE id=$1 AND user_id=$2 AND status='SUCCESS'`, [queryId, userId]);
+  if (!r.rowCount) throw appError('REPORT_NOT_FOUND', { code: 'REPORT_NOT_FOUND', http: 404, expose: true });
+}
+api.post('/queries/:id/share', auth, requirePermission('VIEW_HISTORY'), asyncRoute(async (req, res) => {
+  const parsed = shareBody.safeParse(req.body ?? {});
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const queryId = String(req.params.id);
+  if (!/^[0-9a-f-]{36}$/i.test(queryId)) throw appError('REPORT_NOT_FOUND', { code: 'REPORT_NOT_FOUND', http: 404, expose: true });
+  await ownedSuccessfulQuery(queryId, req.user!.id);
+  const active = await pool.query(`SELECT count(*)::int AS n FROM secure_links WHERE purpose='REPORT_SHARE' AND resource_type='VEHICLE_QUERY' AND resource_id=$1 AND revoked_at IS NULL AND expires_at > now() AND uses < max_uses`, [queryId]);
+  if (Number(active.rows[0].n) >= SHARE_MAX_ACTIVE) throw appError(`Você já tem ${SHARE_MAX_ACTIVE} links ativos para esta consulta. Revogue um para criar outro.`, { code: 'SHARE_LIMIT', http: 409, expose: true });
+  const link = await createSecureLink({ purpose: 'REPORT_SHARE', resourceType: 'VEHICLE_QUERY', resourceId: queryId, ttlHours: parsed.data.days * 24, maxUses: 100, createdBy: req.user!.id });
+  await audit(req.user!.id, 'REPORT_SHARE_CREATED', 'VEHICLE_QUERY', queryId, { linkId: link.id, days: parsed.data.days, requestId: requestId(req) });
+  await recordFunnelEvent(req.user!.id, req, 'REPORT_SHARED', { days: parsed.data.days });
+  const base = (env.APP_URL ?? env.WEB_ORIGIN).replace(/\/$/, '');
+  // O link da consulta leva o convite de quem enviou: se o comprador se cadastrar a partir dele, fica registrado.
+  const inviteCode = await ensureInviteCode(req.user!.id);
+  res.status(201).json({ id: link.id, url: `${base}/r/${link.token}?convite=${inviteCode}`, expiresAt: link.expiresAt, maxViews: 100 });
+}));
+api.get('/queries/:id/shares', auth, requirePermission('VIEW_HISTORY'), asyncRoute(async (req, res) => {
+  const queryId = String(req.params.id);
+  if (!/^[0-9a-f-]{36}$/i.test(queryId)) throw appError('REPORT_NOT_FOUND', { code: 'REPORT_NOT_FOUND', http: 404, expose: true });
+  await ownedSuccessfulQuery(queryId, req.user!.id);
+  const r = await pool.query(`SELECT id,created_at,expires_at,uses,max_uses FROM secure_links WHERE purpose='REPORT_SHARE' AND resource_type='VEHICLE_QUERY' AND resource_id=$1 AND revoked_at IS NULL AND expires_at > now() AND uses < max_uses ORDER BY created_at DESC`, [queryId]);
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.json(r.rows.map((x) => ({ id: x.id, createdAt: x.created_at, expiresAt: x.expires_at, views: Number(x.uses), maxViews: Number(x.max_uses) })));
+}));
+api.delete('/queries/:id/shares/:linkId', auth, requirePermission('VIEW_HISTORY'), asyncRoute(async (req, res) => {
+  const queryId = String(req.params.id);
+  const linkId = String(req.params.linkId);
+  if (!/^[0-9a-f-]{36}$/i.test(queryId) || !/^[0-9a-f-]{36}$/i.test(linkId)) throw appError('REPORT_NOT_FOUND', { code: 'REPORT_NOT_FOUND', http: 404, expose: true });
+  await ownedSuccessfulQuery(queryId, req.user!.id);
+  const r = await pool.query(`UPDATE secure_links SET revoked_at=now() WHERE id=$1 AND purpose='REPORT_SHARE' AND resource_type='VEHICLE_QUERY' AND resource_id=$2 AND revoked_at IS NULL`, [linkId, queryId]);
+  if (!r.rowCount) throw appError('REPORT_NOT_FOUND', { code: 'REPORT_NOT_FOUND', http: 404, expose: true });
+  await audit(req.user!.id, 'REPORT_SHARE_REVOKED', 'VEHICLE_QUERY', queryId, { linkId, requestId: requestId(req) });
+  res.json({ revoked: true });
+}));
+
+const adCheckBody = z.object({
+  priceCents: z.coerce.number().int().min(100).max(2_000_000_000).optional(),
+  model: z.string().trim().max(80).optional(),
+  color: z.string().trim().max(30).optional(),
+  year: z.coerce.number().int().min(1950).max(2100).optional()
+}).strict();
+/** Conferir anúncio: compara preço, modelo, cor e ano do anúncio com o registro e com a FIPE da consulta. */
+api.post('/queries/:id/ad-check', auth, requirePermission('VIEW_HISTORY'), asyncRoute(async (req, res) => {
+  const parsed = adCheckBody.safeParse(req.body ?? {});
+  if (!parsed.success || !Object.values(parsed.data).some((v) => v !== undefined && v !== '')) throw appError('Informe o preço, o modelo, a cor ou o ano do anúncio.', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const { report } = await vehicleReportForQuery(String(req.params.id), req.user!.id);
+  await recordFunnelEvent(req.user!.id, req, 'AD_CHECKED', {});
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.json(checkAd(report, parsed.data));
+}));
+
+const sharedReportLimit = rateLimit({ windowMs: 10 * 60_000, limit: 60, standardHeaders: true, legacyHeaders: false, skip: () => env.NODE_ENV === 'test' });
+/** Monta o relatório de uma consulta para o link compartilhado (sem cobrar nem consultar o provedor). */
+async function sharedReportFor(token: string) {
+  const link = await consumeSecureLink(token, ['REPORT_SHARE']);
+  if (!link) throw appError('Este link expirou ou foi cancelado. Peça um novo link a quem enviou.', { code: 'SHARE_LINK_INVALID', http: 404, expose: true });
+  const q = await pool.query(`SELECT q.id,q.product_id,q.created_at,q.completed_at,q.result_hash,p.name AS product_name,r.normalized
+    FROM vehicle_queries q JOIN query_products p ON p.id=q.product_id JOIN vehicle_query_results r ON r.query_id=q.id WHERE q.id=$1 AND q.status='SUCCESS'`, [link.resource_id]);
+  if (!q.rowCount) throw appError('Este link expirou ou foi cancelado. Peça um novo link a quem enviou.', { code: 'SHARE_LINK_INVALID', http: 404, expose: true });
+  const row = q.rows[0] as Record<string, unknown>;
+  const vehicle = row.normalized as NormalizedVehicle | null;
+  if (!vehicle?.v2) throw appError('REPORT_UNAVAILABLE', { code: 'REPORT_UNAVAILABLE', http: 409, expose: true });
+  const scope = scopeForProduct(String(row.product_id), row.created_at as Date);
+  const report = viewReport(vehicle.v2, { audience: 'client', tier: tierForProductCode(String(row.product_id)), sections: scope.sections, template: scope.template });
+  const code = String(row.id).slice(0, 8).toUpperCase();
+  const base = (env.APP_URL ?? env.WEB_ORIGIN).replace(/\/$/, '');
+  const meta: ReportMeta = { productName: String(row.product_name), verificationCode: code, verificationUrl: `${base}/validar/${code}`, consultedAt: new Date(String(row.completed_at ?? row.created_at)), resultHash: row.result_hash ? String(row.result_hash) : null, audience: 'client' };
+  return { report, meta, link };
+}
+api.get('/shared-report/:token', sharedReportLimit, asyncRoute(async (req, res) => {
+  const { report, meta, link } = await sharedReportFor(String(req.params.token));
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  res.json({ report, verificationCode: meta.verificationCode, verificationUrl: meta.verificationUrl, consultedAt: meta.consultedAt, productName: meta.productName, shared: { expiresAt: link.expires_at } });
+}));
+api.get('/shared-report/:token/pdf', sharedReportLimit, asyncRoute(async (req, res) => {
+  const { report, meta } = await sharedReportFor(String(req.params.token));
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  res.setHeader('Content-Disposition', `attachment; filename="${BRAND.fileSlug}-${meta.verificationCode}.pdf"`);
+  res.type('application/pdf').send(await renderVehiclePdf(report, meta));
+}));
+
+const walletListSchema = z.object({ ...periodFields, limit: z.coerce.number().int().min(1).max(200).default(100), offset: z.coerce.number().int().min(0).max(100000).default(0) });
+async function listWalletTransactions(userId: string, raw: unknown, max?: number) {
+  const parsed = walletListSchema.safeParse(raw);
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const values: unknown[] = [userId];
+  const period = periodSql('created_at', parsed.data, values);
+  values.push(max ?? parsed.data.limit, max ? 0 : parsed.data.offset);
+  const r = await pool.query(`SELECT id,kind,amount_cents,balance_before_cents,balance_after_cents,description,created_at FROM wallet_transactions WHERE user_id=$1${period} ORDER BY created_at DESC LIMIT $${values.length - 1} OFFSET $${values.length}`, values);
+  return r.rows;
+}
 api.get('/wallet/transactions', auth, asyncRoute(async (req, res) => {
-  const transactions = await pool.query('SELECT id,kind,amount_cents,balance_before_cents,balance_after_cents,description,created_at FROM wallet_transactions WHERE user_id=$1 ORDER BY created_at DESC LIMIT 100', [req.user!.id]);
-  res.json(transactions.rows.map((row) => ({ id: row.id, kind: row.kind, amountCents: Number(row.amount_cents ?? 0), balanceBeforeCents: Number(row.balance_before_cents ?? 0), balanceAfterCents: Number(row.balance_after_cents ?? 0), description: row.description, createdAt: row.created_at })));
+  const rows = await listWalletTransactions(req.user!.id, req.query);
+  res.json(rows.map((row) => ({ id: row.id, kind: row.kind, amountCents: Number(row.amount_cents ?? 0), balanceBeforeCents: Number(row.balance_before_cents ?? 0), balanceAfterCents: Number(row.balance_after_cents ?? 0), description: row.description, createdAt: row.created_at })));
+}));
+api.get('/wallet/transactions.csv', auth, asyncRoute(async (req, res) => {
+  const rows = await listWalletTransactions(req.user!.id, req.query, 5000);
+  const money = (c: unknown) => (Number(c ?? 0) / 100).toFixed(2).replace('.', ',');
+  const csv = toCsv(['Data', 'Descrição', 'Valor (R$)', 'Saldo (R$)'], rows.map((r) => [new Date(r.created_at).toISOString().slice(0, 16).replace('T', ' '), r.description ?? r.kind, money(r.amount_cents), money(r.balance_after_cents)]));
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="extrato.csv"');
+  res.send(csv);
 }));
 
 api.post('/payments/sandbox', auth, requirePermission('BUY_CREDITS'), asyncRoute(async (req, res) => {
   if (!env.SANDBOX_CREDIT_PURCHASE_ENABLED) throw appError('SANDBOX_DISABLED', { code: 'SANDBOX_DISABLED', http: 403, expose: true });
   const parsed = sandboxCreditSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const { amountCents } = parsed.data;
   const result = await tx(async (client) => {
     const payment = await client.query(`INSERT INTO payments(user_id,provider,status,amount_cents,credits,paid_at,metadata)
-      VALUES($1,'sandbox','PAID',$2,$3,now(),$4::jsonb) RETURNING id`, [req.user!.id, parsed.data.credits * 100, parsed.data.credits, JSON.stringify({ requestId: requestId(req) })]);
-    const wallet = await client.query('SELECT balance FROM wallets WHERE user_id=$1 FOR UPDATE', [req.user!.id]);
-    const before = Number(wallet.rows[0].balance);
-    const after = before + parsed.data.credits;
-    await client.query('UPDATE wallets SET balance=$2,updated_at=now() WHERE user_id=$1', [req.user!.id, after]);
-    await client.query(`INSERT INTO wallet_transactions(user_id,kind,amount,balance_before,balance_after,payment_id,description,metadata)
-      VALUES($1,'PURCHASE',$2,$3,$4,$5,$6,$7::jsonb)`, [req.user!.id, parsed.data.credits, before, after, payment.rows[0].id, 'Saldo pré-pago de teste', JSON.stringify({ requestId: requestId(req) })]);
-    return { paymentId: payment.rows[0].id, balance: after };
+      VALUES($1,'sandbox','PAID',$2,0,now(),$3::jsonb) RETURNING id`, [req.user!.id, amountCents, JSON.stringify({ requestId: requestId(req), sandbox: true })]);
+    const wallet = await client.query('SELECT balance_cents FROM wallets WHERE user_id=$1 FOR UPDATE', [req.user!.id]);
+    const before = Number(wallet.rows[0]?.balance_cents ?? 0);
+    const after = before + amountCents;
+    await client.query('UPDATE wallets SET balance_cents=$2,updated_at=now() WHERE user_id=$1', [req.user!.id, after]);
+    await client.query(`INSERT INTO wallet_transactions(user_id,kind,amount,balance_before,balance_after,amount_cents,balance_before_cents,balance_after_cents,payment_id,description,metadata)
+      VALUES($1,'PURCHASE',0,0,0,$2,$3,$4,$5,$6,$7::jsonb)`, [req.user!.id, amountCents, before, after, payment.rows[0].id, 'Saldo de teste (sandbox)', JSON.stringify({ requestId: requestId(req), sandbox: true })]);
+    return { paymentId: payment.rows[0].id, balanceCents: after };
   });
-  await audit(req.user!.id, 'SANDBOX_CREDIT_PURCHASE', 'PAYMENT', result.paymentId, { credits: parsed.data.credits, requestId: requestId(req) });
-  res.status(201).json({ status: 'PAID', credits: parsed.data.credits, ...result });
+  await audit(req.user!.id, 'SANDBOX_CREDIT_PURCHASE', 'PAYMENT', result.paymentId, { amountCents, requestId: requestId(req) });
+  res.status(201).json({ status: 'PAID', amountCents, ...result });
 }));
 
 api.get('/credit-packages', auth, requirePermission('BUY_CREDITS'), asyncRoute(async (req, res) => {
@@ -1358,26 +2117,53 @@ api.get('/credit-packages', auth, requirePermission('BUY_CREDITS'), asyncRoute(a
 }));
 
 api.get('/payments/orders', auth, requirePermission('BUY_CREDITS'), asyncRoute(async (req, res) => {
-  const orders = await pool.query(`SELECT id,status,amount_cents,purchase_type,product_id,query_plate,provider,checkout_url,created_at,paid_at
-    FROM payment_orders WHERE user_id=$1 ORDER BY created_at DESC LIMIT 100`, [req.user!.id]);
-  res.json(orders.rows.map((item) => ({ id: item.id, status: item.status, amountCents: Number(item.amount_cents ?? 0), purchaseType: item.purchase_type, productId: item.product_id, plate: item.query_plate, provider: item.provider, checkoutUrl: item.checkout_url, createdAt: item.created_at, paidAt: item.paid_at })));
+  const parsed = walletListSchema.safeParse(req.query);
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const values: unknown[] = [req.user!.id];
+  const period = periodSql('created_at', parsed.data, values);
+  values.push(parsed.data.limit, parsed.data.offset);
+  const orders = await pool.query(`SELECT id,status,amount_cents,purchase_type,product_id,query_plate,query_search_type,provider,checkout_url,created_at,paid_at
+    FROM payment_orders WHERE user_id=$1${period} ORDER BY created_at DESC LIMIT $${values.length - 1} OFFSET $${values.length}`, values);
+  res.json(orders.rows.map((item) => ({ id: item.id, status: item.status, amountCents: Number(item.amount_cents ?? 0), purchaseType: item.purchase_type, productId: item.product_id, plate: item.query_plate, searchType: item.query_search_type, provider: item.provider, checkoutUrl: item.checkout_url, createdAt: item.created_at, paidAt: item.paid_at })));
 }));
 
-api.post('/payments/quote', auth, requirePermission('BUY_CREDITS'), asyncRoute(async (req, res) => {
-  const parsed = checkoutSchema.safeParse(req.body);
+/** Notas fiscais emitidas para o cliente logado. */
+api.get('/account/fiscal-documents', auth, asyncRoute(async (req, res) => {
+  const parsed = walletListSchema.safeParse(req.query);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
-  const quote = await tx(async (client) => {
-    const pack = await client.query('SELECT id,slug,name,credits,price_cents FROM credit_packages WHERE slug=$1 AND active=true', [parsed.data.packageSlug]);
+  const values: unknown[] = [req.user!.id];
+  const period = periodSql('coalesce(issued_at,created_at)', parsed.data, values);
+  values.push(parsed.data.limit, parsed.data.offset);
+  const docs = await pool.query(`SELECT id,kind,number,series,issued_at,amount_cents,description,verification_code,pdf_url,xml_url
+    FROM fiscal_documents WHERE user_id=$1 AND status='ISSUED'${period} ORDER BY coalesce(issued_at,created_at) DESC LIMIT $${values.length - 1} OFFSET $${values.length}`, values);
+  const https = (u: unknown) => (typeof u === 'string' && u.startsWith('https://') ? u : null);
+  res.json(docs.rows.map((d) => ({ id: d.id, kind: d.kind, number: d.number, series: d.series, issuedAt: d.issued_at, amountCents: Number(d.amount_cents), description: d.description, verificationCode: d.verification_code, pdfUrl: https(d.pdf_url), xmlUrl: https(d.xml_url) })));
+}));
+
+/** Confere no Mercado Pago os pedidos em aberto da pessoa. A tela da carteira chama ao voltar do checkout, sem depender do webhook. */
+const lastUserSync = new Map<string, number>();
+api.post('/payments/sync', auth, requirePermission('BUY_CREDITS'), asyncRoute(async (req, res) => {
+  const now = Date.now();
+  if (now - (lastUserSync.get(req.user!.id) ?? 0) < 3000) { res.json({ checked: 0, paid: 0, throttled: true }); return; }
+  lastUserSync.set(req.user!.id, now);
+  if (lastUserSync.size > 5000) lastUserSync.clear();
+  try { res.json(await syncUserOpenOrders(req.user!.id)); }
+  catch { throw appError('PAYMENT_PROVIDER_REQUEST_FAILED', { code: 'PAYMENT_PROVIDER_REQUEST_FAILED', http: 502, expose: true }); }
+}));
+
+async function computePackageQuote(userId: string, data: z.infer<typeof checkoutSchema>) {
+  return tx(async (client) => {
+    const pack = await client.query('SELECT id,slug,name,credits,price_cents FROM credit_packages WHERE slug=$1 AND active=true', [data.packageSlug]);
     if (!pack.rowCount) throw appError('CREDIT_PACKAGE_NOT_FOUND', { code: 'CREDIT_PACKAGE_NOT_FOUND', http: 404, expose: true });
     const packRow = pack.rows[0] as Record<string, unknown>;
     const basePriceCents = Number(packRow.price_cents);
-    const pricing = await effectivePackagePrice(client, req.user!.id, String(packRow.id), basePriceCents);
+    const pricing = await effectivePackagePrice(client, userId, String(packRow.id), basePriceCents);
     const subtotalCents = pricing.priceCents;
     let discountCents = 0;
     let couponCode: string | null = null;
-    if (parsed.data.couponCode) {
+    if (data.couponCode) {
       const coupon = await client.query(`SELECT id,code,discount_type,discount_value,max_redemptions,redeemed_count,active,starts_at,expires_at
-        FROM coupons WHERE upper(code)=upper($1) FOR SHARE`, [parsed.data.couponCode]);
+        FROM coupons WHERE upper(code)=upper($1) FOR SHARE`, [data.couponCode]);
       if (!coupon.rowCount) throw appError('COUPON_INVALID', { code: 'COUPON_INVALID', http: 400, expose: true });
       const couponRow = coupon.rows[0] as Record<string, unknown>;
       const reservations = await client.query(`SELECT count(*)::int AS reserved_count FROM coupon_redemptions WHERE coupon_id=$1 AND status='RESERVED'`, [couponRow.id]);
@@ -1388,17 +2174,63 @@ api.post('/payments/quote', auth, requirePermission('BUY_CREDITS'), asyncRoute(a
       discountCents = calculateCouponDiscount(subtotalCents, String(couponRow.discount_type) as 'PERCENT' | 'FIXED', Number(couponRow.discount_value));
       if (discountCents >= subtotalCents) throw appError('COUPON_ZERO_TOTAL_UNSUPPORTED', { code: 'COUPON_ZERO_TOTAL_UNSUPPORTED', http: 400, expose: true });
     }
-    return { packageSlug: String(packRow.slug), packageName: String(packRow.name), credits: Number(packRow.credits), couponCode, affiliateCode: parsed.data.affiliateCode ?? null, basePriceCents, negotiated: pricing.negotiated, subtotalCents, discountCents, amountCents: Math.max(0, subtotalCents - discountCents) };
+    return { packageSlug: String(packRow.slug), packageName: String(packRow.name), credits: Number(packRow.credits), couponCode, affiliateCode: data.affiliateCode ?? null, basePriceCents, negotiated: pricing.negotiated, subtotalCents, discountCents, amountCents: Math.max(0, subtotalCents - discountCents) };
   });
+}
+
+async function computeQueryQuote(userId: string, data: z.infer<typeof queryCheckoutSchema>) {
+  return tx(async (client) => {
+    const product = await client.query('SELECT id,name,description,price_cents,is_free FROM query_products WHERE id=$1 AND active=true', [data.productId]);
+    if (!product.rowCount) throw appError('PRODUCT_NOT_FOUND', { code: 'PRODUCT_NOT_FOUND', http: 404, expose: true });
+    const productRow = product.rows[0] as Record<string, unknown>;
+    const pricing = await effectiveQueryPrice(client, userId, String(productRow.id), Number(productRow.price_cents ?? 0), Boolean(productRow.is_free));
+    if (pricing.priceCents <= 0) throw appError('QUERY_NOT_CHARGEABLE', { code: 'QUERY_NOT_CHARGEABLE', http: 400, expose: true });
+    let discountCents = 0;
+    let couponCode: string | null = null;
+    if (data.couponCode) {
+      const coupon = await client.query(`SELECT id,code,discount_type,discount_value,max_redemptions,redeemed_count,active,starts_at,expires_at
+        FROM coupons WHERE upper(code)=upper($1) FOR SHARE`, [data.couponCode]);
+      if (!coupon.rowCount) throw appError('COUPON_INVALID', { code: 'COUPON_INVALID', http: 400, expose: true });
+      const couponRow = coupon.rows[0] as Record<string, unknown>;
+      const reservations = await client.query(`SELECT count(*)::int AS reserved_count FROM coupon_redemptions WHERE coupon_id=$1 AND status='RESERVED'`, [couponRow.id]);
+      if (!couponWindowIsOpen({ active: Boolean(couponRow.active), startsAt: couponRow.starts_at as string | Date | null, expiresAt: couponRow.expires_at as string | Date | null }) || !couponHasCapacity(couponRow.max_redemptions == null ? null : Number(couponRow.max_redemptions), Number(couponRow.redeemed_count), Number(reservations.rows[0]?.reserved_count ?? 0))) {
+        throw appError('COUPON_UNAVAILABLE', { code: 'COUPON_UNAVAILABLE', http: 400, expose: true });
+      }
+      couponCode = String(couponRow.code);
+      discountCents = queryAmountAfterCoupon(pricing.priceCents, String(couponRow.discount_type) as 'PERCENT' | 'FIXED', Number(couponRow.discount_value)).discountCents;
+      if (discountCents >= pricing.priceCents && await freeCouponAlreadyUsed(client, userId, String(couponRow.id))) throw appError('COUPON_ALREADY_USED', { code: 'COUPON_ALREADY_USED', http: 400, expose: true });
+    }
+    if (data.affiliateCode) {
+      const affiliate = await client.query('SELECT id,user_id FROM affiliates WHERE upper(code)=upper($1) AND active=true', [data.affiliateCode]);
+      if (!affiliate.rowCount || (affiliate.rows[0].user_id && String(affiliate.rows[0].user_id) === userId)) throw appError('AFFILIATE_INVALID', { code: 'AFFILIATE_INVALID', http: 400, expose: true });
+    }
+    const totals = { subtotalCents: pricing.priceCents, discountCents, amountCents: Math.max(0, pricing.priceCents - discountCents) };
+    return { purchaseType: 'QUERY', productId: String(productRow.id), productName: String(productRow.name), plate: data.plate, basePriceCents: Number(productRow.price_cents ?? 0), negotiated: pricing.negotiated, couponCode, affiliateCode: data.affiliateCode ?? null, ...totals };
+  });
+}
+
+api.post('/payments/quote', auth, requirePermission('BUY_CREDITS'), asyncRoute(async (req, res) => {
+  const parsed = checkoutSchema.safeParse(req.body);
+  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const quote = await computePackageQuote(req.user!.id, parsed.data);
   res.json({ ...quote, paymentProviderConfigured: getPaymentProvider().isConfigured(), usageCountChangesOnlyAfterPaid: true });
 }));
 
+/** Clique duplo / duas abas: enquanto o checkout anterior da mesma pessoa ainda está sendo criado (até 45 s), não abre outro. */
+async function guardCheckoutInFlight(client: PoolClient, userId: string): Promise<void> {
+  await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`checkout:${userId}`]);
+  const open = await client.query(`SELECT 1 FROM payment_orders WHERE user_id=$1 AND status='CREATED' AND created_at > now() - interval '45 seconds' LIMIT 1`, [userId]);
+  if (open.rowCount) throw appError('CHECKOUT_IN_PROGRESS', { code: 'CHECKOUT_IN_PROGRESS', http: 409, expose: true });
+}
+
 api.post('/payments/checkout', auth, requirePermission('BUY_CREDITS'), asyncRoute(async (req, res) => {
+  assertSiteOpenFor(req.user!.email);
   const parsed = checkoutSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
   const paymentProvider = getPaymentProvider();
   if (!paymentProvider.isConfigured()) throw appError('PAYMENT_PROVIDER_NOT_CONFIGURED', { code: 'PAYMENT_PROVIDER_NOT_CONFIGURED', http: 503, expose: true });
   const draft = await tx(async (client) => {
+    await guardCheckoutInFlight(client, req.user!.id);
     const pack = await client.query('SELECT id,slug,name,description,credits,price_cents FROM credit_packages WHERE slug=$1 AND active=true', [parsed.data.packageSlug]);
     if (!pack.rowCount) throw appError('CREDIT_PACKAGE_NOT_FOUND', { code: 'CREDIT_PACKAGE_NOT_FOUND', http: 404, expose: true });
     const profile = await client.query(`SELECT u.name,u.email,p.cpf_cnpj,p.phone FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id WHERE u.id=$1 AND u.active=true`, [req.user!.id]);
@@ -1434,9 +2266,14 @@ api.post('/payments/checkout', auth, requirePermission('BUY_CREDITS'), asyncRout
       if (affiliate.rowCount && (!affiliate.rows[0].user_id || String(affiliate.rows[0].user_id) !== req.user!.id)) { affiliateId = String(affiliate.rows[0].id); affiliateCommissionBps = Number(affiliate.rows[0].commission_bps); }
     }
     const amountCents = Math.max(0, subtotalCents - discountCents);
-    const externalReference = `carpivara_${crypto.randomUUID()}`;
+    if (!parsed.data.contractId && parsed.data.acceptContract && !parsed.data.acceptPrivacy) throw appError('PURCHASE_PRIVACY_REQUIRED', { code: 'PURCHASE_PRIVACY_REQUIRED', http: 400, expose: true });
+    const contractId = !parsed.data.contractId && parsed.data.acceptContract
+      ? await acceptContractAtCheckout(client, { userId: req.user!.id, kind: 'PACKAGE', itemKey: String(packRow.slug), item: { kind: 'PACKAGE', name: String(packRow.name), description: '', creditsCents: Number(packRow.credits) * 100 }, amounts: { subtotalCents, discountCents, amountCents, couponCode }, evidence: acceptEvidence(req) })
+      : await claimContractForOrder(client, req.user!.id, parsed.data.contractId, { kind: 'PACKAGE', itemKey: String(packRow.slug), amountCents });
+    const externalReference = `${BRAND.prefix}_${crypto.randomUUID()}`;
     const order = await client.query(`INSERT INTO payment_orders(user_id,package_id,status,subtotal_cents,amount_cents,credits,provider,external_reference,discount_cents,coupon_id,affiliate_id,affiliate_commission_bps)
       VALUES($1,$2,'CREATED',$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`, [req.user!.id, packRow.id, subtotalCents, amountCents, packRow.credits, paymentProvider.name, externalReference, discountCents, couponId, affiliateId, affiliateCommissionBps]);
+    await linkContractToOrder(client, contractId, String(order.rows[0].id));
     if (couponId) await client.query(`INSERT INTO coupon_redemptions(coupon_id,payment_order_id,status) VALUES($1,$2,'RESERVED')`, [couponId, order.rows[0].id]);
     return { orderId: order.rows[0].id as string, externalReference, pack: packRow, customer: profile.rows[0] as Record<string, unknown>, subtotalCents, discountCents, amountCents, couponCode, couponId, affiliateId };
   });
@@ -1454,49 +2291,40 @@ api.post('/payments/checkout', auth, requirePermission('BUY_CREDITS'), asyncRout
   } catch (error) {
     await pool.query(`UPDATE payment_orders SET status='FAILED',updated_at=now() WHERE id=$1`, [draft.orderId]);
     await pool.query(`UPDATE coupon_redemptions SET status='RELEASED',updated_at=now() WHERE payment_order_id=$1 AND status='RESERVED'`, [draft.orderId]);
+    await reopenContractForOrder(draft.orderId);
     throw error;
   }
 }));
 
+/** Tipos de busca atendidos pela fonte de dados atual (a tela marca os demais como "em breve"). */
+api.get('/search-types', asyncRoute(async (_req, res) => {
+  let provider: VehicleDataProvider | null = null;
+  try { provider = getProvider(); } catch { provider = null; }
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ types: SEARCH_TYPES.map((id) => ({ id, label: SEARCH_LABELS[id], available: provider ? providerSupports(provider, id) : false })) });
+}));
+
+/** Cupom que zera o total é de uso único por cliente: cada cliente resgata o mesmo cupom grátis uma vez. */
+async function freeCouponAlreadyUsed(client: PoolClient, userId: string, couponId: string): Promise<boolean> {
+  const used = await client.query(`SELECT 1 FROM payment_orders WHERE user_id=$1 AND coupon_id=$2 AND amount_cents=0 AND status='PAID' LIMIT 1`, [userId, couponId]);
+  return Boolean(used.rowCount);
+}
+
 api.post('/payments/query/quote', auth, requirePermission('BUY_CREDITS'), asyncRoute(async (req, res) => {
   const parsed = queryCheckoutSchema.safeParse(req.body);
-  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
-  const quote = await tx(async (client) => {
-    const product = await client.query('SELECT id,name,description,price_cents,is_free FROM query_products WHERE id=$1 AND active=true', [parsed.data.productId]);
-    if (!product.rowCount) throw appError('PRODUCT_NOT_FOUND', { code: 'PRODUCT_NOT_FOUND', http: 404, expose: true });
-    const productRow = product.rows[0] as Record<string, unknown>;
-    const pricing = await effectiveQueryPrice(client, req.user!.id, String(productRow.id), Number(productRow.price_cents ?? 0), Boolean(productRow.is_free));
-    if (pricing.priceCents <= 0) throw appError('QUERY_NOT_CHARGEABLE', { code: 'QUERY_NOT_CHARGEABLE', http: 400, expose: true });
-    let discountCents = 0;
-    let couponCode: string | null = null;
-    if (parsed.data.couponCode) {
-      const coupon = await client.query(`SELECT id,code,discount_type,discount_value,max_redemptions,redeemed_count,active,starts_at,expires_at
-        FROM coupons WHERE upper(code)=upper($1) FOR SHARE`, [parsed.data.couponCode]);
-      if (!coupon.rowCount) throw appError('COUPON_INVALID', { code: 'COUPON_INVALID', http: 400, expose: true });
-      const couponRow = coupon.rows[0] as Record<string, unknown>;
-      const reservations = await client.query(`SELECT count(*)::int AS reserved_count FROM coupon_redemptions WHERE coupon_id=$1 AND status='RESERVED'`, [couponRow.id]);
-      if (!couponWindowIsOpen({ active: Boolean(couponRow.active), startsAt: couponRow.starts_at as string | Date | null, expiresAt: couponRow.expires_at as string | Date | null }) || !couponHasCapacity(couponRow.max_redemptions == null ? null : Number(couponRow.max_redemptions), Number(couponRow.redeemed_count), Number(reservations.rows[0]?.reserved_count ?? 0))) {
-        throw appError('COUPON_UNAVAILABLE', { code: 'COUPON_UNAVAILABLE', http: 400, expose: true });
-      }
-      couponCode = String(couponRow.code);
-      discountCents = queryAmountAfterCoupon(pricing.priceCents, String(couponRow.discount_type) as 'PERCENT' | 'FIXED', Number(couponRow.discount_value)).discountCents;
-    }
-    if (parsed.data.affiliateCode) {
-      const affiliate = await client.query('SELECT id,user_id FROM affiliates WHERE upper(code)=upper($1) AND active=true', [parsed.data.affiliateCode]);
-      if (!affiliate.rowCount || (affiliate.rows[0].user_id && String(affiliate.rows[0].user_id) === req.user!.id)) throw appError('AFFILIATE_INVALID', { code: 'AFFILIATE_INVALID', http: 400, expose: true });
-    }
-    const totals = { subtotalCents: pricing.priceCents, discountCents, amountCents: Math.max(0, pricing.priceCents - discountCents) };
-    return { purchaseType: 'QUERY', productId: String(productRow.id), productName: String(productRow.name), plate: parsed.data.plate, basePriceCents: Number(productRow.price_cents ?? 0), negotiated: pricing.negotiated, couponCode, affiliateCode: parsed.data.affiliateCode ?? null, ...totals };
-  });
-  res.json({ ...quote, paymentProviderConfigured: getPaymentProvider().isConfigured(), usageCountChangesOnlyAfterPaid: true });
+  if (!parsed.success) { const code = searchErrorCode(req.body); throw appError(code, { code, http: 400, expose: true }); }
+  const quote = await computeQueryQuote(req.user!.id, parsed.data);
+  res.json({ ...quote, free: quote.amountCents === 0, paymentProviderConfigured: quote.amountCents === 0 || getPaymentProvider().isConfigured(), usageCountChangesOnlyAfterPaid: true });
 }));
 
 api.post('/payments/query/checkout', auth, requirePermission('BUY_CREDITS'), asyncRoute(async (req, res) => {
+  assertSiteOpenFor(req.user!.email);
+  await assertCustomerProfile(req.user!.id, req.user!.role, { productId: (req.body as { productId?: unknown } | undefined)?.productId });
   const parsed = queryCheckoutSchema.safeParse(req.body);
-  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  if (!parsed.success) { const code = searchErrorCode(req.body); throw appError(code, { code, http: 400, expose: true }); }
   const paymentProvider = getPaymentProvider();
-  if (!paymentProvider.isConfigured()) throw appError('PAYMENT_PROVIDER_NOT_CONFIGURED', { code: 'PAYMENT_PROVIDER_NOT_CONFIGURED', http: 503, expose: true });
   const draft = await tx(async (client) => {
+    await guardCheckoutInFlight(client, req.user!.id);
     const product = await client.query('SELECT id,name,description,price_cents,is_free FROM query_products WHERE id=$1 AND active=true', [parsed.data.productId]);
     if (!product.rowCount) throw appError('PRODUCT_NOT_FOUND', { code: 'PRODUCT_NOT_FOUND', http: 404, expose: true });
     const productRow = product.rows[0] as Record<string, unknown>;
@@ -1519,8 +2347,11 @@ api.post('/payments/query/checkout', auth, requirePermission('BUY_CREDITS'), asy
       couponId = String(couponRow.id);
       couponCode = String(couponRow.code);
       discountCents = calculateCouponDiscount(pricing.priceCents, String(couponRow.discount_type) as 'PERCENT' | 'FIXED', Number(couponRow.discount_value));
-      if (discountCents >= pricing.priceCents) throw appError('COUPON_ZERO_TOTAL_UNSUPPORTED', { code: 'COUPON_ZERO_TOTAL_UNSUPPORTED', http: 400, expose: true });
+      if (discountCents >= pricing.priceCents && await freeCouponAlreadyUsed(client, req.user!.id, couponId)) throw appError('COUPON_ALREADY_USED', { code: 'COUPON_ALREADY_USED', http: 400, expose: true });
     }
+    // Total zerado por cupom: a consulta fica liberada na hora, sem passar pelo meio de pagamento.
+    const free = Boolean(couponId) && discountCents >= pricing.priceCents;
+    if (!free && !paymentProvider.isConfigured()) throw appError('PAYMENT_PROVIDER_NOT_CONFIGURED', { code: 'PAYMENT_PROVIDER_NOT_CONFIGURED', http: 503, expose: true });
     let affiliateId: string | null = null;
     let affiliateCommissionBps = 0;
     if (parsed.data.affiliateCode) {
@@ -1532,20 +2363,37 @@ api.post('/payments/query/checkout', auth, requirePermission('BUY_CREDITS'), asy
       const affiliate = await client.query(`SELECT a.id,a.user_id,a.commission_bps FROM users u JOIN affiliates a ON a.id=u.affiliate_id AND a.active=true WHERE u.id=$1`, [req.user!.id]);
       if (affiliate.rowCount && (!affiliate.rows[0].user_id || String(affiliate.rows[0].user_id) !== req.user!.id)) { affiliateId = String(affiliate.rows[0].id); affiliateCommissionBps = Number(affiliate.rows[0].commission_bps); }
     }
-    const amountCents = Math.max(1, pricing.priceCents - discountCents);
-    const externalReference = `buscarr_query_${crypto.randomUUID()}`;
-    const order = await client.query(`INSERT INTO payment_orders(user_id,package_id,purchase_type,product_id,query_plate,status,subtotal_cents,amount_cents,credits,provider,external_reference,discount_cents,coupon_id,affiliate_id,affiliate_commission_bps)
-      VALUES($1,NULL,'QUERY',$2,$3,'CREATED',$4,$5,0,$6,$7,$8,$9,$10,$11) RETURNING id`, [req.user!.id, productRow.id, parsed.data.plate, pricing.priceCents, amountCents, paymentProvider.name, externalReference, discountCents, couponId, affiliateId, affiliateCommissionBps]);
-    if (couponId) await client.query(`INSERT INTO coupon_redemptions(coupon_id,payment_order_id,status) VALUES($1,$2,'RESERVED')`, [couponId, order.rows[0].id]);
-    return { orderId: String(order.rows[0].id), externalReference, product: productRow, customer: profile.rows[0] as Record<string, unknown>, subtotalCents: pricing.priceCents, discountCents, amountCents, couponCode };
+    if (free) { affiliateId = null; affiliateCommissionBps = 0; } // sem receita, sem comissão
+    const amountCents = free ? 0 : Math.max(1, pricing.priceCents - discountCents);
+    if (!parsed.data.contractId && parsed.data.acceptContract && !parsed.data.acceptPrivacy) throw appError('PURCHASE_PRIVACY_REQUIRED', { code: 'PURCHASE_PRIVACY_REQUIRED', http: 400, expose: true });
+    const contractId = !parsed.data.contractId && parsed.data.acceptContract
+      ? await acceptContractAtCheckout(client, { userId: req.user!.id, kind: 'QUERY', itemKey: String(productRow.id), item: { kind: 'QUERY', name: String(productRow.name), description: String(productRow.description ?? ''), creditsCents: 0 }, amounts: { subtotalCents: pricing.priceCents, discountCents, amountCents, couponCode }, evidence: acceptEvidence(req) })
+      : await claimContractForOrder(client, req.user!.id, parsed.data.contractId, { kind: 'QUERY', itemKey: String(productRow.id), amountCents });
+    const externalReference = `${BRAND.prefix}_query_${crypto.randomUUID()}`;
+    const order = await client.query(`INSERT INTO payment_orders(user_id,package_id,purchase_type,product_id,query_plate,query_search_type,status,subtotal_cents,amount_cents,credits,provider,external_reference,discount_cents,coupon_id,affiliate_id,affiliate_commission_bps,paid_at)
+      VALUES($1,NULL,'QUERY',$2,$3,$14,$12,$4,$5,0,$6,$7,$8,$9,$10,$11,CASE WHEN $13::boolean THEN now() END) RETURNING id`, [req.user!.id, productRow.id, parsed.data.plate, pricing.priceCents, amountCents, free ? 'coupon' : paymentProvider.name, externalReference, discountCents, couponId, affiliateId, affiliateCommissionBps, free ? 'PAID' : 'CREATED', free, parsed.data.searchType]);
+    await linkContractToOrder(client, contractId, String(order.rows[0].id));
+    if (free) {
+      await client.query(`INSERT INTO coupon_redemptions(coupon_id,payment_order_id,status,redeemed_at) VALUES($1,$2,'REDEEMED',now())`, [couponId, order.rows[0].id]);
+      await client.query('UPDATE coupons SET redeemed_count=redeemed_count+1,updated_at=now() WHERE id=$1', [couponId]);
+      await client.query(`INSERT INTO query_payment_entitlements(order_id,user_id,product_id,plate,search_type,status) VALUES($1,$2,$3,$4,$5,'READY')`, [order.rows[0].id, req.user!.id, productRow.id, parsed.data.plate, parsed.data.searchType]);
+    } else if (couponId) await client.query(`INSERT INTO coupon_redemptions(coupon_id,payment_order_id,status) VALUES($1,$2,'RESERVED')`, [couponId, order.rows[0].id]);
+    return { orderId: String(order.rows[0].id), externalReference, product: productRow, customer: profile.rows[0] as Record<string, unknown>, subtotalCents: pricing.priceCents, discountCents, amountCents, couponCode, free };
   });
+  if (draft.free) {
+    void sendPurchaseReceipt(draft.orderId);
+    await audit(req.user!.id, 'CREATE_FREE_QUERY_ORDER', 'PAYMENT_ORDER', draft.orderId, { productId: parsed.data.productId, plate: parsed.data.plate, coupon: draft.couponCode, requestId: requestId(req) });
+    res.status(201).json({ orderId: draft.orderId, checkoutUrl: null, free: true, provider: 'coupon', purchaseType: 'QUERY', productId: parsed.data.productId, plate: parsed.data.plate, searchType: parsed.data.searchType, subtotalCents: draft.subtotalCents, discountCents: draft.discountCents, amountCents: 0, couponCode: draft.couponCode });
+    return;
+  }
   try {
     const checkout = await paymentProvider.createCheckout({
       orderId: draft.externalReference,
       itemName: String(draft.product.name),
       itemDescription: String(draft.product.description),
       amountCents: draft.amountCents,
-      customer: { name: String(draft.customer.name), email: String(draft.customer.email), cpfCnpj: draft.customer.cpf_cnpj ? String(draft.customer.cpf_cnpj) : undefined, phone: draft.customer.phone ? String(draft.customer.phone) : undefined }
+      customer: { name: String(draft.customer.name), email: String(draft.customer.email), cpfCnpj: draft.customer.cpf_cnpj ? String(draft.customer.cpf_cnpj) : undefined, phone: draft.customer.phone ? String(draft.customer.phone) : undefined },
+      returnQueryOrderId: draft.orderId
     });
     await pool.query(`UPDATE payment_orders SET status='CHECKOUT_ACTIVE',provider_checkout_id=$2,checkout_url=$3,updated_at=now() WHERE id=$1`, [draft.orderId, checkout.id, checkout.link]);
     await audit(req.user!.id, 'CREATE_QUERY_CHECKOUT', 'PAYMENT_ORDER', draft.orderId, { productId: parsed.data.productId, plate: parsed.data.plate, amountCents: draft.amountCents, requestId: requestId(req) });
@@ -1553,17 +2401,41 @@ api.post('/payments/query/checkout', auth, requirePermission('BUY_CREDITS'), asy
   } catch (error) {
     await pool.query(`UPDATE payment_orders SET status='FAILED',updated_at=now() WHERE id=$1`, [draft.orderId]);
     await pool.query(`UPDATE coupon_redemptions SET status='RELEASED',updated_at=now() WHERE payment_order_id=$1 AND status='RESERVED'`, [draft.orderId]);
+    await reopenContractForOrder(draft.orderId);
     throw error;
   }
 }));
 
+/** Cancela as consultas em andamento do cliente (usado pela tela "Consultando…", que ainda não conhece o id). */
+api.post('/queries/cancel-processing', auth, requirePermission('QUERY_VEHICLE'), asyncRoute(async (req, res) => {
+  const cancelled = await cancelAllProcessing(req.user!.id);
+  res.json({ cancelled });
+}));
+
+/** Cancela uma consulta em andamento do próprio cliente (estorno imediato do saldo ou do direito pago). */
+api.post('/queries/:id/cancel', auth, requirePermission('QUERY_VEHICLE'), asyncRoute(async (req, res) => {
+  const id = z.string().uuid().safeParse(req.params.id);
+  if (!id.success) throw appError('QUERY_NOT_FOUND', { code: 'QUERY_NOT_FOUND', http: 404, expose: true });
+  const out = await cancelProcessingQuery(req.user!.id, id.data);
+  await audit(req.user!.id, 'QUERY_CANCELLED', 'VEHICLE_QUERY', id.data, { requestId: requestId(req) });
+  res.json({ id: id.data, ...out, cancelled: true });
+}));
+
+/** Cancela uma consulta já paga e ainda não usada; o estorno do pagamento é pedido ao provedor. */
+api.post('/payments/query/:id/cancel', auth, requirePermission('BUY_CREDITS'), asyncRoute(async (req, res) => {
+  const id = z.string().uuid().safeParse(req.params.id);
+  if (!id.success) throw appError('PAYMENT_ORDER_NOT_FOUND', { code: 'PAYMENT_ORDER_NOT_FOUND', http: 404, expose: true });
+  const out = await cancelPaidQuery(req.user!.id, id.data);
+  res.status(out.status === 'REFUND_REQUESTED' ? 202 : 200).json({ orderId: id.data, ...out });
+}));
+
 api.get('/payments/query/:id', auth, requirePermission('BUY_CREDITS'), asyncRoute(async (req, res) => {
-  const order = await pool.query(`SELECT o.id,o.status,o.purchase_type,o.product_id,o.query_plate,o.amount_cents,e.status AS entitlement_status
+  const order = await pool.query(`SELECT o.id,o.status,o.purchase_type,o.product_id,o.query_plate,o.query_search_type,o.amount_cents,e.status AS entitlement_status,e.query_id AS entitlement_query_id
     FROM payment_orders o LEFT JOIN query_payment_entitlements e ON e.order_id=o.id
     WHERE o.id=$1 AND o.user_id=$2 AND o.purchase_type='QUERY'`, [req.params.id, req.user!.id]);
   if (!order.rowCount) throw appError('PAYMENT_ORDER_NOT_FOUND', { code: 'PAYMENT_ORDER_NOT_FOUND', http: 404, expose: true });
   const row = order.rows[0] as Record<string, unknown>;
-  res.json({ orderId: String(row.id), status: String(row.status), purchaseType: 'QUERY', productId: String(row.product_id), plate: String(row.query_plate), amountCents: Number(row.amount_cents ?? 0), entitlementStatus: row.entitlement_status ? String(row.entitlement_status) : null });
+  res.json({ orderId: String(row.id), status: String(row.status), purchaseType: 'QUERY', productId: String(row.product_id), plate: String(row.query_plate), searchType: String(row.query_search_type ?? 'PLATE'), amountCents: Number(row.amount_cents ?? 0), entitlementStatus: row.entitlement_status ? String(row.entitlement_status) : null, queryId: row.entitlement_query_id ? String(row.entitlement_query_id) : null });
 }));
 
 async function processPaymentWebhook(providerName: PaymentProviderName, req: Request, res: Response): Promise<void> {
@@ -1573,6 +2445,11 @@ async function processPaymentWebhook(providerName: PaymentProviderName, req: Req
   if (!provider.isValidWebhookSignature({ headers: req.headers, rawBody: rawRequest.rawBody, query: req.query as Record<string, unknown> })) {
     throw appError('PAYMENT_WEBHOOK_UNAUTHORIZED', { code: 'PAYMENT_WEBHOOK_UNAUTHORIZED', http: 401, expose: false });
   }
+  if (providerName === 'mercadopago') {
+    // Avisos de outros assuntos (ex.: merchant_order) não são pagamentos: confirma recebimento e ignora, sem erro para o provedor insistir.
+    const topic = String((req.body as { type?: unknown } | undefined)?.type ?? req.query.type ?? req.query.topic ?? 'payment');
+    if (topic !== 'payment') { res.status(200).json({ received: true, ignored: true }); return; }
+  }
   const parsed = provider.parseWebhookEvent(req.body, req.query as Record<string, unknown>);
   if (!parsed || (providerName === 'mercadopago' && !parsed.externalPaymentId)) {
     throw appError('PAYMENT_WEBHOOK_INVALID', { code: 'PAYMENT_WEBHOOK_INVALID', http: 400, expose: false });
@@ -1580,11 +2457,17 @@ async function processPaymentWebhook(providerName: PaymentProviderName, req: Req
 
   let reference = parsed.externalReference;
   let rawStatus = parsed.rawStatus;
+  let paymentType: string | null = null;
+  let feeCents: number | null = null;
+  let netCents: number | null = null;
   if (provider.fetchPaymentStatus && parsed.externalPaymentId) {
     const payment = await provider.fetchPaymentStatus(parsed.externalPaymentId);
     if (!payment) throw appError('PAYMENT_PROVIDER_REQUEST_FAILED', { code: 'PAYMENT_PROVIDER_REQUEST_FAILED', http: 502, expose: false });
     reference ??= payment.externalReference ?? null;
     rawStatus = payment.status;
+    paymentType = payment.paymentType ?? null;
+    feeCents = payment.feeCents ?? null;
+    netCents = payment.netCents ?? null;
   }
 
   const event = req.body as Record<string, unknown>;
@@ -1597,66 +2480,17 @@ async function processPaymentWebhook(providerName: PaymentProviderName, req: Req
     throw appError('PAYMENT_WEBHOOK_INVALID', { code: 'PAYMENT_WEBHOOK_INVALID', http: 400, expose: false });
   }
 
-  let duplicate = false;
-  await tx(async (client) => {
-    const inserted = await client.query(`INSERT INTO payment_webhook_events(provider,provider_event_id,event_type,payload)
-      VALUES($1,$2,$3,$4::jsonb) ON CONFLICT(provider,provider_event_id) DO NOTHING RETURNING id`, [providerName, eventId, eventType, JSON.stringify({ id: eventId, event: eventType, reference, externalId: parsed.externalPaymentId })]);
-    if (!inserted.rowCount) { duplicate = true; return; }
-    const order = reference
-      ? await client.query('SELECT * FROM payment_orders WHERE external_reference=$1 FOR UPDATE', [reference])
-      : await client.query('SELECT * FROM payment_orders WHERE provider_checkout_id=$1 FOR UPDATE', [parsed.externalPaymentId]);
-    if (!order.rowCount) {
-      await client.query('UPDATE payment_webhook_events SET processing_error=$2,processed_at=now() WHERE id=$1', [inserted.rows[0].id, 'ORDER_NOT_FOUND']);
-      return;
-    }
-    const current = order.rows[0] as Record<string, unknown>;
-    const orderId = String(current.id);
-    await client.query('UPDATE payment_webhook_events SET order_id=$2 WHERE id=$1', [inserted.rows[0].id, orderId]);
-    const normalizedStatus = String(rawStatus ?? '').toUpperCase();
-    const paid = providerName === 'mercadopago'
-      ? normalizedStatus === 'APPROVED'
-      : normalizedStatus === 'CHECKOUT_PAID' || normalizedStatus === 'PAYMENT_RECEIVED';
-    if (paid && current.status !== 'PAID') {
-      const purchaseType = String(current.purchase_type ?? 'CREDIT_PACKAGE');
-      const credits = Number(current.credits ?? 0);
-      const payment = await client.query(`INSERT INTO payments(user_id,provider,status,amount_cents,credits,external_id,order_id,paid_at,provider_status,metadata)
-        VALUES($1,$2,'PAID',$3,$4,$5,$6,now(),$7,$8::jsonb) RETURNING id`, [current.user_id, providerName, current.amount_cents, purchaseType === 'QUERY' ? 0 : credits, parsed.externalPaymentId, orderId, rawStatus, JSON.stringify({ eventId, purchaseType })]);
-      if (purchaseType === 'QUERY') {
-        if (!current.product_id || !current.query_plate) {
-          await client.query(`UPDATE payment_webhook_events SET processing_error=$2 WHERE id=$1`, [inserted.rows[0].id, 'QUERY_ORDER_MISSING_PRODUCT_OR_PLATE']);
-          throw appError('QUERY_ORDER_INVALID', { code: 'QUERY_ORDER_INVALID', http: 500, expose: false });
-        }
-        await client.query(`INSERT INTO query_payment_entitlements(order_id,user_id,product_id,plate,status)
-          VALUES($1,$2,$3,$4,'READY') ON CONFLICT(order_id) DO UPDATE SET user_id=EXCLUDED.user_id,product_id=EXCLUDED.product_id,plate=EXCLUDED.plate,status='READY'`, [orderId, current.user_id, current.product_id, current.query_plate]);
-      } else {
-        const wallet = await client.query('SELECT balance,balance_cents FROM wallets WHERE user_id=$1 FOR UPDATE', [current.user_id]);
-        const before = Number(wallet.rows[0]?.balance ?? 0); const after = before + credits;
-        const purchasedCents = credits * 100;
-        const beforeCents = Number(wallet.rows[0]?.balance_cents ?? before * 100); const afterCents = beforeCents + purchasedCents;
-        await client.query('INSERT INTO wallets(user_id,balance,balance_cents) VALUES($1,$2,$3) ON CONFLICT(user_id) DO UPDATE SET balance=wallets.balance + EXCLUDED.balance, balance_cents=wallets.balance_cents + EXCLUDED.balance_cents,updated_at=now()', [current.user_id, credits, purchasedCents]);
-        await client.query(`INSERT INTO wallet_transactions(user_id,kind,amount,balance_before,balance_after,amount_cents,balance_before_cents,balance_after_cents,payment_id,description,metadata)
-          VALUES($1,'PURCHASE',$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)`, [current.user_id, credits, before, after, purchasedCents, beforeCents, afterCents, payment.rows[0].id, `Saldo pré-pago legado convertido via ${providerName}`, JSON.stringify({ orderId, eventId, purchaseType, legacyCredits: credits })]);
-      }
-      if (current.coupon_id) {
-        const redemption = await client.query(`UPDATE coupon_redemptions SET status='REDEEMED',redeemed_at=now(),updated_at=now()
-          WHERE payment_order_id=$1 AND status='RESERVED' RETURNING id`, [orderId]);
-        if (redemption.rowCount) await client.query('UPDATE coupons SET redeemed_count=redeemed_count+1,updated_at=now() WHERE id=$1', [current.coupon_id]);
-      }
-      if (current.affiliate_id) {
-        const commissionCents = calculateAffiliateCommission(Number(current.amount_cents), Number(current.affiliate_commission_bps ?? 0));
-        await client.query(`INSERT INTO affiliate_commissions(affiliate_id,payment_id,order_id,amount_cents,status)
-          VALUES($1,$2,$3,$4,'PENDING') ON CONFLICT(payment_id) DO NOTHING`, [current.affiliate_id, payment.rows[0].id, orderId, commissionCents]);
-      }
-      await client.query(`UPDATE payment_orders SET status='PAID',paid_at=now(),updated_at=now() WHERE id=$1`, [orderId]);
-    } else if (!paid && current.status !== 'PAID') {
-      const mapped = normalizedStatus.includes('EXPIRED') ? 'EXPIRED'
-        : normalizedStatus.includes('CANCEL') || normalizedStatus.includes('REJECT') ? 'CANCELLED'
-          : normalizedStatus.includes('REFUND') ? 'REFUNDED' : 'CHECKOUT_ACTIVE';
-      await client.query('UPDATE payment_orders SET status=$2,updated_at=now() WHERE id=$1', [orderId, mapped]);
-      if (['CANCELLED', 'EXPIRED', 'FAILED'].includes(mapped)) await client.query(`UPDATE coupon_redemptions SET status='RELEASED',updated_at=now() WHERE payment_order_id=$1 AND status='RESERVED'`, [orderId]);
-    }
-    await client.query('UPDATE payment_webhook_events SET processed_at=now() WHERE id=$1', [inserted.rows[0].id]);
-  });
+  const settled = await tx((client) => settlePaymentEvent(client, {
+    provider: providerName as 'asaas' | 'mercadopago',
+    eventId,
+    eventType,
+    rawStatus: rawStatus ?? null,
+    externalPaymentId: parsed.externalPaymentId,
+    reference: reference ?? null,
+    paymentType, feeCents, netCents
+  }));
+  if (settled.outcome === 'PAID' && settled.orderId) void sendPurchaseReceipt(settled.orderId);
+  const duplicate = settled.outcome === 'DUPLICATE';
   res.status(200).json({ received: true, duplicate });
 }
 
@@ -1668,7 +2502,7 @@ api.post('/payments/mercadopago/webhook', asyncRoute(async (req, res) => {
   await processPaymentWebhook('mercadopago', req, res);
 }));
 
-api.get('/admin/overview', auth, requirePermission('VIEW_AUDIT'), asyncRoute(async (_req, res) => {
+api.get('/admin/overview', adminAuth, requirePermission('VIEW_DASHBOARD'), asyncRoute(async (_req, res) => {
   const summary = await pool.query(`SELECT
     (SELECT count(*) FROM users WHERE active=true AND deleted_at IS NULL) AS active_users,
     (SELECT count(*) FROM users WHERE active=true AND deleted_at IS NULL AND created_at >= now() - interval '30 days') AS new_users_30d,
@@ -1714,7 +2548,25 @@ api.get('/admin/overview', auth, requirePermission('VIEW_AUDIT'), asyncRoute(asy
   res.json({ ...summary.rows[0], daily: daily.rows });
 }));
 
-api.get('/admin/overview/series', auth, requirePermission('VIEW_AUDIT'), asyncRoute(async (_req, res) => {
+/** Funil completo dos últimos 30 dias: visita -> busca de placa -> cadastro -> checkout -> pagamento -> relatório entregue e aberto -> retorno. */
+api.get('/admin/funnel', adminAuth, requirePermission('VIEW_DASHBOARD'), asyncRoute(async (_req, res) => {
+  const r = await pool.query(`SELECT
+    (SELECT count(DISTINCT session_key) FROM funnel_events WHERE event_type IN ('HOME_PAGE_VIEW','SEO_PAGE_VIEW','FIPE_PAGE_VIEW') AND created_at >= now() - interval '30 days')::int AS visitors,
+    (SELECT count(DISTINCT session_key) FROM funnel_events WHERE event_type='PLATE_CAPTURED' AND created_at >= now() - interval '30 days')::int AS plate_searches,
+    (SELECT count(*) FROM users WHERE created_at >= now() - interval '30 days' AND deleted_at IS NULL)::int AS signups,
+    (SELECT count(*) FROM funnel_events WHERE event_type='CHECKOUT_STARTED' AND created_at >= now() - interval '30 days')::int AS checkouts_started,
+    (SELECT count(*) FROM payments WHERE status='PAID' AND paid_at >= now() - interval '30 days')::int AS payments_paid,
+    (SELECT count(*) FROM vehicle_queries WHERE status='SUCCESS' AND created_at >= now() - interval '30 days')::int AS reports_delivered,
+    (SELECT count(DISTINCT metadata->>'queryId') FROM funnel_events WHERE event_type='REPORT_OPENED' AND created_at >= now() - interval '30 days')::int AS reports_opened,
+    (SELECT count(*) FROM vehicle_queries WHERE status IN ('FAILED','REFUNDED') AND created_at >= now() - interval '30 days')::int AS failed_or_refunded,
+    (SELECT count(*) FROM payment_orders WHERE status='REFUNDED' AND updated_at >= now() - interval '30 days')::int AS refunded_orders,
+    (SELECT count(*) FROM funnel_events WHERE event_type='REPORT_DISPUTED' AND created_at >= now() - interval '30 days')::int AS disputes,
+    (SELECT count(*) FROM (SELECT user_id FROM payments WHERE status='PAID' GROUP BY user_id HAVING count(*) >= 2) t)::int AS repeat_buyers,
+    (SELECT count(DISTINCT user_id) FROM payments WHERE status='PAID')::int AS buyers`);
+  res.json(r.rows[0]);
+}));
+
+api.get('/admin/overview/series', adminAuth, requirePermission('VIEW_DASHBOARD'), asyncRoute(async (_req, res) => {
   const daily = await pool.query(`WITH days AS (
     SELECT generate_series(current_date - interval '29 days', current_date, interval '1 day')::date AS day
   ), q AS (
@@ -1732,7 +2584,7 @@ api.get('/admin/overview/series', auth, requirePermission('VIEW_AUDIT'), asyncRo
   res.json({ daily: daily.rows });
 }));
 
-api.get('/admin/settings', auth, requirePermission('VIEW_AUDIT'), asyncRoute(async (_req, res) => {
+api.get('/admin/settings', adminAuth, requirePermission('VIEW_AUDIT'), asyncRoute(async (_req, res) => {
   const value = await safeBusinessSettings();
   res.json({
     environment: {
@@ -1752,8 +2604,8 @@ api.get('/admin/settings', auth, requirePermission('VIEW_AUDIT'), asyncRoute(asy
       logLevel: env.LOG_LEVEL
     },
     configured: {
-      payment: Boolean(env.PAYMENT_API_KEY),
-      vehicleProvider: Boolean(env.VEHICLE_API_BASE_URL),
+      payment: (env.PAYMENT_PROVIDER === 'mercadopago' && Boolean(env.MP_ACCESS_TOKEN)) || Boolean(env.PAYMENT_API_KEY),
+      vehicleProvider: env.DATA_PROVIDER === 'real' && ((env.VEHICLE_API_PROVIDER === 'credify' && Boolean(env.CREDIFY_CLIENT_ID) && Boolean(env.CREDIFY_CLIENT_SECRET)) || (env.VEHICLE_API_PROVIDER === 'consultarplaca' && Boolean(env.CONSULTARPLACA_API_KEY)) || Boolean(env.VEHICLE_API_BASE_URL)),
       email: isEmailConfigured(),
       fipe: Boolean(env.FIPE_PRIMARY_BASE_URL)
     },
@@ -1762,12 +2614,13 @@ api.get('/admin/settings', auth, requirePermission('VIEW_AUDIT'), asyncRoute(asy
       supportEmail: typeof value.supportEmail === 'string' ? value.supportEmail : null,
       maintenanceNotice: typeof value.maintenanceNotice === 'string' ? value.maintenanceNotice : null,
       defaultAffiliateRateBps: typeof value.defaultAffiliateRateBps === 'number' ? value.defaultAffiliateRateBps : 1000,
-      fipeGuestDailyLimit: typeof value.fipeGuestDailyLimit === 'number' ? value.fipeGuestDailyLimit : env.FIPE_GUEST_DAILY_LIMIT
+      fipeGuestDailyLimit: typeof value.fipeGuestDailyLimit === 'number' ? value.fipeGuestDailyLimit : env.FIPE_GUEST_DAILY_LIMIT,
+      fipeAuthDailyLimit: typeof value.fipeAuthDailyLimit === 'number' ? value.fipeAuthDailyLimit : env.FIPE_AUTH_DAILY_LIMIT
     }
   });
 }));
 
-api.patch('/admin/settings', auth, requirePermission('MANAGE_PROVIDERS'), asyncRoute(async (req, res) => {
+api.patch('/admin/settings', adminAuth, requirePermission('MANAGE_PROVIDERS'), asyncRoute(async (req, res) => {
   const parsed = safeSettingsSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
   const current = await safeBusinessSettings();
@@ -1778,13 +2631,13 @@ api.patch('/admin/settings', auth, requirePermission('MANAGE_PROVIDERS'), asyncR
   res.json({ safe: next });
 }));
 
-api.get('/admin/coupons', auth, requirePermission('MANAGE_BILLING'), asyncRoute(async (_req, res) => {
+api.get('/admin/coupons', adminAuth, requirePermission('MANAGE_BILLING'), asyncRoute(async (_req, res) => {
   const result = await pool.query(`SELECT id,code,discount_type,discount_value,max_redemptions,redeemed_count,starts_at,expires_at,active,created_at
     FROM coupons ORDER BY created_at DESC`);
   res.json(result.rows.map((row) => ({ id: row.id, code: row.code, discountType: row.discount_type, discountValue: Number(row.discount_value), maxRedemptions: row.max_redemptions === null ? null : Number(row.max_redemptions), redeemedCount: Number(row.redeemed_count), startsAt: row.starts_at, expiresAt: row.expires_at, active: row.active, createdAt: row.created_at })));
 }));
 
-api.post('/admin/coupons', auth, requirePermission('MANAGE_BILLING'), asyncRoute(async (req, res) => {
+api.post('/admin/coupons', adminAuth, requirePermission('MANAGE_BILLING'), asyncRoute(async (req, res) => {
   const parsed = couponCreateSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
   const code = parsed.data.code.toUpperCase();
@@ -1794,7 +2647,7 @@ api.post('/admin/coupons', auth, requirePermission('MANAGE_BILLING'), asyncRoute
   res.status(201).json(result.rows[0]);
 }));
 
-api.patch('/admin/coupons/:id', auth, requirePermission('MANAGE_BILLING'), asyncRoute(async (req, res) => {
+api.patch('/admin/coupons/:id', adminAuth, requirePermission('MANAGE_BILLING'), asyncRoute(async (req, res) => {
   const parsed = couponUpdateSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
   const fields = Object.entries(parsed.data).filter(([, value]) => value !== undefined);
@@ -1811,53 +2664,20 @@ api.patch('/admin/coupons/:id', auth, requirePermission('MANAGE_BILLING'), async
   res.json(result.rows[0]);
 }));
 
-api.delete('/admin/coupons/:id', auth, requirePermission('MANAGE_BILLING'), asyncRoute(async (req, res) => {
+api.delete('/admin/coupons/:id', adminAuth, requirePermission('MANAGE_BILLING'), asyncRoute(async (req, res) => {
   const result = await pool.query(`UPDATE coupons SET active=false,updated_at=now() WHERE id=$1 RETURNING id`, [req.params.id]);
   if (!result.rowCount) throw appError('COUPON_NOT_FOUND', { code: 'COUPON_NOT_FOUND', http: 404, expose: true });
   await audit(req.user!.id, 'DELETE_COUPON', 'COUPON', String(req.params.id), { requestId: requestId(req) });
   res.status(204).end();
 }));
 
-api.get('/admin/affiliates', auth, requirePermission('MANAGE_BILLING'), asyncRoute(async (_req, res) => {
-  const result = await pool.query(`SELECT a.id,a.name,a.email,a.code,a.commission_bps,a.active,a.created_at,
-    count(ac.id)::int AS commissions_count, coalesce(sum(ac.amount_cents) FILTER (WHERE ac.status='PENDING'),0)::int AS pending_cents
-    FROM affiliates a LEFT JOIN affiliate_commissions ac ON ac.affiliate_id=a.id GROUP BY a.id ORDER BY a.created_at DESC`);
-  res.json(result.rows.map((row) => ({ id: row.id, name: row.name, email: row.email, code: row.code, commissionBps: Number(row.commission_bps), active: row.active, commissionsCount: Number(row.commissions_count), pendingCents: Number(row.pending_cents), createdAt: row.created_at })));
-}));
-
-api.post('/admin/affiliates', auth, requirePermission('MANAGE_BILLING'), asyncRoute(async (req, res) => {
-  const parsed = affiliateCreateSchema.safeParse(req.body);
-  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
-  const result = await pool.query(`INSERT INTO affiliates(name,email,code,commission_bps,active) VALUES($1,$2,$3,$4,$5)
-    RETURNING id,name,email,code,commission_bps,active,created_at`, [parsed.data.name, parsed.data.email ?? null, parsed.data.code.toUpperCase(), parsed.data.commissionBps, parsed.data.active]);
-  await audit(req.user!.id, 'CREATE_AFFILIATE', 'AFFILIATE', result.rows[0].id, { requestId: requestId(req) });
-  res.status(201).json(result.rows[0]);
-}));
-
-api.patch('/admin/affiliates/:id', auth, requirePermission('MANAGE_BILLING'), asyncRoute(async (req, res) => {
-  const parsed = affiliateUpdateSchema.safeParse(req.body);
-  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
-  const fields = Object.entries(parsed.data).filter(([, value]) => value !== undefined);
-  if (!fields.length) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
-  const values: unknown[] = []; const assignments: string[] = [];
-  for (const [key, value] of fields) {
-    const column = key === 'commissionBps' ? 'commission_bps' : key;
-    values.push(key === 'code' ? String(value).toUpperCase() : value ?? null); assignments.push(`${column}=$${values.length}`);
-  }
-  values.push(req.params.id);
-  const result = await pool.query(`UPDATE affiliates SET ${assignments.join(',')},updated_at=now() WHERE id=$${values.length} RETURNING id,name,email,code,commission_bps,active,created_at`, values);
-  if (!result.rowCount) throw appError('AFFILIATE_NOT_FOUND', { code: 'AFFILIATE_NOT_FOUND', http: 404, expose: true });
-  await audit(req.user!.id, 'UPDATE_AFFILIATE', 'AFFILIATE', String(req.params.id), { requestId: requestId(req) });
-  res.json(result.rows[0]);
-}));
-
-api.get('/admin/organizations', auth, requirePermission('ADMIN_SYSTEM'), asyncRoute(async (_req, res) => {
+api.get('/admin/organizations', adminAuth, requirePermission('ADMIN_SYSTEM'), asyncRoute(async (_req, res) => {
   const result = await pool.query(`SELECT id,name,document,active,slug,primary_color,accent_color,logo_url,custom_domain,settings,created_at
     FROM organizations ORDER BY created_at DESC`);
   res.json(result.rows.map((row) => ({ id: row.id, name: row.name, document: row.document, active: row.active, slug: row.slug, primaryColor: row.primary_color, accentColor: row.accent_color, logoUrl: row.logo_url, customDomain: row.custom_domain, settings: row.settings ?? {}, createdAt: row.created_at })));
 }));
 
-api.post('/admin/organizations', auth, requirePermission('ADMIN_SYSTEM'), asyncRoute(async (req, res) => {
+api.post('/admin/organizations', adminAuth, requirePermission('ADMIN_SYSTEM'), asyncRoute(async (req, res) => {
   const parsed = organizationBrandingSchema.extend({ name: z.string().min(2), document: z.string().max(30).optional(), active: z.boolean().default(true) }).safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
   const result = await pool.query(`INSERT INTO organizations(name,document,active,slug,primary_color,accent_color,logo_url,custom_domain,settings)
@@ -1866,7 +2686,7 @@ api.post('/admin/organizations', auth, requirePermission('ADMIN_SYSTEM'), asyncR
   res.status(201).json(result.rows[0]);
 }));
 
-api.patch('/admin/organizations/:id', auth, requirePermission('ADMIN_SYSTEM'), asyncRoute(async (req, res) => {
+api.patch('/admin/organizations/:id', adminAuth, requirePermission('ADMIN_SYSTEM'), asyncRoute(async (req, res) => {
   const parsed = organizationBrandingSchema.partial().safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
   const fields = Object.entries(parsed.data).filter(([, value]) => value !== undefined);
@@ -1900,9 +2720,9 @@ api.post('/affiliate/activate', auth, asyncRoute(async (req, res) => {
   const safeBusiness = await safeBusinessSettings();
   const configuredRate = safeBusiness.defaultAffiliateRateBps;
   const commissionBps = typeof configuredRate === 'number' && Number.isInteger(configuredRate) && configuredRate >= 0 && configuredRate <= 5000 ? configuredRate : 1000;
-  const defaultCode = `BUSCARR-${randomBytes(5).toString('hex').toUpperCase()}`;
+  const defaultCode = `${BRAND.docPrefix}-${randomBytes(5).toString('hex').toUpperCase()}`;
   const code = (parsed.data.code ?? defaultCode).toUpperCase();
-  const result = await pool.query(`INSERT INTO affiliates(user_id,name,email,code,commission_bps,active) VALUES($1,$2,$3,$4,$5,true)
+  const result = await pool.query(`INSERT INTO affiliates(user_id,name,email,code,commission_bps,pix_key,active) VALUES($1,$2,$3,$4,$5,(SELECT pix_key FROM user_profiles WHERE user_id=$1),true)
     RETURNING id,name,email,code,commission_bps,active,created_at`, [req.user!.id, account.rows[0].name, account.rows[0].email, code, commissionBps]);
   await audit(req.user!.id, 'ACTIVATE_AFFILIATE', 'AFFILIATE', result.rows[0].id, { requestId: requestId(req) });
   res.status(201).json({ affiliate: result.rows[0] });
@@ -1911,7 +2731,7 @@ api.post('/affiliate/activate', auth, asyncRoute(async (req, res) => {
 api.get('/affiliate/link', auth, asyncRoute(async (req, res) => {
   const result = await pool.query('SELECT code,active FROM affiliates WHERE user_id=$1', [req.user!.id]);
   if (!result.rowCount || !result.rows[0].active) throw appError('AFFILIATE_NOT_ACTIVE', { code: 'AFFILIATE_NOT_ACTIVE', http: 404, expose: true });
-  const link = new URL('/?ref=' + encodeURIComponent(String(result.rows[0].code)), env.APP_URL).toString();
+  const link = new URL('/?ref=' + encodeURIComponent(String(result.rows[0].code)), publicAppUrl()).toString();
   res.json({ code: result.rows[0].code, link });
 }));
 
@@ -1924,34 +2744,32 @@ api.get('/affiliate/stats', auth, asyncRoute(async (req, res) => {
       (SELECT count(*)::int FROM users WHERE affiliate_id=$1) AS referred_users
     FROM affiliate_commissions WHERE affiliate_id=$1`, [affiliate.rows[0].id]);
   const code = String(affiliate.rows[0].code);
-  const shareUrl = new URL('/?ref=' + encodeURIComponent(code), env.APP_URL).toString();
-  res.json({ affiliate: { id: affiliate.rows[0].id, code }, shareUrl, totals: { commissions: Number(totals.rows[0].commissions), pendingCents: Number(totals.rows[0].pending_cents), paidCents: Number(totals.rows[0].paid_cents), referredUsers: Number(totals.rows[0].referred_users) } });
+  const shareUrl = new URL('/?ref=' + encodeURIComponent(code), publicAppUrl()).toString();
+  const perf = await pool.query(`SELECT
+      (SELECT count(DISTINCT session_key) FROM funnel_events WHERE upper(metadata->>'ref')=$2 AND created_at >= now() - interval '30 days')::int AS clicks_30d,
+      (SELECT count(*) FROM payments p JOIN users u ON u.id=p.user_id WHERE u.affiliate_id=$1 AND p.status='PAID')::int AS paid_payments,
+      (SELECT count(*) FROM affiliate_commissions WHERE affiliate_id=$1 AND status IN ('CANCELLED','REVERSED'))::int AS reversed`, [affiliate.rows[0].id, code.toUpperCase()]);
+  const to = (path: string) => new URL(`${path}${path.includes('?') ? '&' : '?'}ref=${encodeURIComponent(code)}`, publicAppUrl()).toString();
+  const links = [
+    { key: 'home', label: 'Página inicial', url: to('/') },
+    { key: 'consulta', label: 'Consultar placa', url: to('/consultar') },
+    { key: 'fipe', label: 'FIPE grátis', url: to('/fipe') },
+    { key: 'simulador', label: 'Simulador de financiamento', url: to('/simulador') },
+    { key: 'comparar', label: 'Comparar veículos', url: to('/comparar') },
+    { key: 'guia', label: 'Guia de veículos', url: to('/veiculos') }
+  ];
+  const monthly = await pool.query(`SELECT to_char(date_trunc('month', created_at AT TIME ZONE 'America/Sao_Paulo'),'YYYY-MM') AS month, count(*)::int AS payments, coalesce(sum(amount_cents) FILTER (WHERE status <> 'CANCELLED'),0)::int AS cents
+    FROM affiliate_commissions WHERE affiliate_id=$1 AND created_at >= date_trunc('month', now()) - interval '11 months' GROUP BY 1 ORDER BY 1 DESC`, [affiliate.rows[0].id]);
+  res.json({ affiliate: { id: affiliate.rows[0].id, code }, shareUrl, links, monthly: monthly.rows.map((m) => ({ month: m.month, payments: Number(m.payments), cents: Number(m.cents) })), performance: { clicks30d: Number(perf.rows[0].clicks_30d), paidPayments: Number(perf.rows[0].paid_payments), reversedCommissions: Number(perf.rows[0].reversed) }, totals: { commissions: Number(totals.rows[0].commissions), pendingCents: Number(totals.rows[0].pending_cents), paidCents: Number(totals.rows[0].paid_cents), referredUsers: Number(totals.rows[0].referred_users) } });
 }));
 
-api.get('/admin/affiliate-commissions', auth, requirePermission('MANAGE_BILLING'), asyncRoute(async (_req, res) => {
-  const result = await pool.query(`SELECT c.id,c.amount_cents,c.status,c.created_at,c.paid_at,a.name AS affiliate_name,a.code,p.external_reference
-    FROM affiliate_commissions c JOIN affiliates a ON a.id=c.affiliate_id LEFT JOIN payment_orders p ON p.id=c.order_id
-    ORDER BY c.created_at DESC LIMIT 200`);
-  res.json(result.rows.map((row) => ({ id: row.id, amountCents: Number(row.amount_cents), status: row.status, createdAt: row.created_at, paidAt: row.paid_at, affiliate: { name: row.affiliate_name, code: row.code }, externalReference: row.external_reference })));
-}));
-
-api.patch('/admin/affiliate-commissions/:id', auth, requirePermission('MANAGE_BILLING'), asyncRoute(async (req, res) => {
-  const parsed = z.object({ status: z.enum(['PAID', 'CANCELLED']) }).safeParse(req.body);
-  if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
-  const result = await pool.query(`UPDATE affiliate_commissions SET status=$2,paid_at=CASE WHEN $2='PAID' THEN now() ELSE paid_at END
-    WHERE id=$1 AND status='PENDING' RETURNING id,amount_cents,status,paid_at`, [req.params.id, parsed.data.status]);
-  if (!result.rowCount) throw appError('COMMISSION_NOT_FOUND_OR_CLOSED', { code: 'COMMISSION_NOT_FOUND_OR_CLOSED', http: 404, expose: true });
-  await audit(req.user!.id, 'UPDATE_AFFILIATE_COMMISSION', 'AFFILIATE_COMMISSION', String(req.params.id), { status: parsed.data.status, requestId: requestId(req) });
-  res.json({ id: result.rows[0].id, amountCents: Number(result.rows[0].amount_cents), status: result.rows[0].status, paidAt: result.rows[0].paid_at });
-}));
-
-api.get('/admin/organizations/:id/members', auth, requirePermission('ADMIN_SYSTEM'), asyncRoute(async (req, res) => {
+api.get('/admin/organizations/:id/members', adminAuth, requirePermission('ADMIN_SYSTEM'), asyncRoute(async (req, res) => {
   const result = await pool.query(`SELECT m.organization_id,m.user_id,m.role,u.name,u.email,u.active
     FROM organization_members m JOIN users u ON u.id=m.user_id WHERE m.organization_id=$1 ORDER BY u.name`, [req.params.id]);
   res.json(result.rows.map((row) => ({ organizationId: row.organization_id, userId: row.user_id, role: row.role, name: row.name, email: row.email, active: row.active })));
 }));
 
-api.post('/admin/organizations/:id/members', auth, requirePermission('ADMIN_SYSTEM'), asyncRoute(async (req, res) => {
+api.post('/admin/organizations/:id/members', adminAuth, requirePermission('ADMIN_SYSTEM'), asyncRoute(async (req, res) => {
   const parsed = organizationMemberSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
   const result = await pool.query(`INSERT INTO organization_members(organization_id,user_id,role) VALUES($1,$2,$3)
@@ -1960,7 +2778,7 @@ api.post('/admin/organizations/:id/members', auth, requirePermission('ADMIN_SYST
   res.status(201).json(result.rows[0]);
 }));
 
-api.delete('/admin/organizations/:id/members/:userId', auth, requirePermission('ADMIN_SYSTEM'), asyncRoute(async (req, res) => {
+api.delete('/admin/organizations/:id/members/:userId', adminAuth, requirePermission('ADMIN_SYSTEM'), asyncRoute(async (req, res) => {
   await pool.query('DELETE FROM organization_members WHERE organization_id=$1 AND user_id=$2', [req.params.id, req.params.userId]);
   await audit(req.user!.id, 'REMOVE_ORGANIZATION_MEMBER', 'ORGANIZATION', String(req.params.id), { memberId: req.params.userId, requestId: requestId(req) });
   res.status(204).end();
@@ -1975,53 +2793,217 @@ api.get('/organization/context', auth, asyncRoute(async (req, res) => {
   res.json({ organization: { id: row.id, name: row.name, slug: row.slug, primaryColor: row.primary_color, accentColor: row.accent_color, logoUrl: row.logo_url, customDomain: row.custom_domain, settings: row.settings ?? {}, role: row.role } });
 }));
 
-api.get('/admin/queries', auth, requirePermission('VIEW_AUDIT'), asyncRoute(async (_req, res) => {
-  const queries = await pool.query(`SELECT q.id,q.plate,q.status,q.price_cents,q.charge_source,q.provider,q.created_at,q.completed_at,q.error_code,
-      p.name AS product_name,u.name AS customer_name,u.email AS customer_email
+api.get('/admin/queries', adminAuth, requirePermission('VIEW_QUERIES'), asyncRoute(async (req, res) => {
+  const filters = z.object({
+    status: z.enum(['PROCESSING', 'SUCCESS', 'FAILED', 'REFUNDED']).optional(),
+    customerType: z.enum(['PARTICULAR', 'AUTONOMO', 'EMPRESA']).optional(),
+    source: z.enum(['WEB', 'API', 'ADMIN']).optional(),
+    productId: z.string().trim().max(40).optional(),
+    customerId: z.string().uuid().optional(),
+    search: z.string().trim().max(80).optional(),
+    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()
+  }).safeParse(req.query);
+  if (!filters.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const f = filters.data; const where: string[] = []; const values: unknown[] = [];
+  const push = (v: unknown) => { values.push(v); return `$${values.length}`; };
+  if (f.status) where.push(`q.status=${push(f.status)}`);
+  if (f.customerType) where.push(`coalesce(up.customer_type,'PARTICULAR')=${push(f.customerType)}`);
+  if (f.productId) where.push(`q.product_id=${push(f.productId)}`);
+  if (f.source) where.push(`q.source=${push(f.source)}`);
+  if (f.customerId) where.push(`q.user_id=${push(f.customerId)}`);
+  if (f.search) { const l = push(`%${f.search.replace(/[%_\\]/g, (c) => `\\${c}`)}%`); where.push(`(q.plate ILIKE ${l} OR u.name ILIKE ${l} OR u.email ILIKE ${l})`); }
+  if (f.from) where.push(`q.created_at >= ${push(f.from)}::date`);
+  if (f.to) where.push(`q.created_at < ${push(f.to)}::date + 1`);
+  const queries = await pool.query(`SELECT q.id,q.plate,q.search_type,q.status,q.price_cents,q.charge_source,q.source,q.request_metadata,q.provider,q.created_at,q.completed_at,q.error_code,q.error_message,
+      p.name AS product_name,u.id AS customer_id,u.name AS customer_name,u.email AS customer_email,coalesce(up.customer_type,'PARTICULAR') AS customer_type
     FROM vehicle_queries q
     JOIN users u ON u.id=q.user_id
+    LEFT JOIN user_profiles up ON up.user_id=q.user_id
     JOIN query_products p ON p.id=q.product_id
-    ORDER BY q.created_at DESC LIMIT 200`);
+    ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+    ORDER BY q.created_at DESC LIMIT 300`, values);
   res.json(queries.rows.map((row) => ({
     id: row.id,
     plate: row.plate,
     status: row.status,
     priceCents: Number(row.price_cents ?? 0),
     chargeSource: row.charge_source,
+    source: row.source,
+    sentToCustomer: Boolean((row.request_metadata as { sentFrom?: unknown } | null)?.sentFrom),
     provider: row.provider,
     productName: row.product_name,
     createdAt: row.created_at,
     completedAt: row.completed_at,
     errorCode: row.error_code,
-    customer: { name: row.customer_name, email: row.customer_email }
+    errorMessage: row.error_message,
+    customerType: row.customer_type,
+    customer: { id: row.customer_id, name: row.customer_name, email: row.customer_email }
   })));
 }));
 
-api.post('/admin/lookups', auth, requirePermission('VIEW_SENSITIVE_DATA'), asyncRoute(async (req, res) => {
+/** Falhas da fonte na consulta interna viram mensagem clara para o administrador (com o motivo técnico, que não traz dados pessoais). */
+function adminLookupError(error: unknown): unknown {
+  if (!(error instanceof Error)) return error;
+  const known = error as AppError & { detail?: string };
+  if (known.expose) return error;
+  const code = typeof known.code === 'string' ? known.code : '';
+  const detail = typeof known.detail === 'string' ? known.detail.trim() : '';
+  const why = detail ? ` Motivo: ${detail}` : '';
+  const messages: Record<string, [number, string]> = {
+    NOT_FOUND: [404, 'A fonte não encontrou dados para esta placa neste pacote.'],
+    DATA_PROVIDER_INVALID_RESPONSE: [424, `A Credify respondeu, mas a resposta foi recusada pelo sistema.${why}`],
+    DATA_PROVIDER_AUTH_FAILED: [424, `Falha no login da Credify.${why}`],
+    DATA_PROVIDER_PRODUCT_NOT_ROUTED: [409, `Este produto não tem consulta da Credify definida; nada foi chamado nem cobrado.${why}`],
+    DATA_PROVIDER_UNAVAILABLE: [424, `A Credify ficou indisponível.${why}`],
+    DATA_PROVIDER_INCOMPLETE: [424, `Uma base obrigatória do produto não respondeu; o relatório incompleto não foi entregue.${why}`],
+    DATA_PROVIDER_RATE_LIMITED: [424, `A Credify informou limite temporário de consultas.${why}`],
+    DATA_PROVIDER_QUOTA_EXHAUSTED: [424, `A Credify informou limite ou saldo de consultas indisponível.${why}`],
+    PROVIDER_TIMEOUT: [424, 'A fonte demorou além do prazo configurado. A Credify pode ter cobrado esta consulta; não repita sem conferir.'],
+    PROVIDER_BUDGET_EXCEEDED: [429, `${detail || 'Limite de segurança de consultas atingido.'}`]
+  };
+  const hit = messages[code];
+  if (!hit) return error;
+  return appError(hit[1], { code, http: hit[0], expose: true, showMessage: true });
+}
+
+/** Consulta interna do produto "Consulta FIPE Grátis": só a FIPE (uma consulta de FIPE na Credify), com o mesmo relatório da tela grátis. */
+async function adminFipeFreeLookup(req: Request, res: Response, plate: string, productName: string, providerName: string): Promise<void> {
+  try {
+    const out = await runExclusive(`admin-lookup:${plate}:FIPE_FREE`, async () => {
+      const startedAt = Date.now();
+      let result: FipeProviderResult;
+      if (fipeByPlateUsesCredify()) result = await fipeResultFromPlate(plate);
+      else {
+        const resolved = await resolveFipeSelectionFromPlate(plate);
+        const cached = resolved.provider === 'parallelum' ? await findCachedFipeResult(resolved) : null;
+        result = cached ?? await quoteWithFallback({ vehicleType: resolved.vehicleType, brand: resolved.brand, model: resolved.model, year: resolved.year, provider: resolved.provider });
+        if (!cached) await cacheFipeResult(result);
+      }
+      const quote = makeFipeQuote(result, plate);
+      quote.sheet = await freeVehicleSheet(result);
+      if (quote.sheet) quote.sheet = { ...quote.sheet, decoder: [] };
+      await recordProviderHealth(quote.provider, 'SUCCESS', Date.now() - startedAt);
+      return quote;
+    });
+    await saveFipeDocument(out, req.user!.id);
+    let queryId: string | null = null;
+    try {
+      queryId = await tx(async (client) => {
+        const created = await client.query(`INSERT INTO vehicle_queries(user_id,plate,product_id,status,credits_cost,price_cents,charge_source,provider,request_metadata,source,search_type,completed_at)
+          VALUES($1,$2,'FIPE_FREE','SUCCESS',0,0,'ADMIN_INTERNAL',$3,$4::jsonb,'ADMIN','PLATE',now()) RETURNING id`, [req.user!.id, plate, out.provider, JSON.stringify({ requestId: requestId(req), internal: true, documentCode: out.documentCode })]);
+        const id = created.rows[0].id as string;
+        await client.query('INSERT INTO vehicle_query_results(query_id,normalized,raw_response) VALUES($1,$2::jsonb,$3::jsonb)', [id, JSON.stringify({ __type: 'FIPE_QUOTE', quote: out }), JSON.stringify({ stored: false })]);
+        await client.query('UPDATE report_documents SET query_id=$2 WHERE document_code=$1', [out.documentCode, id]);
+        return id;
+      });
+    } catch (e) { log('error', 'admin_fipe_lookup_save_failed', { error: e instanceof Error ? e.message : 'unknown' }); }
+    await audit(req.user!.id, 'ADMIN_LOOKUP', 'VEHICLE_QUERY', queryId, { plate, productId: 'FIPE_FREE', provider: providerName, status: 'SUCCESS', saved: Boolean(queryId), requestId: requestId(req) });
+    res.status(200).json({ queryId, verificationCode: out.documentCode, saved: Boolean(queryId), plate, productId: 'FIPE_FREE', productName, provider: out.provider, consultedAt: out.consultedAt, result: publicFipeQuote(out), report: null, pdfBase64: (await fipePdf(out, { siteUrl: (env.APP_URL ?? env.WEB_ORIGIN).replace(/\/$/, '') })).toString('base64'), pdfName: `${BRAND.fileSlug}-${plate}-fipe-gratis.pdf` });
+  } catch (error) {
+    const errorCode = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'PROVIDER_ERROR';
+    await audit(req.user!.id, 'ADMIN_LOOKUP', 'VEHICLE_QUERY', null, { plate, productId: 'FIPE_FREE', provider: providerName, status: 'FAILED', errorCode, requestId: requestId(req) });
+    throw fipeProviderError(error);
+  }
+}
+
+api.post('/admin/lookups', adminAuth, requirePermission('VIEW_SENSITIVE_DATA'), asyncRoute(async (req, res) => {
   const parsed = z.object({ plate: plateSchema, productId: z.string().trim().min(1).max(80) }).safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
   const product = await pool.query('SELECT id,name FROM query_products WHERE id=$1 AND active=true', [parsed.data.productId]);
   if (!product.rowCount) throw appError('PRODUCT_NOT_FOUND', { code: 'PRODUCT_NOT_FOUND', http: 404, expose: true });
   const provider = getProvider();
+  if (String(parsed.data.productId).toUpperCase() === 'FIPE_FREE') return adminFipeFreeLookup(req, res, parsed.data.plate, String(product.rows[0].name), provider.name);
   try {
-    const output = await performAdminLookup({ provider, plate: parsed.data.plate, productId: parsed.data.productId, productName: product.rows[0].name, timeoutMs: env.QUERY_REQUEST_TIMEOUT_MS, normalize: normalizeBdrp });
-    await audit(req.user!.id, 'ADMIN_LOOKUP', 'VEHICLE_QUERY', null, { plate: parsed.data.plate, productId: parsed.data.productId, provider: provider.name, status: 'SUCCESS', requestId: requestId(req) });
-    res.status(200).json({ ...output, result: { ...output.result, diagnostic: diagnostic(output.result) } });
+    // Uma consulta interna por placa/pacote por vez: clique duplo ou duas abas não geram duas consultas pagas.
+    const output = await runExclusive(`admin-lookup:${parsed.data.plate}:${parsed.data.productId}`, () => performAdminLookup({ provider, plate: parsed.data.plate, productId: parsed.data.productId, productName: product.rows[0].name, timeoutMs: env.QUERY_REQUEST_TIMEOUT_MS, normalize: normalizeBdrp }), env.QUERY_REQUEST_TIMEOUT_MS + 30_000);
+    // A consulta interna é uma consulta de verdade: fica salva (origem "Interna"), com relatório, PDF e código de validação, para rever e enviar ao cliente.
+    const { raw, ...visible } = output;
+    let queryId: string | null = null;
+    try {
+      const resultHash = crypto.createHash('sha256').update(JSON.stringify(output.result)).digest('hex');
+      queryId = await tx(async (client) => {
+        const created = await client.query(`INSERT INTO vehicle_queries(user_id,plate,product_id,status,credits_cost,price_cents,charge_source,provider,provider_query_id,result_hash,request_metadata,source,search_type,completed_at)
+          VALUES($1,$2,$3,'SUCCESS',0,0,'ADMIN_INTERNAL',$4,$5,$6,$7::jsonb,'ADMIN','PLATE',now()) RETURNING id`,
+        [req.user!.id, parsed.data.plate, parsed.data.productId, provider.name, output.providerQueryId ?? null, resultHash, JSON.stringify({ requestId: requestId(req), internal: true })]);
+        const id = created.rows[0].id as string;
+        await client.query('INSERT INTO vehicle_query_results(query_id,normalized,raw_response,raw_enc,normalizer_version) VALUES($1,$2::jsonb,$3::jsonb,$4,$5)',
+          [id, JSON.stringify(output.result), JSON.stringify({ stored: env.STORE_RAW_PROVIDER_RESPONSE, encrypted: env.STORE_RAW_PROVIDER_RESPONSE }), env.STORE_RAW_PROVIDER_RESPONSE && raw !== undefined ? encryptRaw(raw) : null, NORMALIZER_VERSION]);
+        return id;
+      });
+    } catch (e) {
+      // Nunca perde o resultado de uma chamada paga: se não conseguir salvar, devolve na tela e avisa.
+      log('error', 'admin_lookup_save_failed', { error: e instanceof Error ? e.message : 'unknown' });
+    }
+    await audit(req.user!.id, 'ADMIN_LOOKUP', 'VEHICLE_QUERY', queryId, { plate: parsed.data.plate, productId: parsed.data.productId, provider: provider.name, status: 'SUCCESS', saved: Boolean(queryId), requestId: requestId(req) });
+    // A consulta interna mostra o mesmo relatório do cliente (com o recorte do pacote) e já traz o PDF pronto, sem consultar o provedor de novo.
+    let report: ReportV2 | null = null; let pdfBase64: string | null = null; let pdfName: string | null = null;
+    const verificationCode = queryId ? queryId.slice(0, 8).toUpperCase() : null;
+    try {
+      if (output.result.v2) {
+        const at = new Date(output.consultedAt);
+        const scope = scopeForProduct(parsed.data.productId, at);
+        report = viewReport(output.result.v2, { audience: 'client', tier: tierForProductCode(parsed.data.productId), sections: scope.sections, template: scope.template });
+        const base = (env.APP_URL ?? env.WEB_ORIGIN).replace(/\/$/, '');
+        const meta: ReportMeta = { productName: String(product.rows[0].name), verificationCode: verificationCode ?? 'SEM-CODIGO', verificationUrl: verificationCode ? `${base}/validar/${verificationCode}` : `${base}/validar`, consultedAt: at, resultHash: queryId ? crypto.createHash('sha256').update(JSON.stringify(output.result)).digest('hex') : null, audience: 'client' };
+        pdfBase64 = (await renderVehiclePdf(report, meta)).toString('base64');
+        pdfName = `${BRAND.fileSlug}-${parsed.data.plate}-${parsed.data.productId.toLowerCase()}.pdf`;
+      }
+    } catch (e) { log('warn', 'admin_lookup_pdf_failed', { error: e instanceof Error ? e.message : 'unknown' }); }
+    res.status(200).json({ ...visible, queryId, verificationCode, saved: Boolean(queryId), result: { ...output.result, diagnostic: diagnostic(output.result) }, report, pdfBase64, pdfName });
   } catch (error) {
     const errorCode = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'PROVIDER_ERROR';
-    await audit(req.user!.id, 'ADMIN_LOOKUP', 'VEHICLE_QUERY', null, { plate: parsed.data.plate, productId: parsed.data.productId, provider: provider.name, status: 'FAILED', errorCode, requestId: requestId(req) });
-    throw error;
+    const detail = error instanceof Error && typeof (error as { detail?: unknown }).detail === 'string' ? String((error as unknown as { detail: string }).detail).slice(0, 300) : undefined;
+    await audit(req.user!.id, 'ADMIN_LOOKUP', 'VEHICLE_QUERY', null, { plate: parsed.data.plate, productId: parsed.data.productId, provider: provider.name, status: 'FAILED', errorCode, ...(detail ? { detail } : {}), requestId: requestId(req) });
+    throw adminLookupError(error);
   }
 }));
 
-api.get('/admin/products', auth, requirePermission('MANAGE_PRICING'), asyncRoute(async (_req, res) => {
-  const products = await pool.query(`SELECT p.id,p.name,p.description,p.price_cents,p.reference_price_cents,p.active,p.slug,p.features,p.is_free,p.commercial_status,p.featured,p.display_order,p.source,p.coverage,
-      t.id AS template_id,t.version AS template_version,t.name AS template_name,t.status AS template_status
-    FROM query_products p LEFT JOIN product_report_configs c ON c.product_id=p.id LEFT JOIN report_templates t ON t.id=c.template_id ORDER BY p.display_order,p.price_cents`);
-  res.json(products.rows.map((product) => ({ id: product.id, name: product.name, description: product.description, priceCents: Number(product.price_cents ?? 0), referencePriceCents: product.reference_price_cents == null ? null : Number(product.reference_price_cents), active: Boolean(product.active), slug: product.slug, features: product.features ?? [], isFree: Boolean(product.is_free), commercialStatus: product.commercial_status, featured: Boolean(product.featured), displayOrder: Number(product.display_order ?? 100), source: product.source, coverage: product.coverage, reportTemplate: product.template_id ? { id: product.template_id, version: Number(product.template_version), name: product.template_name, status: product.template_status } : null })));
+const ADMIN_PRODUCT_COLS = 'p.archived_at,p.id,p.name,p.description,p.price_cents,p.reference_price_cents,p.active,p.slug,p.features,p.is_free,p.commercial_status,p.featured,p.display_order,p.source,p.coverage,p.tagline,p.long_description,p.badge,p.list_price_cents,p.show_on_home,p.report_sections,p.data_sources,EXISTS (SELECT 1 FROM query_source_rules rule WHERE rule.product_id=p.id AND rule.active=true) AS has_source';
+const SELLABLE_REPORT_SECTIONS = new Set(['IDENTIFICACAO', 'CARACTERISTICAS', 'REGISTRO', 'DEBITOS', 'RESTRICOES', 'HISTORICO', 'GRAVAME', 'INSPECAO_RECALL', 'FIPE', 'ANALISES']);
+/** O que o público realmente vê: "à venda" só vale com fonte de dados ativa e provedor/gateway configurados. */
+function productAvailability(row: Record<string, unknown>) {
+  const blockers: string[] = [];
+  if (!row.is_free) {
+    if (!row.active) blockers.push('Produto inativo');
+    if (env.DATA_PROVIDER === 'disabled') blockers.push('Provedor de dados desativado no servidor');
+    if (!row.has_source) blockers.push('Sem fonte de dados ativa para este produto');
+    if (env.PAYMENT_PROVIDER === 'disabled') blockers.push('Gateway de pagamento desativado no servidor');
+  }
+  const configured = String(row.commercial_status);
+  const effectiveStatus = row.is_free ? configured : configured === 'HIDDEN' ? 'HIDDEN' : configured === 'ACTIVE' && blockers.length === 0 ? 'ACTIVE' : 'SOON';
+  return { effectiveStatus, sellableNow: effectiveStatus === 'ACTIVE' || Boolean(row.is_free), blockers };
+}
+function presentAdminProduct(row: Record<string, unknown>) {
+  return {
+    ...productAvailability(row),
+    id: row.id, name: row.name, description: row.description, priceCents: Number(row.price_cents ?? 0), referencePriceCents: row.reference_price_cents == null ? null : Number(row.reference_price_cents),
+    active: Boolean(row.active), slug: row.slug, features: row.features ?? [], isFree: Boolean(row.is_free), commercialStatus: row.commercial_status, featured: Boolean(row.featured),
+    displayOrder: Number(row.display_order ?? 100), source: row.source, coverage: row.coverage, tagline: row.tagline ?? '', longDescription: row.long_description ?? '', badge: row.badge ?? null,
+    listPriceCents: row.list_price_cents == null ? null : Number(row.list_price_cents), showOnHome: Boolean(row.show_on_home), reportSections: Array.isArray(row.report_sections) ? row.report_sections : null, dataSources: Array.isArray(row.data_sources) && row.data_sources.length ? row.data_sources : null, archivedAt: row.archived_at ?? null
+  };
+}
+function checkReportSections(sections: string[] | null | undefined): void {
+  // O painel lista a seção Proprietário (quando liberada) e a Completa/Premium já a trazem salva: aceitar o que o próprio painel envia.
+  if (sections && !sections.every((k) => SELLABLE_REPORT_SECTIONS.has(k) || (k === 'PROPRIETARIO' && sectionSellable(k)))) throw appError('INVALID_REPORT_SECTIONS', { code: 'INVALID_REPORT_SECTIONS', http: 400, expose: true });
+}
+
+/** Fontes de dados (APIs) que cada consulta pode comprar, com o padrão atual de cada produto e se a fonte está configurada. */
+api.get('/admin/data-sources', adminAuth, requirePermission('MANAGE_PRICING'), asyncRoute(async (_req, res) => {
+  const products = await pool.query(`SELECT id FROM query_products WHERE is_free=false ORDER BY display_order, id`);
+  res.json({
+    sources: DATA_SOURCES.map((d) => ({ ...d, configured: d.provider === 'anycar' ? anycarConfigured() : true, note: d.provider === 'anycar' && !anycarConfigured() ? 'Falta ANYCAR_API_KEY nas variáveis do Coolify.' : null })),
+    defaults: Object.fromEntries(products.rows.map((p: { id: string }) => [p.id, defaultSourcesFor(String(p.id))]))
+  });
 }));
 
-api.post('/admin/products', auth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
+api.get('/admin/products', adminAuth, requirePermission('MANAGE_PRICING'), asyncRoute(async (_req, res) => {
+  const products = await pool.query(`SELECT ${ADMIN_PRODUCT_COLS},
+      t.id AS template_id,t.version AS template_version,t.name AS template_name,t.status AS template_status
+    FROM query_products p LEFT JOIN product_report_configs c ON c.product_id=p.id LEFT JOIN report_templates t ON t.id=c.template_id ORDER BY p.display_order,p.price_cents`);
+  res.json(products.rows.map((product) => ({ ...presentAdminProduct(product), reportTemplate: product.template_id ? { id: product.template_id, version: Number(product.template_version), name: product.template_name, status: product.template_status } : null })));
+}));
+
+api.post('/admin/products', adminAuth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
   const parsed = productCreateSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
   const value = parsed.data;
@@ -2031,22 +3013,37 @@ api.post('/admin/products', auth, requirePermission('MANAGE_PRICING'), asyncRout
   const created = await tx(async (client) => {
     const priceCents = value.isFree ? 0 : value.priceCents;
     const legacyCreditCost = Math.ceil(priceCents / 100);
-    const product = await client.query(`INSERT INTO query_products(id,name,description,credit_cost,price_cents,reference_price_cents,active,slug,features,display_order,source,coverage,commercial_status,featured,is_free)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15) RETURNING id,name,description,price_cents,reference_price_cents,active,slug,features,display_order,source,coverage,commercial_status,featured,is_free`, [value.id, value.name, value.description, legacyCreditCost, priceCents, value.referencePriceCents ?? null, value.active, value.slug, JSON.stringify(value.features), value.displayOrder, value.source ?? null, value.coverage ?? null, value.commercialStatus, value.featured, value.isFree]);
+    const guard = await enforceMarginFloor(client, { name: value.name, providerCostCents: value.providerCostCents, supplierCostCents: value.supplierCostCents, priceCents, isFree: value.isFree }, req.user!.role, value.overrideMarginLock);
+    if (guard.overridden) await audit(req.user!.id, 'MARGIN_LOCK_OVERRIDE', 'QUERY_PRODUCT', value.id, { requestId: requestId(req), floorCents: guard.floorCents, priceCents, reason: value.overrideMarginLock?.reason });
+    checkReportSections(value.reportSections);
+    const product = await client.query(`INSERT INTO query_products(id,name,description,credit_cost,price_cents,reference_price_cents,active,slug,features,display_order,source,coverage,commercial_status,featured,is_free,provider_cost_cents,supplier_cost_cents,floor_price_cents,tagline,long_description,badge,list_price_cents,show_on_home,report_sections)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24::text[]) RETURNING id,name,description,price_cents,reference_price_cents,active,slug,features,display_order,source,coverage,commercial_status,featured,is_free,tagline,long_description,badge,list_price_cents,show_on_home,report_sections,EXISTS (SELECT 1 FROM query_source_rules rule WHERE rule.product_id=query_products.id AND rule.active=true) AS has_source`, [value.id, value.name, value.description, legacyCreditCost, priceCents, value.referencePriceCents ?? null, value.active, value.slug, JSON.stringify(value.features), value.displayOrder, value.source ?? null, value.coverage ?? null, value.commercialStatus, value.featured, value.isFree, value.providerCostCents, value.supplierCostCents, guard.floorCents || null, value.tagline, value.longDescription, value.badge ?? null, value.listPriceCents ?? null, value.showOnHome, value.reportSections ?? null]);
     const insertedTemplate = await client.query(`INSERT INTO report_templates(product_id,version,name,status,config,created_by) VALUES($1,1,$2,'PUBLISHED',$3::jsonb,$4) RETURNING id,version,name,status`, [value.id, templateName, JSON.stringify(templateConfig), req.user!.id]);
     await client.query(`INSERT INTO product_report_configs(product_id,template_id,mode,formats,updated_by) VALUES($1,$2,'SNAPSHOT',ARRAY['JSON','HTML','PDF'],$3)`, [value.id, insertedTemplate.rows[0].id, req.user!.id]);
     return { product: product.rows[0], template: insertedTemplate.rows[0] };
   });
   await audit(req.user!.id, 'CREATE_QUERY_PRODUCT', 'QUERY_PRODUCT', value.id, { requestId: requestId(req) });
-  const row = created.product as Record<string, unknown>;
-  res.status(201).json({ id: row.id, name: row.name, description: row.description, priceCents: Number(row.price_cents ?? 0), referencePriceCents: row.reference_price_cents == null ? null : Number(row.reference_price_cents), active: Boolean(row.active), slug: row.slug, features: row.features, displayOrder: Number(row.display_order), source: row.source, coverage: row.coverage, commercialStatus: row.commercial_status, featured: Boolean(row.featured), isFree: Boolean(row.is_free), reportTemplate: created.template });
+  res.status(201).json({ ...presentAdminProduct(created.product as Record<string, unknown>), reportTemplate: created.template });
 }));
 
-api.patch('/admin/products/:id', auth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
+api.patch('/admin/products/:id', adminAuth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
   const parsed = productUpdateSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
   const values: unknown[] = [];
   const assignments: string[] = [];
+  if (parsed.data.priceCents !== undefined || parsed.data.providerCostCents !== undefined || parsed.data.supplierCostCents !== undefined) {
+    const current = await pool.query('SELECT name,price_cents,provider_cost_cents,supplier_cost_cents,is_free FROM query_products WHERE id=$1', [req.params.id]);
+    if (!current.rowCount) throw appError('PRODUCT_NOT_FOUND', { code: 'PRODUCT_NOT_FOUND', http: 404, expose: true });
+    const row = current.rows[0] as Record<string, unknown>;
+    const nextCost = parsed.data.providerCostCents ?? Number(row.provider_cost_cents ?? 0);
+    const nextSupplier = parsed.data.supplierCostCents ?? Number(row.supplier_cost_cents ?? 0);
+    const nextPrice = parsed.data.isFree ? 0 : parsed.data.priceCents ?? Number(row.price_cents ?? 0);
+    const guard = await enforceMarginFloor(pool, { name: String(row.name), providerCostCents: nextCost, supplierCostCents: nextSupplier, priceCents: nextPrice, isFree: parsed.data.isFree ?? Boolean(row.is_free) }, req.user!.role, parsed.data.overrideMarginLock);
+    if (guard.overridden) await audit(req.user!.id, 'MARGIN_LOCK_OVERRIDE', 'QUERY_PRODUCT', String(req.params.id), { requestId: requestId(req), floorCents: guard.floorCents, priceCents: nextPrice, reason: parsed.data.overrideMarginLock?.reason });
+    if (parsed.data.providerCostCents !== undefined) { values.push(parsed.data.providerCostCents); assignments.push(`provider_cost_cents=$${values.length}`); }
+    if (parsed.data.supplierCostCents !== undefined) { values.push(parsed.data.supplierCostCents); assignments.push(`supplier_cost_cents=$${values.length}`); }
+    values.push(guard.floorCents || null); assignments.push(`floor_price_cents=$${values.length}`);
+  }
   if (parsed.data.name !== undefined) { values.push(parsed.data.name); assignments.push(`name=$${values.length}`); }
   if (parsed.data.description !== undefined) { values.push(parsed.data.description); assignments.push(`description=$${values.length}`); }
   if (parsed.data.referencePriceCents !== undefined) { values.push(parsed.data.referencePriceCents); assignments.push(`reference_price_cents=$${values.length}`); }
@@ -2058,23 +3055,40 @@ api.patch('/admin/products/:id', auth, requirePermission('MANAGE_PRICING'), asyn
   if (parsed.data.commercialStatus !== undefined) { values.push(parsed.data.commercialStatus); assignments.push(`commercial_status=$${values.length}`); }
   if (parsed.data.featured !== undefined) { values.push(parsed.data.featured); assignments.push(`featured=$${values.length}`); }
   if (parsed.data.displayOrder !== undefined) { values.push(parsed.data.displayOrder); assignments.push(`display_order=$${values.length}`); }
+  if (parsed.data.tagline !== undefined) { values.push(parsed.data.tagline); assignments.push(`tagline=$${values.length}`); }
+  if (parsed.data.longDescription !== undefined) { values.push(parsed.data.longDescription); assignments.push(`long_description=$${values.length}`); }
+  if (parsed.data.badge !== undefined) { values.push(parsed.data.badge || null); assignments.push(`badge=$${values.length}`); }
+  if (parsed.data.listPriceCents !== undefined) { values.push(parsed.data.listPriceCents); assignments.push(`list_price_cents=$${values.length}`); }
+  if (parsed.data.showOnHome !== undefined) { values.push(parsed.data.showOnHome); assignments.push(`show_on_home=$${values.length}`); }
+  if (parsed.data.reportSections !== undefined) { checkReportSections(parsed.data.reportSections); values.push(parsed.data.reportSections && parsed.data.reportSections.length ? parsed.data.reportSections : null); assignments.push(`report_sections=$${values.length}::text[]`); }
+  if (parsed.data.dataSources !== undefined) {
+    const checked = validateDataSources(parsed.data.dataSources);
+    if (!checked.ok) throw appError('INVALID_DATA_SOURCES', { code: checked.error, http: 400, expose: true });
+    // Consultas de linha fixa têm as APIs travadas no contrato: aceita só o próprio contrato (ou o padrão, que volta a ele).
+    const fixed = contractFor(String(req.params.id));
+    if (fixed && checked.sources && enforcedSources(String(req.params.id), checked.sources).drift) {
+      throw appError('As APIs desta consulta são fixas e não podem ser alteradas por aqui. Ajuste preço, textos e exibição.', { code: 'PRODUCT_SOURCES_LOCKED', http: 409, expose: true, showMessage: true });
+    }
+    const toStore = fixed ? (fixed.sources ? [...fixed.sources] : null) : checked.sources;
+    values.push(toStore); assignments.push(`data_sources=$${values.length}::text[]`);
+  }
   if (parsed.data.isFree !== undefined) { values.push(parsed.data.isFree); assignments.push(`is_free=$${values.length}`); }
   if (parsed.data.active !== undefined) { values.push(parsed.data.active); assignments.push(`active=$${values.length}`); }
   assignments.push('updated_at=now()');
   values.push(req.params.id);
-  const product = await pool.query(`UPDATE query_products SET ${assignments.join(', ')} WHERE id=$${values.length} RETURNING id,name,description,price_cents,reference_price_cents,active,slug,features,display_order,source,coverage,commercial_status,featured,is_free`, values);
+  const product = await pool.query(`UPDATE query_products SET ${assignments.join(', ')} WHERE id=$${values.length} RETURNING id,name,description,price_cents,reference_price_cents,active,slug,features,display_order,source,coverage,commercial_status,featured,is_free,tagline,long_description,badge,list_price_cents,show_on_home,report_sections,data_sources,EXISTS (SELECT 1 FROM query_source_rules rule WHERE rule.product_id=query_products.id AND rule.active=true) AS has_source`, values);
   if (!product.rowCount) throw appError('PRODUCT_NOT_FOUND', { code: 'PRODUCT_NOT_FOUND', http: 404, expose: true });
   await audit(req.user!.id, 'UPDATE_QUERY_PRODUCT', 'QUERY_PRODUCT', String(req.params.id), { fields: Object.keys(parsed.data), requestId: requestId(req) });
-  const row = product.rows[0];
-  res.json({ id: row.id, name: row.name, description: row.description, priceCents: Number(row.price_cents ?? 0), referencePriceCents: row.reference_price_cents == null ? null : Number(row.reference_price_cents), active: Boolean(row.active), slug: row.slug, features: row.features ?? [], displayOrder: Number(row.display_order ?? 100), source: row.source, coverage: row.coverage, commercialStatus: row.commercial_status, featured: Boolean(row.featured), isFree: Boolean(row.is_free) });
+  if (parsed.data.reportSections !== undefined || parsed.data.dataSources !== undefined) await refreshProductSections();
+  res.json(presentAdminProduct(product.rows[0]));
 }));
 
-api.get('/admin/products/:id/report-templates', auth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
+api.get('/admin/products/:id/report-templates', adminAuth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
   const templates = await pool.query(`SELECT id,product_id,version,name,status,config,created_by,created_at FROM report_templates WHERE product_id=$1 ORDER BY version DESC`, [req.params.id]);
   res.json(templates.rows.map((row) => ({ id: row.id, productId: row.product_id, version: Number(row.version), name: row.name, status: row.status, config: row.config, createdBy: row.created_by, createdAt: row.created_at })));
 }));
 
-api.post('/admin/products/:id/report-templates', auth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
+api.post('/admin/products/:id/report-templates', adminAuth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
   const parsed = reportTemplateCreateSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
   const created = await tx(async (client) => {
@@ -2091,7 +3105,7 @@ api.post('/admin/products/:id/report-templates', auth, requirePermission('MANAGE
   res.status(201).json({ id: created.id, productId: created.product_id, version: Number(created.version), name: created.name, status: created.status, config: created.config, createdAt: created.created_at });
 }));
 
-api.post('/admin/report-templates/:id/publish', auth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
+api.post('/admin/report-templates/:id/publish', adminAuth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
   const published = await tx(async (client) => {
     const template = await client.query('SELECT id,product_id,version,name,config FROM report_templates WHERE id=$1', [req.params.id]);
     if (!template.rowCount) throw appError('REPORT_TEMPLATE_NOT_FOUND', { code: 'REPORT_TEMPLATE_NOT_FOUND', http: 404, expose: true });
@@ -2105,13 +3119,13 @@ api.post('/admin/report-templates/:id/publish', auth, requirePermission('MANAGE_
   res.json({ id: published.id, productId: published.product_id, version: Number(published.version), name: published.name, status: 'PUBLISHED', config: published.config });
 }));
 
-api.get('/admin/organizations/:id/query-prices', auth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
+api.get('/admin/organizations/:id/query-prices', adminAuth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
   const prices = await pool.query(`SELECT x.id,x.organization_id,x.product_id,p.name,p.price_cents AS base_price_cents,x.price_cents,x.active,x.starts_at,x.ends_at
     FROM organization_query_prices x JOIN query_products p ON p.id=x.product_id WHERE x.organization_id=$1 ORDER BY p.display_order,p.price_cents`, [req.params.id]);
   res.json(prices.rows.map((row) => ({ id: row.id, organizationId: row.organization_id, productId: row.product_id, productName: row.name, basePriceCents: Number(row.base_price_cents), priceCents: Number(row.price_cents), active: Boolean(row.active), startsAt: row.starts_at, endsAt: row.ends_at })));
 }));
 
-api.put('/admin/organizations/:id/query-prices', auth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
+api.put('/admin/organizations/:id/query-prices', adminAuth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
   const parsed = orgQueryPriceSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
   const value = parsed.data;
@@ -2129,20 +3143,20 @@ api.put('/admin/organizations/:id/query-prices', auth, requirePermission('MANAGE
   res.json({ id: result.row.id, organizationId: result.row.organization_id, productId: result.row.product_id, productName: result.product.name, basePriceCents: Number(result.product.price_cents), priceCents: Number(result.row.price_cents), active: Boolean(result.row.active), startsAt: result.row.starts_at, endsAt: result.row.ends_at });
 }));
 
-api.delete('/admin/organizations/:id/query-prices/:productId', auth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
+api.delete('/admin/organizations/:id/query-prices/:productId', adminAuth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
   const result = await pool.query('UPDATE organization_query_prices SET active=false,updated_at=now() WHERE organization_id=$1 AND product_id=$2 RETURNING id', [req.params.id, req.params.productId]);
   if (!result.rowCount) throw appError('ORGANIZATION_PRICE_NOT_FOUND', { code: 'ORGANIZATION_PRICE_NOT_FOUND', http: 404, expose: true });
   await audit(req.user!.id, 'DEACTIVATE_ORGANIZATION_QUERY_PRICE', 'ORGANIZATION', String(req.params.id), { productId: req.params.productId, requestId: requestId(req) });
   res.status(204).end();
 }));
 
-api.get('/admin/organizations/:id/credit-package-prices', auth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
+api.get('/admin/organizations/:id/credit-package-prices', adminAuth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
   const prices = await pool.query(`SELECT x.id,x.organization_id,x.package_id,p.slug,p.name,p.price_cents AS base_price_cents,x.price_cents,x.active,x.starts_at,x.ends_at
     FROM organization_credit_package_prices x JOIN credit_packages p ON p.id=x.package_id WHERE x.organization_id=$1 ORDER BY p.display_order,p.price_cents`, [req.params.id]);
   res.json(prices.rows.map((row) => ({ id: row.id, organizationId: row.organization_id, packageId: row.package_id, packageSlug: row.slug, packageName: row.name, basePriceCents: Number(row.base_price_cents), priceCents: Number(row.price_cents), active: Boolean(row.active), startsAt: row.starts_at, endsAt: row.ends_at })));
 }));
 
-api.put('/admin/organizations/:id/credit-package-prices', auth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
+api.put('/admin/organizations/:id/credit-package-prices', adminAuth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
   const parsed = orgPackagePriceSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
   const value = parsed.data;
@@ -2160,30 +3174,31 @@ api.put('/admin/organizations/:id/credit-package-prices', auth, requirePermissio
   res.json({ id: result.row.id, organizationId: result.row.organization_id, packageId: result.row.package_id, packageSlug: result.packageSlug, basePriceCents: result.basePriceCents, priceCents: Number(result.row.price_cents), active: Boolean(result.row.active), startsAt: result.row.starts_at, endsAt: result.row.ends_at });
 }));
 
-api.delete('/admin/organizations/:id/credit-package-prices/:packageId', auth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
+api.delete('/admin/organizations/:id/credit-package-prices/:packageId', adminAuth, requirePermission('MANAGE_PRICING'), asyncRoute(async (req, res) => {
   const result = await pool.query(`UPDATE organization_credit_package_prices SET active=false,updated_at=now() WHERE organization_id=$1 AND package_id=$2 RETURNING id`, [req.params.id, req.params.packageId]);
   if (!result.rowCount) throw appError('ORGANIZATION_PRICE_NOT_FOUND', { code: 'ORGANIZATION_PRICE_NOT_FOUND', http: 404, expose: true });
   await audit(req.user!.id, 'DEACTIVATE_ORGANIZATION_PACKAGE_PRICE', 'ORGANIZATION', String(req.params.id), { packageId: req.params.packageId, requestId: requestId(req) });
   res.status(204).end();
 }));
 
-api.get('/admin/users', auth, requirePermission('MANAGE_USERS'), asyncRoute(async (_req, res) => {
+api.get('/admin/users', adminAuth, requirePermission('MANAGE_USERS'), asyncRoute(async (req, res) => {
   const users = await pool.query(`SELECT u.id,u.name,u.email,u.role,u.active,u.created_at,u.last_login_at,
     coalesce(w.balance_cents,0) AS balance_cents,
     (SELECT count(*) FROM vehicle_queries q WHERE q.user_id=u.id) AS queries_count
     FROM users u LEFT JOIN wallets w ON w.user_id=u.id
-    WHERE u.deleted_at IS NULL ORDER BY u.created_at DESC LIMIT 200`);
+    WHERE u.deleted_at IS NULL AND (u.role <> ALL($1::text[]) OR u.role = ANY($2::text[]) OR u.id=$3)
+    ORDER BY u.created_at DESC LIMIT 200`, [TEAM_ROLES, rolesBelow(req.user!.role), req.user!.id]);
   res.json(users.rows.map((row) => ({ id: row.id, name: row.name, email: row.email, role: row.role, active: row.active, createdAt: row.created_at, lastLoginAt: row.last_login_at, balanceCents: Number(row.balance_cents), queriesCount: Number(row.queries_count) })));
 }));
 
-api.patch('/admin/users/:id', auth, requirePermission('MANAGE_USERS'), asyncRoute(async (req, res) => {
+api.patch('/admin/users/:id', adminAuth, requirePermission('MANAGE_USERS'), asyncRoute(async (req, res) => {
   const parsed = adminUserUpdateSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
   if (String(req.params.id) === req.user!.id) throw appError('ADMIN_SELF_CHANGE_FORBIDDEN', { code: 'ADMIN_SELF_CHANGE_FORBIDDEN', http: 409, expose: true });
-  if (parsed.data.role === 'ADMIN' && !hasPermission(req.user!.role, 'ADMIN_SYSTEM')) throw appError('FORBIDDEN', { code: 'FORBIDDEN', http: 403, expose: true });
+  if (parsed.data.role && !outranks(req.user!.role, parsed.data.role)) throw appError('FORBIDDEN', { code: 'FORBIDDEN', http: 403, expose: true });
   const target = await pool.query('SELECT id,role FROM users WHERE id=$1 AND deleted_at IS NULL', [req.params.id]);
-  if (!target.rowCount) throw appError('USER_NOT_FOUND', { code: 'USER_NOT_FOUND', http: 404, expose: true });
-  if (target.rows[0].role === 'SUPER_ADMIN' && !hasPermission(req.user!.role, 'ADMIN_SYSTEM')) throw appError('FORBIDDEN', { code: 'FORBIDDEN', http: 403, expose: true });
+  // Quem está acima (ou no mesmo nível) não existe para o ator.
+  if (!target.rowCount || !outranks(req.user!.role, String(target.rows[0].role))) throw appError('USER_NOT_FOUND', { code: 'USER_NOT_FOUND', http: 404, expose: true });
   const assignments: string[] = []; const values: unknown[] = [];
   if (parsed.data.active !== undefined) { values.push(parsed.data.active); assignments.push(`active=$${values.length}`); }
   if (parsed.data.role !== undefined) { values.push(parsed.data.role); assignments.push(`role=$${values.length}`); }
@@ -2193,13 +3208,13 @@ api.patch('/admin/users/:id', auth, requirePermission('MANAGE_USERS'), asyncRout
   res.json(updated.rows[0]);
 }));
 
-api.delete('/admin/users/:id', auth, requirePermission('ADMIN_SYSTEM'), asyncRoute(async (req, res) => {
+api.delete('/admin/users/:id', adminAuth, requirePermission('ADMIN_SYSTEM'), asyncRoute(async (req, res) => {
   if (String(req.params.id) === req.user!.id) {
     throw appError('ADMIN_SELF_DELETION_FORBIDDEN', { code: 'ADMIN_SELF_DELETION_FORBIDDEN', http: 409, expose: true });
   }
   const removed = await tx(async (client) => {
     const target = await client.query('SELECT id,name,email,role FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE', [req.params.id]);
-    if (!target.rowCount) throw appError('USER_NOT_FOUND', { code: 'USER_NOT_FOUND', http: 404, expose: true });
+    if (!target.rowCount || !outranks(req.user!.role, String(target.rows[0].role))) throw appError('USER_NOT_FOUND', { code: 'USER_NOT_FOUND', http: 404, expose: true });
     await client.query('UPDATE users SET active=false,deleted_at=now() WHERE id=$1', [req.params.id]);
     await client.query('UPDATE user_sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL', [req.params.id]);
     return target.rows[0] as { id: string; email: string; role: string };
@@ -2208,7 +3223,7 @@ api.delete('/admin/users/:id', auth, requirePermission('ADMIN_SYSTEM'), asyncRou
   res.status(204).end();
 }));
 
-api.post('/admin/users/:id/wallet-adjustments', auth, requirePermission('MANAGE_BILLING'), asyncRoute(async (req, res) => {
+api.post('/admin/users/:id/wallet-adjustments', adminAuth, requirePermission('MANAGE_BILLING'), asyncRoute(async (req, res) => {
   const parsed = adminWalletAdjustmentSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
   const result = await tx(async (client) => {
@@ -2226,19 +3241,36 @@ api.post('/admin/users/:id/wallet-adjustments', auth, requirePermission('MANAGE_
   res.status(201).json(result);
 }));
 
-api.get('/admin/payments', auth, requirePermission('MANAGE_BILLING'), asyncRoute(async (_req, res) => {
-  const payments = await pool.query(`SELECT p.id,p.status,p.amount_cents,p.provider,p.external_id,p.created_at,p.paid_at,o.purchase_type,o.product_id,o.query_plate,u.name,u.email
-    FROM payments p JOIN users u ON u.id=p.user_id LEFT JOIN payment_orders o ON o.id=p.order_id ORDER BY p.created_at DESC LIMIT 200`);
-  res.json(payments.rows.map((row) => ({ id: row.id, status: row.status, amountCents: Number(row.amount_cents), purchaseType: row.purchase_type ?? null, productId: row.product_id ?? null, plate: row.query_plate ?? null, provider: row.provider, externalId: row.external_id, createdAt: row.created_at, paidAt: row.paid_at, customer: { name: row.name, email: row.email } })));
+api.get('/admin/payments', adminAuth, requirePermission('MANAGE_BILLING'), asyncRoute(async (req, res) => {
+  const filters = z.object({
+    status: z.enum(['PENDING', 'PAID', 'CANCELLED', 'FAILED', 'REFUNDED']).optional(),
+    customerType: z.enum(['PARTICULAR', 'AUTONOMO', 'EMPRESA']).optional(),
+    search: z.string().trim().max(80).optional(),
+    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()
+  }).safeParse(req.query);
+  if (!filters.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
+  const f = filters.data; const where: string[] = []; const values: unknown[] = [];
+  const push = (v: unknown) => { values.push(v); return `$${values.length}`; };
+  if (f.status) where.push(`p.status=${push(f.status)}`);
+  if (f.customerType) where.push(`coalesce(up.customer_type,'PARTICULAR')=${push(f.customerType)}`);
+  if (f.search) { const l = push(`%${f.search.replace(/[%_\\]/g, (c) => `\\${c}`)}%`); where.push(`(u.name ILIKE ${l} OR u.email ILIKE ${l} OR o.query_plate ILIKE ${l})`); }
+  if (f.from) where.push(`p.created_at >= ${push(f.from)}::date`);
+  if (f.to) where.push(`p.created_at < ${push(f.to)}::date + 1`);
+  const payments = await pool.query(`SELECT p.id,p.status,p.amount_cents,p.provider,p.external_id,p.created_at,p.paid_at,o.purchase_type,o.product_id,o.query_plate,u.name,u.email,
+      coalesce(up.customer_type,'PARTICULAR') AS customer_type,
+      (SELECT d.status FROM fiscal_documents d WHERE d.payment_id=p.id AND d.status <> 'CANCELLED' LIMIT 1) AS fiscal_status
+    FROM payments p JOIN users u ON u.id=p.user_id LEFT JOIN user_profiles up ON up.user_id=p.user_id LEFT JOIN payment_orders o ON o.id=p.order_id
+    ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY p.created_at DESC LIMIT 300`, values);
+  res.json(payments.rows.map((row) => ({ id: row.id, orderId: row.order_id ?? null, status: row.status, amountCents: Number(row.amount_cents), purchaseType: row.purchase_type ?? null, productId: row.product_id ?? null, plate: row.query_plate ?? null, provider: row.provider, externalId: row.external_id ?? null, createdAt: row.created_at, paidAt: row.paid_at ?? null, customer: { name: row.name, email: row.email }, customerType: row.customer_type, fiscalStatus: row.fiscal_status ?? null })));
 }));
 
-api.get('/admin/contact-messages', auth, requirePermission('VIEW_AUDIT'), asyncRoute(async (_req, res) => {
+api.get('/admin/contact-messages', adminAuth, requirePermission('MANAGE_SUPPORT'), asyncRoute(async (_req, res) => {
   const messages = await pool.query(`SELECT id,user_id,name,email,subject,message,category,status,created_at,closed_at
     FROM contact_messages ORDER BY created_at DESC LIMIT 200`);
   res.json(messages.rows.map((row) => ({ id: row.id, userId: row.user_id, name: row.name, email: row.email, subject: row.subject, message: row.message, category: row.category, status: row.status, createdAt: row.created_at, closedAt: row.closed_at })));
 }));
 
-api.patch('/admin/contact-messages/:id', auth, requirePermission('MANAGE_USERS'), asyncRoute(async (req, res) => {
+api.patch('/admin/contact-messages/:id', adminAuth, requirePermission('MANAGE_SUPPORT'), asyncRoute(async (req, res) => {
   const parsed = contactStatusSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
   const updated = await pool.query(`UPDATE contact_messages SET status=$2,closed_at=CASE WHEN $2='CLOSED' THEN now() ELSE NULL END WHERE id=$1 RETURNING id,status,closed_at`, [req.params.id, parsed.data.status]);
@@ -2247,7 +3279,7 @@ api.patch('/admin/contact-messages/:id', auth, requirePermission('MANAGE_USERS')
   res.json({ id: updated.rows[0].id, status: updated.rows[0].status, closedAt: updated.rows[0].closed_at });
 }));
 
-api.post('/admin/audit/retention', auth, requirePermission('ADMIN_SYSTEM'), asyncRoute(async (req, res) => {
+api.post('/admin/audit/retention', adminAuth, requirePermission('ADMIN_SYSTEM'), asyncRoute(async (req, res) => {
   const parsed = auditRetentionSchema.safeParse(req.body);
   if (!parsed.success) throw appError('INVALID_INPUT', { code: 'INVALID_INPUT', http: 400, expose: true });
   const cutoff = new Date(Date.now() - parsed.data.olderThanDays * 24 * 60 * 60 * 1000);
@@ -2266,39 +3298,116 @@ api.post('/admin/audit/retention', auth, requirePermission('ADMIN_SYSTEM'), asyn
   res.json({ dryRun: false, cutoffAt: cutoff.toISOString(), deletedCount: deleted, retentionDays: parsed.data.olderThanDays });
 }));
 
-api.get('/admin/audit', auth, requirePermission('VIEW_AUDIT'), asyncRoute(async (_req, res) => {
+api.get('/admin/audit', adminAuth, requirePermission('VIEW_AUDIT'), asyncRoute(async (_req, res) => {
   const entries = await pool.query(`SELECT a.id,a.action,a.entity,a.entity_id,a.created_at,u.name AS actor_name,u.email AS actor_email
     FROM audit_logs a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.created_at DESC LIMIT 200`);
   res.json(entries.rows.map((row) => ({ id: row.id, action: row.action, entity: row.entity, entityId: row.entity_id, createdAt: row.created_at, actor: row.actor_name ? { name: row.actor_name, email: row.actor_email } : null })));
 }));
 
-api.get('/admin/permissions', auth, requirePermission('ADMIN_SYSTEM'), (req, res) => {
+api.get('/admin/permissions', adminAuth, requirePermission('ADMIN_SYSTEM'), (req, res) => {
   res.json({ role: req.user!.role, permissions: permissionsFor(req.user!.role), canManagePricing: hasPermission(req.user!.role, 'MANAGE_PRICING') });
 });
 
 app.use('/api', api);
 app.use((error: unknown, req: Request, res: Response, _next: NextFunction) => {
+  const bodyErr = error as { type?: string; path?: string };
+  if (bodyErr.type === 'entity.too.large') error = req.path.includes('/attachments') ? appError('SUPPORT_ATTACHMENT_SIZE', { code: 'SUPPORT_ATTACHMENT_SIZE', http: 413, expose: true }) : appError('PAYLOAD_TOO_LARGE', { code: 'PAYLOAD_TOO_LARGE', http: 413, expose: true });
   const known = error as AppError;
   const status = known.http ?? 500;
   const code = known.code ?? 'INTERNAL_ERROR';
-  log('error', 'request_failed', { requestId: requestId(req), path: req.path, method: req.method, status, code, message: error instanceof Error ? error.message : 'Unknown error' });
-  res.status(status).json({ error: code, message: known.expose ? humanMessage(code) : 'Não foi possível concluir esta operação agora. Tente novamente.' });
+  log('error', 'request_failed', { requestId: requestId(req), path: req.path, method: req.method, status, code, message: error instanceof Error ? error.message : 'Unknown error', ...(typeof (error as { detail?: unknown }).detail === 'string' ? { detail: ((error as { detail: string }).detail).slice(0, 400) } : {}) });
+  const details = known.expose ? (known as AppError & { details?: unknown }).details : undefined;
+  res.status(status).json({ error: code, message: known.expose ? (code.startsWith('SIM_') || known.showMessage ? known.message : humanMessage(code)) : 'Não foi possível concluir esta operação agora. Tente novamente.', ...(Array.isArray(details) ? { details } : {}) });
 });
+
+const escapeHtmlText = (v: unknown) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c);
 
 function parseOAuthProvider(value: string): OAuthProvider {
   if (value === 'google' || value === 'microsoft' || value === 'apple') return value;
   throw appError('OAUTH_PROVIDER_UNSUPPORTED', { code: 'OAUTH_PROVIDER_UNSUPPORTED', http: 404, expose: true });
 }
 
-function hashIp(ip: string | undefined): string | null {
-  if (!ip) return null;
-  return crypto.createHash('sha256').update(`${env.JWT_SECRET}:${ip}`).digest('hex');
-}
-
 function humanMessage(code: string): string {
   const messages: Record<string, string> = {
+    INTEGRATION_NOT_CONFIGURED: 'Esta integração ainda não está configurada. Preencha as chaves no ambiente e reinicie.',
+    INTEGRATION_CREDENTIALS_REJECTED: 'O serviço recusou as credenciais. Confira as chaves.',
+    SMTP_CONNECTION_FAILED: 'Não foi possível conectar ao serviço de e-mail. No SMTP, confira SMTP_HOST, SMTP_PORT e SMTP_SECURE e se o servidor libera a porta (a DigitalOcean bloqueia 25, 465 e 587 em contas novas: teste a porta 2525 ou use EMAIL_PROVIDER=brevo_api).',
+    INTEGRATION_UNREACHABLE: 'Não foi possível falar com o serviço agora. Tente novamente.',
+    TESTIMONIAL_NOT_ELIGIBLE: 'Só clientes com uma consulta concluída ou um pagamento confirmado podem enviar depoimento.',
+    TESTIMONIAL_CONTENT_INVALID: 'O texto não pode ter links, e-mails, telefones ou números de documento.',
+    TESTIMONIAL_NOT_FOUND: 'Depoimento não encontrado.',
+    TESTIMONIAL_INVALID_STATE: 'Esta ação não é possível no estado atual do depoimento.',
+    TESTIMONIAL_CONSENT_INVALID: 'O consentimento ou o conteúdo deste depoimento não está íntegro. Peça um novo envio.',
+    TESTIMONIAL_FOUR_EYES: 'Outra pessoa da equipe precisa aprovar um depoimento cadastrado manualmente.',
+    PAYLOAD_TOO_LARGE: 'O conteúdo enviado é grande demais.',
+    FISCAL_PROVIDER_NOT_CONFIGURED: 'A emissão automática não está configurada. Emita a nota no sistema da contabilidade e registre aqui.',
+    FISCAL_PAYMENT_NOT_CONFIRMED: 'O pagamento deste documento ainda não está confirmado.',
+    FISCAL_CUSTOMER_INCOMPLETE: 'Falta o CPF ou CNPJ do cliente para emitir.',
+    FISCAL_DOCUMENT_NOT_ISSUED: 'Só notas já emitidas podem ser enviadas ao cliente.',
+    FISCAL_CUSTOMER_EMAIL_MISSING: 'O cliente não tem e-mail cadastrado para receber a nota.',
+    FISCAL_DELIVERY_LIMIT: 'Limite de envios deste documento atingido.',
+    FISCAL_JOB_NOT_RETRYABLE: 'Só emissões que falharam podem ser reabertas.',
+    SUPPORT_CONVERSATION_NOT_FOUND: 'Conversa não encontrada.',
+    SUPPORT_CONVERSATION_CLOSED: 'Esta conversa foi encerrada. Abra uma nova para continuar.',
+    SUPPORT_RELATED_NOT_FOUND: 'Não encontramos esse item na sua conta.',
+    SUPPORT_RATE_LIMITED: 'Muitas mensagens em pouco tempo. Aguarde um instante.',
+    SUPPORT_TOO_MANY_OPEN: 'Você já tem várias conversas abertas. Conclua uma delas antes de abrir outra.',
+    SUPPORT_ATTACHMENT_SIZE: 'O arquivo precisa ter até 2 MB.',
+    SUPPORT_ATTACHMENT_TYPE: 'Envie apenas imagem (PNG, JPG ou WebP) ou PDF.',
+    SUPPORT_ATTACHMENT_LIMIT: 'Limite de anexos desta conversa atingido.',
+    SUPPORT_ATTACHMENT_NOT_FOUND: 'Anexo não encontrado.',
+    SUPPORT_ASSIGNEE_INVALID: 'Esta pessoa não pode atender o suporte.',
+    PAYMENT_ORDER_NOT_FOUND: 'Pedido não encontrado.',
+    QUERY_NOT_CANCELLABLE: 'Esta consulta já foi concluída e não pode ser cancelada.',
+    PAYMENT_NOT_PAID: 'O pagamento deste pedido ainda não foi confirmado.',
+    PAYMENT_REFUND_FAILED: 'Não foi possível pedir o estorno agora. Sua consulta paga continua disponível; tente novamente em instantes.',
+    PAYMENT_NOT_REFUNDABLE: 'Este pagamento não pode ser estornado por aqui. Fale com o suporte.',
+    PAYMENT_REFUND_IN_PROGRESS: 'Já existe um estorno solicitado para este pedido.',
+    PAYMENT_REFUND_REJECTED: 'O Mercado Pago recusou o estorno. Verifique o pagamento no painel do provedor.',
+    CNPJ_INVALID: 'CNPJ inválido.',
+    CNPJ_NOT_FOUND: 'CNPJ não encontrado.',
+    CNPJ_LOOKUP_DISABLED: 'A busca por CNPJ não está ativa. Preencha os dados manualmente.',
+    CNPJ_RATE_LIMITED: 'Muitas buscas. Tente novamente em alguns minutos.',
+    CNPJ_UNAVAILABLE: 'Não foi possível buscar agora. Preencha manualmente.',
+    CONTRACT_NOT_FOUND: 'Contrato não encontrado.',
+    CONTRACT_NOT_EDITABLE: 'Só rascunhos podem ser editados.',
+    CONTRACT_INVALID_STATE: 'Esta ação não está disponível no estado atual do contrato.',
+    CONTRACT_APPROVER_MUST_DIFFER: 'A aprovação precisa ser feita por outra pessoa, diferente de quem criou.',
+    CONTRACT_CHANGED_AFTER_APPROVAL: 'O texto mudou depois da aprovação. Envie para aprovação novamente.',
+    CONTRACT_MODEL_NOT_PUBLISHED: 'Este modelo ainda não foi publicado. Ele precisa de revisão jurídica registrada.',
+    CONTRACT_MODEL_NOT_APPROVED: 'O modelo precisa de aprovação com a referência da revisão jurídica.',
+    CONTRACT_MODEL_INVALID_STATE: 'Esta ação não está disponível no estado atual do modelo.',
+    CONTRACT_MODEL_NOT_EDITABLE: 'Só rascunhos de modelo podem ser editados.',
+    CONTRACT_MODEL_NOT_FOUND: 'Modelo não encontrado.',
+    LEGAL_REVIEW_REF_REQUIRED: 'Informe a referência da revisão jurídica.',
+    CONTRACTOR_DATA_MISSING: 'Preencha razão social e CNPJ da empresa em Notas fiscais antes de gerar contratos.',
+    CONTRACT_PARTY_DOCUMENT_INVALID: 'CPF/CNPJ da parte ausente ou inválido. Complete o cadastro.',
+    CONTRACT_PARTY_KIND_MISMATCH: 'Este modelo não serve para este tipo de parte.',
+    CONTRACT_ITEMS_REQUIRED: 'Inclua ao menos um item de preço.',
+    CONTRACT_COMMISSION_REQUIRED: 'Informe a comissão do parceiro.',
+    CONTRACT_COMMISSION_NOT_ALLOWED: 'Comissão só vale para contrato de parceiro.',
+    CONTRACT_NOT_SIGNED: 'O contrato precisa estar assinado.',
+    CONTRACT_ALREADY_APPLIED: 'As condições deste contrato já foram aplicadas.',
+    CONTRACT_PARENT_REQUIRED: 'Informe o contrato original do aditivo.',
+    CONTRACT_PARENT_NOT_SIGNED: 'O contrato original precisa estar assinado.',
+    CONTRACT_PARENT_PARTY_MISMATCH: 'O aditivo precisa ser da mesma parte do contrato original.',
+    PRICE_BELOW_FLOOR: 'Preço abaixo do piso permitido para este produto.',
+    ESIGN_NOT_CONFIGURED: 'A assinatura eletrônica não está ativa neste ambiente.',
+    EMAIL_NOT_FOUND: 'E-mail não encontrado na fila.',
+    EMAIL_RESEND_LIMIT: 'Limite de reenvios atingido.',
+    EMAIL_RESEND_NOT_ALLOWED: 'Este e-mail não pode ser reenviado. Gere um novo envio a partir do documento.',
+    EMAIL_CANCEL_NOT_ALLOWED: 'Este e-mail não pode mais ser cancelado.',
     INVALID_INPUT: 'Revise os dados informados e tente novamente.',
     INVALID_PLATE: 'Informe uma placa válida no padrão brasileiro.',
+    INVALID_CHASSIS: 'Informe um chassi válido (8 a 17 letras e números).',
+    INVALID_RENAVAM: 'Informe um Renavam válido (9 a 11 dígitos).',
+    INVALID_OWNER_DOC: 'Informe um CPF ou CNPJ válido.',
+    INVALID_PHONE: 'Informe um WhatsApp válido, com DDD.',
+    INVALID_PIX_KEY: 'A chave PIX não parece válida. Confira o tipo (CPF, CNPJ, e-mail, celular ou aleatória) e o número.',
+    INVALID_ZIP: 'Informe um CEP válido, com 8 números.',
+    RESPONSIBILITY_REQUIRED: 'Para criar a conta, aceite os Termos de Uso e a Política de Privacidade.',
+    PROFILE_INCOMPLETE: 'Preencha os dados do cadastro (nome, WhatsApp, CPF, cidade e estado).',
+    SEARCH_TYPE_NOT_SUPPORTED: 'Este tipo de busca ainda não está disponível na fonte de dados atual. Nada foi cobrado.',
     INVALID_CREDENTIALS: 'E-mail ou senha inválidos.',
     EMAIL_ALREADY_EXISTS: 'Já existe uma conta para este e-mail.',
     AUTH_REQUIRED: 'Entre na sua conta para continuar.',
@@ -2313,23 +3422,85 @@ function humanMessage(code: string): string {
     OAUTH_TICKET_INVALID: 'Esta solicitação de acesso expirou. Tente entrar novamente.',
     PASSWORD_RESET_UNAVAILABLE: 'A recuperação por e-mail está temporariamente indisponível porque o envio de e-mail ainda não foi configurado. Tente novamente mais tarde ou fale com o suporte.',
     USER_NOT_FOUND: 'O usuário solicitado não foi encontrado.',
+    EMAIL_SEND_FAILED: 'Não foi possível enviar o e-mail agora. Tente de novo em alguns minutos.',
     ADMIN_SELF_CHANGE_FORBIDDEN: 'Para segurança, use outro administrador para alterar o próprio acesso.',
     WALLET_BALANCE_INVALID: 'Este ajuste deixaria a carteira com saldo negativo.',
     CREDIT_PACKAGE_NOT_FOUND: 'A oferta legada de saldo pré-pago solicitada não está disponível.',
     PAYMENT_PROVIDER_NOT_CONFIGURED: 'O checkout de pagamento ainda não foi configurado para este ambiente.',
+    SITE_NOT_OPEN: 'O site ainda não está aberto ao público.',
+    PURCHASE_CONTRACT_REQUIRED: 'Marque “Li e aceito os Termos do Contrato de Uso” para continuar.',
+    PURCHASE_PRIVACY_REQUIRED: 'Marque “Estou ciente e concordo com a Política de Privacidade (LGPD)” para continuar.',
+    TERMS_ACCEPTANCE_REQUIRED: 'Marque que aceita os Termos do Contrato de Uso e a Política de Privacidade (LGPD) para consultar.',
+    PURCHASE_CONTRACT_NOT_ACCEPTED: 'Falta confirmar o contrato com o código enviado ao seu e-mail.',
+    PURCHASE_CONTRACT_EXPIRED: 'O contrato expirou. Gere um novo para continuar.',
+    PURCHASE_CONTRACT_USED: 'Este contrato já foi usado em outra compra. Gere um novo.',
+    PURCHASE_CONTRACT_MISMATCH: 'O valor ou o item mudou depois do contrato. Gere um novo contrato.',
+    PURCHASE_CONTRACT_NOT_FOUND: 'Contrato não encontrado.',
+    PURCHASE_CONTRACT_NOT_PENDING: 'Este contrato não aguarda mais confirmação.',
+    PURCHASE_CONTRACT_RATE_LIMIT: 'Muitos contratos gerados em pouco tempo. Tente de novo mais tarde.',
+    PURCHASE_OTP_INVALID: 'Código incorreto. Confira o e-mail e tente de novo.',
+    PURCHASE_OTP_EXPIRED: 'O código expirou. Peça um novo código.',
+    PURCHASE_OTP_LOCKED: 'Muitas tentativas erradas. Peça um novo código.',
+    PURCHASE_OTP_TOO_SOON: 'Aguarde alguns segundos antes de pedir outro código.',
+    PURCHASE_OTP_SEND_LIMIT: 'Limite de códigos atingido. Gere um novo contrato.',
+    CONTRACT_PROFILE_INCOMPLETE: 'Informe seu CPF ou CNPJ no perfil para gerar o contrato.',
+    PURCHASE_CONTRACTOR_MISSING: 'Esta compra está temporariamente indisponível. Nossa equipe já foi avisada; tente de novo mais tarde.',
+    COUPON_ZERO_TOTAL_UNSUPPORTED: 'Cupom de 100% vale apenas para consulta avulsa, não para pacote de saldo.',
+    COUPON_INVALID: 'Cupom não encontrado. Confira o código.',
+    COUPON_UNAVAILABLE: 'Este cupom não está disponível (expirado, desativado ou esgotado).',
+    CHECKOUT_IN_PROGRESS: 'Seu pagamento já está sendo preparado. Aguarde alguns segundos antes de tentar de novo.',
+    COUPON_ALREADY_USED: 'Você já usou este cupom grátis. Cada conta resgata uma vez.',
+    AFFILIATE_INVALID: 'Código de indicação inválido.',
+    QUERY_NOT_CHARGEABLE: 'Esta consulta não tem valor a cobrar.',
     PAYMENT_PROVIDER_REQUEST_FAILED: 'Não foi possível abrir o checkout agora. Tente novamente em alguns instantes.',
     FIPE_FEATURE_DISABLED: 'A consulta FIPE gratuita está em ativação para este ambiente.',
     FIPE_PROVIDER_UNAVAILABLE: 'A consulta não respondeu de forma válida. Tente novamente em alguns instantes.',
     FIPE_NOT_FOUND: 'A combinação de veículo informada não foi encontrada na tabela vigente.',
     FIPE_REFERENCE_MISSING: 'A referência mensal da consulta não está disponível no momento.',
     FIPE_PLATE_DATA_INVALID: 'Não foi possível identificar os dados do veículo para esta placa.',
+    VEHICLE_NOT_FOUND: 'Não encontramos este veículo no guia.',
+    CONSUMPTION_NOT_FOUND: 'Não encontramos este registro de consumo.',
+    CATALOG_NOT_FOUND: 'Não encontramos este veículo no catálogo.',
+    CATALOG_SNAPSHOT_INVALID: 'Informe o mês do arquivo no formato AAAA-MM, por exemplo 2026-09.',
+    IMPORT_HAS_ERRORS: 'O arquivo tem linhas inválidas. Corrija e rode a prévia de novo antes de importar.',
+    INVALID_SPECS: 'Há campos da ficha técnica com valor inválido. Revise os campos indicados.',
+    VEHICLE_HAS_OPINIONS: 'Este modelo já tem opiniões de donos. Arquive o modelo em vez de apagar.',
+    SLUG_TAKEN: 'Já existe um modelo com este endereço (slug).',
+    TIP_NOT_FOUND: 'A dica não foi encontrada.',
+    OPINION_NOT_FOUND: 'A opinião não foi encontrada.',
+    VERSION_DUPLICATE: 'Já existe uma versão com este nome e ano neste modelo.',
+    IMPORT_INVALID: 'O arquivo de importação é inválido.',
+    IMPORT_EMPTY: 'A planilha não tem linhas para importar.',
+    IMPORT_TOO_LARGE: 'A planilha tem linhas demais. Importe até 2.000 linhas por vez.',
+    IMPORT_MISSING_COLUMNS: 'A planilha precisa das colunas marca, modelo e versao. Baixe o modelo de planilha.',
+    COMPARE_NEEDS_2_TO_6: 'Escolha de 2 a 6 veículos diferentes para comparar.',
+    COMPARE_VEHICLE_NOT_FOUND: 'Um dos veículos escolhidos não está mais disponível no guia.',
+    OPINION_TOO_SHORT: 'Conte um pouco mais: escreva ao menos 20 caracteres entre o que gostou, o que não gostou e o comentário.',
+    OPINION_LINKS_NOT_ALLOWED: 'Não é permitido colocar links ou e-mails na opinião.',
+    VERSION_NOT_FOUND: 'A versão escolhida não existe para este modelo.',
+    SIMULATION_NOT_FOUND: 'Simulação não encontrada.',
+    BANK_EXISTS: 'Já existe um banco com esse nome.',
+    BANK_NOT_FOUND: 'Banco não encontrado.',
+    BCB_UNAVAILABLE: 'Não foi possível consultar o Banco Central agora. As taxas atuais foram mantidas; tente novamente mais tarde.',
+    VEHICLE_PLATE_UNAVAILABLE: 'A busca por placa está indisponível no momento. Busque pelo nome do modelo.',
     FIPE_PLATE_NOT_FOUND: 'Não identificamos um veículo para esta placa. Confira os dados e tente novamente.',
     FIPE_PLATE_UNAVAILABLE: 'Não foi possível consultar os dados do veículo agora. Tente novamente em instantes.',
     FIPE_PLATE_VEHICLE_NOT_IDENTIFIED: 'Não encontramos a versão FIPE correspondente a esta placa.',
     FIPE_SELECTION_REQUIRED: 'Informe a placa ou selecione o veículo para consultar a FIPE.',
     FIPE_DAILY_LIMIT: 'O limite diário de consultas FIPE foi atingido. Tente novamente amanhã.',
     REPORT_NOT_FOUND: 'O relatório solicitado não foi encontrado ou não está disponível.',
-    FIPE_INVALID_REPORT: 'O relatório FIPE não pôde ser validado.'
+    FIPE_INVALID_REPORT: 'O relatório FIPE não pôde ser validado.',
+    PARTNER_CODE_EXISTS: 'Já existe um parceiro ou convite com esse código. Escolha outro.',
+    INVITE_NOT_FOUND: `Este convite não existe. Peça um novo link à equipe ${BRAND.of}.`,
+    INVITE_USED: 'Este convite já foi utilizado.',
+    INVITE_REVOKED: `Este convite foi cancelado. Peça um novo link à equipe ${BRAND.of}.`,
+    INVITE_EXPIRED: `Este convite expirou. Peça um novo link à equipe ${BRAND.of}.`,
+    INVITE_EMAIL_MISMATCH: 'Este convite foi enviado para outro e-mail. Entre com o e-mail que recebeu o convite.',
+    INVALID_REPORT_SECTIONS: 'Uma das seções marcadas não pode ser entregue ao cliente. Desmarque e salve novamente.',
+    INVALID_DATA_SOURCES: 'A combinação de fontes de dados escolhida não é válida.',
+    DATA_SOURCES_AUCTION_CONFLICT: 'Escolha só um tipo de leilão: completo (Credify) ou simples (AnyCar).',
+    DATA_SOURCE_ANYCAR_NOT_CONFIGURED: 'O leilão simples precisa da chave ANYCAR_API_KEY nas variáveis do Coolify.',
+    MARGIN_LOCK: 'O preço está abaixo do piso de margem calculado com os custos cadastrados. Atualize o custo do provedor em Financeiro → Produtos ou aumente o preço.'
   };
   return messages[code] ?? 'Não foi possível concluir esta operação agora. Tente novamente.';
 }
@@ -2338,15 +3509,169 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const webDist = path.resolve(__dirname, '../../web/dist');
 const indexHtmlPath = path.join(webDist, 'index.html');
 const indexHtmlTemplate = existsSync(indexHtmlPath) ? readFileSync(indexHtmlPath, 'utf8') : '';
-app.use(express.static(webDist, { index: false, maxAge: env.NODE_ENV === 'production' ? '1h' : 0, etag: true }));
-app.get('*', (req, res, next) => {
-  if (req.path.startsWith('/api/') || req.path === '/health') return next();
+const adminHtmlPath = path.join(webDist, 'admin.html');
+const adminHtmlTemplate = existsSync(adminHtmlPath) ? readFileSync(adminHtmlPath, 'utf8') : undefined;
+const staticOptions = { index: false, maxAge: env.NODE_ENV === 'production' ? '1h' : 0, etag: true } as const;
+const serveStatic = express.static(webDist, staticOptions);
+// Imagem de cada página, enviada pelo painel de SEO (fica no banco). O ?v= muda a cada troca, então pode ficar em cache.
+app.get('/seo-img/:file', asyncRoute(async (req, res) => {
+  const m = /^([a-z0-9-]+)\.(png|jpg|webp)$/.exec(String(req.params.file));
+  await syncFinancingPages();
+  const path = m ? pathFromSeoImageSlug(m[1]!) : null;
+  if (!m || !path) return res.status(404).end();
+  const r = await pool.query('SELECT mime,data,sha256 FROM seo_images WHERE path=$1', [path]);
+  if (!r.rowCount) return res.status(404).end();
+  const row = r.rows[0]!;
+  res.setHeader('Content-Type', String(row.mime));
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('ETag', `"${String(row.sha256).slice(0, 16)}"`);
+  res.setHeader('Cache-Control', req.query.v ? 'public, max-age=2592000' : 'public, max-age=3600');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  if (req.headers['if-none-match'] === `"${String(row.sha256).slice(0, 16)}"`) return res.status(304).end();
+  return res.send(row.data as Buffer);
+}));
+app.get('/robots.txt', (req, res) => { res.type('text/plain').setHeader('Cache-Control', 'public, max-age=3600'); res.send(renderRobotsTxt(env.APP_URL ?? env.WEB_ORIGIN, isAdminHost(req) || isPrelaunch())); });
+app.get('/sitemap.xml', asyncRoute(async (req, res) => {
+  if (isAdminHost(req) || isPrelaunch()) return res.status(404).end();
+  await syncFinancingPages();
+  const articles = await publishedArticleSlugs();
+  const vehicles = await pool.query(`SELECT slug,updated_at FROM vehicle_models WHERE status='PUBLISHED' AND archived_at IS NULL ORDER BY brand,name LIMIT 5000`);
+  const stores = await pool.query(`SELECT slug,updated_at FROM dealerships WHERE public_enabled AND active AND archived_at IS NULL ORDER BY created_at LIMIT 2000`);
+  res.type('application/xml').setHeader('Cache-Control', 'public, max-age=3600');
+  const seoPagesMap = await seoRows();
+  const seoImgs = await seoImages();
+  const base = env.APP_URL ?? env.WEB_ORIGIN;
+  const sitemapPages = new Map([...seoPagesMap].map(([k, v]) => [k, { noindex: v.noindex, updatedAt: v.updatedAt, imageUrl: seoImgs.has(k) ? seoImageUrl(base, k, seoImgs.get(k)!.mime, seoImgs.get(k)!.sha) : null }] as const));
+  return res.send(renderSitemapXml(env.APP_URL ?? env.WEB_ORIGIN, [...articles.map((a) => ({ path: `/blog/${a.slug}`, lastmod: a.updatedAt })), ...vehicles.rows.map((v) => ({ path: `/veiculos/${v.slug}`, lastmod: v.updated_at as Date })), ...stores.rows.map((s) => ({ path: `/loja/${s.slug}`, lastmod: s.updated_at as Date }))], sitemapPages));
+}));
+const hasAdminHosts = adminHosts().length > 0;
+// Duas frentes: bundle admin (admin.html + assets/admin-*) só é entregue no host do painel (ou em /painel quando não há host dedicado, apenas dev).
+const isAdminAsset = (p: string) => p === '/admin.html' || p.startsWith('/assets/admin-');
+app.use((req, res, next) => {
+  if (isAdminHost(req)) return serveStatic(req, res, next);
+  if (isAdminAsset(req.path) && hasAdminHosts) return res.status(404).end();
+  if (req.path === '/admin.html') return res.status(404).end();
+  return serveStatic(req, res, next);
+});
+function sendAdminShell(res: Response): void {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
+  res.type('html').send(adminHtmlTemplate);
+}
+app.get('*', asyncRoute(async (req, res, next) => {
+  if (req.path.startsWith('/api/') || req.path === '/health' || req.path === '/ready') return next();
+  if (isAdminHost(req)) {
+    if (!adminHtmlTemplate) return next();
+    return sendAdminShell(res);
+  }
+  if (!hasAdminHosts && adminHtmlTemplate && (req.path === '/painel' || req.path.startsWith('/painel/'))) return sendAdminShell(res);
   if (!indexHtmlTemplate) return next();
   res.setHeader('Cache-Control', 'no-store');
-  res.type('html').send(renderSeoHtml(indexHtmlTemplate, req.path, env.APP_URL ?? env.WEB_ORIGIN));
-});
+  const baseUrl = (env.APP_URL ?? env.WEB_ORIGIN).replace(/\/$/, '');
+  let override: SeoOverride = {};
+  const article = /^\/blog\/([a-z0-9-]+)\/?$/.exec(req.path);
+  if (article) {
+    const meta = await articleSeo(article[1]);
+    if (!meta) { res.status(404); override = { notFound: true }; }
+    else override = { title: `${meta.title} | ${BRAND.name}`, description: meta.description, jsonLd: [{ '@context': 'https://schema.org', '@type': 'Article', headline: meta.title, description: meta.description, datePublished: meta.publishedAt, dateModified: meta.updatedAt, inLanguage: 'pt-BR', author: { '@type': 'Organization', name: meta.author }, publisher: { '@type': 'Organization', name: `${BRAND.name}`, url: `${baseUrl}/` }, mainEntityOfPage: `${baseUrl}/blog/${article[1]}` }] };
+    if (!override.notFound) { const body = await articleBodyHtml(article[1]!); if (body) override.bodyHtml = body; }
+  } else if (req.path === '/') {
+    const [prods, faqs] = await Promise.all([
+      pool.query(`SELECT id,name,description,price_cents FROM query_products WHERE active=true AND commercial_status='ACTIVE' AND NOT is_free ORDER BY display_order,price_cents`),
+      pool.query('SELECT question,answer FROM faqs WHERE active=true ORDER BY display_order,created_at LIMIT 6')
+    ]);
+    const money = (c: number) => (c / 100).toFixed(2);
+    const brl = (c: number) => `R$ ${money(c).replace('.', ',')}`;
+    const jsonLd: unknown[] = [
+      { '@context': 'https://schema.org', '@type': 'Organization', name: `${BRAND.name}`, url: `${baseUrl}/`, logo: `${baseUrl}/brand/og-image.png` },
+      { '@context': 'https://schema.org', '@type': 'WebSite', name: `${BRAND.name}`, url: `${baseUrl}/`, inLanguage: 'pt-BR', potentialAction: { '@type': 'SearchAction', target: { '@type': 'EntryPoint', urlTemplate: `${baseUrl}/consultar?placa={placa}` }, 'query-input': 'required name=placa' } }
+    ];
+    if (prods.rowCount) jsonLd.push({ '@context': 'https://schema.org', '@type': 'ItemList', name: 'Consultas veiculares', itemListElement: prods.rows.map((p, i) => ({ '@type': 'ListItem', position: i + 1, item: { '@type': 'Product', name: p.name, description: p.description, image: productImageUrls(baseUrl, String(p.id)), brand: { '@type': 'Brand', name: `${BRAND.name}` }, offers: { '@type': 'Offer', priceCurrency: 'BRL', price: money(Number(p.price_cents)), availability: 'https://schema.org/InStock', url: `${baseUrl}/planos` } } })) });
+    if (faqs.rowCount) jsonLd.push({ '@context': 'https://schema.org', '@type': 'FAQPage', mainEntity: faqs.rows.map((f) => ({ '@type': 'Question', name: f.question, acceptedAnswer: { '@type': 'Answer', text: f.answer } })) });
+    const list = prods.rows.map((p) => `<li><h3>${escapeHtmlText(p.name)} · ${brl(Number(p.price_cents))}</h3><p>${escapeHtmlText(p.description)}</p></li>`).join('');
+    override = { jsonLd, bodyHtml: `<section><h2>Consultas veiculares por placa</h2><ul>${list}</ul><p>Sem mensalidade: você paga só pela consulta que fizer, com preço visível antes do pagamento e relatório em PDF com código de validação.</p><p><a href="/planos">Compare as consultas e os preços</a> · <a href="/simulador">Simulador de financiamento</a> · <a href="/veiculos">Guia de veículos</a></p></section>` };
+  } else if (req.path.replace(/\/$/, '') === '/planos') {
+    const plansBody = await plansBodyHtml(); if (plansBody) override = { bodyHtml: plansBody };
+  } else if (req.path.replace(/\/$/, '') === '/veiculos/mais-economicos') {
+    // Rota estática do ranking; não consultar como se fosse slug de modelo.
+  } else if (/^\/veiculos\/[a-z0-9-]+\/?$/.test(req.path)) {
+    const v = await pool.query(`SELECT brand,name,summary,year_from,year_to,body_type FROM vehicle_models WHERE slug=$1 AND status='PUBLISHED' AND archived_at IS NULL`, [req.path.split('/')[2]]);
+    if (!v.rowCount) { res.status(404); override = { notFound: true }; }
+    else {
+      const m = v.rows[0]!;
+      const years = m.year_from ? ` (${m.year_from}${m.year_to && m.year_to !== m.year_from ? `–${m.year_to}` : ''})` : '';
+      override = { title: `${m.brand} ${m.name}${years}: ficha técnica e opinião dos donos | ${BRAND.name}`, description: String(m.summary || `Ficha técnica, consumo, nota e opinião de donos do ${m.brand} ${m.name}.`).slice(0, 160) };
+      const vehicleBody = await vehicleBodyHtml(req.path.split('/')[2]!); if (vehicleBody) override.bodyHtml = vehicleBody;
+    }
+  } else if (/^\/loja\/[a-z0-9-]+(\/veiculo\/[0-9a-f-]{36})?\/?$/.test(req.path)) {
+    const parts = req.path.split('/');
+    const store = await pool.query(`SELECT id,name,city,state,about FROM dealerships WHERE lower(slug)=$1 AND public_enabled AND active AND archived_at IS NULL`, [parts[2]]);
+    if (!store.rowCount) { res.status(404); override = { notFound: true }; }
+    else {
+      const st = store.rows[0]!;
+      const place = [st.city, st.state].filter(Boolean).join(' - ');
+      override = { title: `${st.name}${place ? ` em ${place}` : ''}: veículos à venda | ${BRAND.name}`, description: String(st.about || `Veículos à venda na ${st.name}${place ? `, ${place}` : ''}, com consulta verificada.`).slice(0, 160) };
+      if (parts[3] === 'veiculo') {
+        const v = await pool.query(`SELECT brand,model,version,year_model FROM stock_vehicles WHERE id=$1 AND dealership_id=$2 AND public_listed AND status IN ('AVAILABLE','RESERVED')`, [parts[4], st.id]);
+        if (!v.rowCount) { res.status(404); override = { notFound: true }; }
+        else { const x = v.rows[0]!; const name = [x.brand, x.model, x.version, x.year_model].filter(Boolean).join(' '); override = { title: `${name} à venda na ${st.name} | ${BRAND.name}`, description: `${name} na ${st.name}${place ? `, ${place}` : ''}. Veja fotos, preço e a consulta verificada.` }; }
+      }
+    }
+  } else if (req.path.replace(/\/$/, '') === '/perguntas-frequentes') {
+    const faqs = await pool.query('SELECT question,answer FROM faqs WHERE active=true ORDER BY display_order,created_at LIMIT 60');
+    if (faqs.rowCount) override = { bodyHtml: `<section>${faqs.rows.slice(0, 30).map((f) => `<h2>${escapeHtmlText(f.question)}</h2><p>${escapeHtmlText(f.answer)}</p>`).join('')}</section>`, jsonLd: [{ '@context': 'https://schema.org', '@type': 'FAQPage', mainEntity: faqs.rows.map((f) => ({ '@type': 'Question', name: f.question, acceptedAnswer: { '@type': 'Answer', text: f.answer } })) }] };
+  }
+  let finH1: string | null = null;
+  const finPath = req.path.length > 1 ? req.path.replace(/\/$/, '') : req.path;
+  if (isFinancingPath(finPath)) {
+    const fin = await financingContent(finPath);
+    if (!fin) { res.status(404); override = { notFound: true }; }
+    else {
+      const rowFaq = ((await seoRows()).get(finPath)?.faq ?? []).length > 0;
+      finH1 = fin.h1;
+      override = { bodyHtml: financingBodyHtml(fin, !rowFaq) };
+      if (!rowFaq && fin.faq.length) override.jsonLd = [{ '@context': 'https://schema.org', '@type': 'FAQPage', mainEntity: fin.faq.map((f) => ({ '@type': 'Question', name: f.q, acceptedAnswer: { '@type': 'Answer', text: f.a } })) }];
+    }
+  }
+  if (!override.notFound) {
+    const seoRow = (await seoRows()).get(req.path.length > 1 ? req.path.replace(/\/$/, '') : req.path);
+    if (seoRow) {
+      if (seoRow.h1 && !override.h1) override.h1 = seoRow.h1;
+      if (seoRow.title && !override.title) override.title = seoRow.title;
+      if (seoRow.description && !override.description) override.description = seoRow.description;
+      override.seoData = { h1: seoRow.h1, title: seoRow.title, sections: seoRow.sections, faq: seoRow.faq };
+      override.bodyHtml = `${override.bodyHtml ?? ''}${seoBodyHtml(seoRow)}`; // páginas com conteúdo próprio (ex.: central de perguntas) recebem também os blocos do painel
+      const faqLd = seoFaqLd(seoRow);
+      if (faqLd && !(override.jsonLd ?? []).some((o) => (o as { '@type'?: string })['@type'] === 'FAQPage')) override.jsonLd = [...(override.jsonLd ?? []), faqLd];
+      if (seoRow.noindex) override.noindex = true;
+    }
+    if (finH1 && !override.h1) override.h1 = finH1;
+    const seoImg = (await seoImages()).get(req.path.length > 1 ? req.path.replace(/\/$/, '') : req.path);
+    if (seoImg) { override.image = seoImageUrl(baseUrl, req.path.length > 1 ? req.path.replace(/\/$/, '') : req.path, seoImg.mime, seoImg.sha); override.imageWidth = seoImg.width; override.imageHeight = seoImg.height; }
+  }
+  if (!isKnownPath(req.path)) { res.status(404); override = { notFound: true }; }
+  const page = renderSeoHtml(indexHtmlTemplate, req.path, env.APP_URL ?? env.WEB_ORIGIN, override);
+  res.type('html').send(isPrelaunch() ? page.replace(/<meta name="robots" content="[^"]*"\s*\/>/, '<meta name="robots" content="noindex,nofollow,noarchive" />') : page);
+}));
 
+/** Recupera consultas órfãs logo após reinício; o intervalo mantém a proteção durante a operação normal. */
+const recoverStuckQueries = () => {
+  void sweepStuckQueries(env.QUERY_STUCK_MINUTES).catch((error) => log('error', 'query_sweeper_failed', { message: error instanceof Error ? error.message : 'unknown' }));
+};
+recoverStuckQueries();
+setInterval(recoverStuckQueries, 2 * 60 * 1000).unref();
+// As taxas do simulador se atualizam também sem ninguém abrir a página: na partida e a cada 6 horas (a regra de 24 h e o botão do painel continuam valendo).
+const keepFinancingRates = () => { void loadFinancingSettings().then(maybeRefreshInBackground).catch((error) => log('warn', 'financing_rates_schedule_failed', { message: error instanceof Error ? error.message : 'unknown' })); };
+setTimeout(keepFinancingRates, 30_000).unref();
+setInterval(keepFinancingRates, 2 * 60 * 60 * 1000).unref();
+setInterval(() => { releaseCommissions().catch((error) => log('error', 'commission_release_failed', { message: error instanceof Error ? error.message : 'unknown' })); }, 60 * 60 * 1000).unref();
+setInterval(() => { purgeExpiredRaw(env.RAW_RETENTION_DAYS).catch((error) => log('error', 'raw_retention_failed', { message: error instanceof Error ? error.message : 'unknown' })); }, 6 * 60 * 60 * 1000).unref();
+if (env.DATA_PROVIDER === 'real' && env.VEHICLE_API_PROVIDER === 'credify' && env.CREDIFY_CLIENT_ID && env.CREDIFY_CLIENT_SECRET && process.env.NODE_TEST_CONTEXT === undefined) {
+  startCredifyTokenKeeper((message) => log('warn', 'credify_token_refresh_failed', { message }));
+}
 const httpServer = app.listen(env.PORT, '0.0.0.0', () => log('info', 'server_started', { port: env.PORT, provider: env.DATA_PROVIDER, environment: env.NODE_ENV }));
+// Relatórios antigos (gravados com máscara) são refeitos em claro a partir do bruto cifrado. Roda uma vez, em segundo plano.
+if (env.NODE_ENV !== 'test') setTimeout(() => { refreshStaleReports().catch((error: unknown) => log('warn', 'reports_unmask_failed', { error: error instanceof Error ? error.message : 'unknown' })); }, 15000).unref();
 let shuttingDown = false;
 function shutdown(signal: string): void {
   if (shuttingDown) return;

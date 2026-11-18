@@ -1,6 +1,6 @@
 # Banco de dados
 
-A CARPIVARA utiliza PostgreSQL. A criação inicial permite bootstrap seguro em banco vazio e o histórico de evolução é controlado pela tabela `schema_migrations`. As migrations aplicadas são transacionais e protegidas por advisory lock com `MIGRATION_LOCK_TIMEOUT_MS` e retry controlado, evitando que réplicas concorrentes executem a mesma alteração.
+O BL Buscar utiliza PostgreSQL. A criação inicial permite bootstrap seguro em banco vazio e o histórico de evolução é controlado pela tabela `schema_migrations`. As migrations aplicadas são transacionais e protegidas por advisory lock com `MIGRATION_LOCK_TIMEOUT_MS` e retry controlado, evitando que réplicas concorrentes executem a mesma alteração.
 
 ## Comandos operacionais
 
@@ -14,6 +14,8 @@ A CARPIVARA utiliza PostgreSQL. A criação inicial permite bootstrap seguro em 
 | Organização | `organizations`, `organization_members` | Preparação para empresas, membros e subcontas. |
 | Carteira | `wallets`, `wallet_transactions`, `payments` | Saldo, ledger e pagamentos/sandbox. |
 | Consulta | `query_products`, `vehicle_queries`, `vehicle_query_results`, `sandbox_vehicles` | Produtos configuráveis, requisições, relatório normalizado e massa de testes. |
+| Financeiro | `payment_settings`, `payment_orders`, `payment_webhook_events`, `affiliates`, `affiliate_commissions`, `payouts`, `price_references`, `product_price_history` | Configuração de pagamento, parceiros, comissões, repasses e histórico de preços. |
+| Equipe e LGPD | `team_totp`, `team_totp_recovery_codes`, `pii_reveals`, `api_keys`, `query_source_rules` | 2FA da equipe, revelações auditadas, (`api_keys` sem uso desde a remoção da API pública) e regras de fonte por produto. |
 | Operação | `data_providers`, `saved_vehicles`, `query_exports`, `audit_logs`, `schema_migrations` | Controle de provider, favoritos, exportação, auditoria e versão de schema. |
 
 ## Integridade das consultas e créditos
@@ -39,3 +41,39 @@ A migration `003_identity_and_social_auth` prepara o banco para cadastro e auten
 ## Evolução futura
 
 Migrations futuras podem introduzir rotação de sessões, eventos de pagamento com webhook, API keys B2B, custos de provider, retenção automatizada, cupons e assinaturas. Cada alteração deve ser adicionada como migration nova e validada em cópia do banco antes de deploy.
+
+## Migrations do produto
+
+`010_payment_settings`, `011_partners_commissions_payouts`, `012_reference_prices_and_price_history`, `013_public_api_pii_and_session_audience`, `014_refunds_chargebacks_and_net_amounts` e `015_blbuscar_catalog` (catálogo e regras de fonte `contracted`) e `016_catalog_cms` (catálogo editável: `catalog_features`, `product_catalog_features`, `faqs`, `articles`, novas colunas em produtos e pacotes, seções do relatório por produto, permissão `MANAGE_CONTENT`). Valores monetários são sempre `*_cents` (inteiros) e percentuais em bps.
+
+Também `017_admin_people_billing_fiscal`: novos níveis `FINANCEIRO`, `SUPORTE` e `CONTEUDO` em `users.role`; `user_profiles` com tipo de cliente, segmento, dados fiscais, endereço, observações e `archived_at`; `organizations` com dados cadastrais completos; `archived_at` em FAQ, artigos e produtos; tabelas `fiscal_settings`, `charges`, `charge_installments` (parcelas PENDING/PAID/CANCELLED) e `fiscal_documents` (NFS-e/NF-e PENDING/ISSUED/CANCELLED, com cópia dos dados do cliente no momento da emissão). Clientes removidos são anonimizados no e-mail e mantêm o histórico.
+
+Também `018_vehicle_guide`: `vehicle_models` (marca, modelo, tipo, carroceria, anos, resumo, review, pontos fortes/atenção, dicas de compra, foto https, status DRAFT/PUBLISHED, `archived_at`), `vehicle_versions` (versão, ano-modelo, combustível, código FIPE, `specs` jsonb validado contra o catálogo de campos), `vehicle_opinions` (única por usuário e modelo, nota 1–5, quesitos jsonb, PENDING/APPROVED/REJECTED com motivo) e `vehicle_tips` (categoria, modelo opcional, status). Apagar modelo só é permitido sem opiniões; arquivar preserva tudo.
+
+Também `019_financing_simulator`: `financing_settings` (linha única: taxas médias CDC PF/PJ e leasing PJ/PF, mês de referência, fonte, atualização automática e último erro, tarifas de referência em centavos e parâmetros do IOF) e `financing_simulations` (código `SIM-XXXXXXXX`, usuário, modalidade, tipo de veículo, valores, taxa, parcela, total, CET, `input` e `output` jsonb para reimprimir o PDF exatamente como foi gerado).
+
+Também `022_vehicle_consumption_obs`: `vehicle_consumption_obs` (consumo por versão como observação: rótulo literal da fonte, combustível, km/l cidade e estrada, ciclo, tipo e URL da fonte, datas, `status` CONFERIDO ou A_CONFERIR, nota e vínculo opcional com modelo e versão). Só `CONFERIDO` aparece no site. A migration também cria a versão Altis Hybrid do Corolla e o modelo Civic, e corrige o consumo do Corolla XEi apenas se a ficha ainda tem o valor da carga inicial.
+
+A migration `025_financing_faqs` insere em `faqs` (categoria "Financiamento") as perguntas e respostas sobre CDC x leasing, atraso e inadimplência; só insere a pergunta se ela ainda não existir. Sem alteração de tabelas.
+
+A migration `026_garage` acrescenta a `saved_vehicles` o modelo, o ano e a quilometragem informados pela pessoa e cria `garage_items` (lembretes, manutenções e gastos; `ON DELETE CASCADE` com o veículo e com a conta). Índice `idx_vehicle_queries_user_plate` para listar os relatórios de cada placa.
+
+Também `023_vehicle_catalog`: `vehicle_catalog` (um registro por nome do Senatran: `raw_name` exato, `search_text` normalizado, `fleet_total`, `year_min/year_max`, `years` jsonb por ano de fabricação com `0` = sem ano informado, `snapshot` AAAA-MM e `model_id` opcional ligando ao guia), `vehicle_catalog_snapshots` (origem, licença e totais de cada carga), `vehicle_interest_events` (tipo SIMULATOR_PICK/SEARCH_PICK/MODEL_VIEW/SEARCH_NO_RESULT, catálogo ou modelo, termo anônimo e hash da visita) e novas colunas em `vehicle_models` (`catalog_brands/names/exclude`, `featured`, `featured_order`, `image_credit`, `image_license`, `image_source_url`). A carga inicial vem de `apps/api/assets/senatran/frota-2026-09.json.gz`. `024_vehicle_photos_free_license` preenche foto e crédito dos 6 modelos de partida só onde ainda não há foto.
+
+Também `021_financing_banks`: `financing_banks` (nome, trecho do nome no Banco Central, taxas manuais CDC PF/PJ e leasing PJ, tarifas próprias em centavos, observação, ativo e ordem) e `financing_bank_rates` (média por instituição vinda do Banco Central: segmento, modalidade, instituição, taxa a.m./a.a., posição e período), mais `banks_refreshed_at` e `banks_refresh_error` em `financing_settings`. Os 12 bancos de partida entram sem taxa.
+
+Também `020_vehicle_seed`: coluna `vehicle_models.spec_source` (fonte e data da conferência da ficha técnica, mostrada no site) e carga inicial de 20 modelos publicados com suas versões. Usa `ON CONFLICT DO NOTHING`: pode rodar de novo sem duplicar e não altera modelos já editados pela equipe.
+
+Migrações 027 a 035 (todas reversíveis com `npm run db:rollback -- N`; faça backup antes):
+
+- `027_report_scope_publications`: publicações versionadas do escopo do relatório por produto.
+- `028_email_outbox_secure_links`: `email_outbox`, `email_events`, `secure_links` (só o hash SHA-256 do token; finalidade, expiração, usos máximos, revogação).
+- `029_cnpj_cache`: cache de consulta de CNPJ com TTL.
+- `030_contracts`: `contract_templates`, `contract_template_versions`, `contracts`, `contract_signers`, `contract_events` (imutável por gatilho).
+- `031_payment_refunds`: solicitações de estorno com chave de idempotência.
+- `032_fiscal_queue`: `fiscal_jobs` e `fiscal_events`.
+- `033_support_chat`: `support_conversations`, `support_messages` (nota interna só de atendente), `support_attachments` (bytea, ≤ 2 MB, tipos permitidos), `support_events`.
+- `035_support_faqs`: perguntas e respostas de atendimento em `faqs` (só insere se a pergunta não existir; o rollback remove apenas as que ainda estão iguais ao texto original).
+- `034_testimonials`: `testimonials` (consentimento, hash do conteúdo, uma ativa por cliente) e `testimonial_events`.
+
+Retenção: remoção ou retirada de depoimento apaga nome, texto e hash; anexos do chat ficam no banco (avaliar armazenamento de objetos e antivírus antes de volume alto).

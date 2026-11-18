@@ -163,7 +163,7 @@ export async function ensureSchema() {
   ];
   for (const p of products) {
     await pool.query(`INSERT INTO query_products(id,name,description,credit_cost) VALUES($1,$2,$3,$4)
-      ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, description=EXCLUDED.description, credit_cost=EXCLUDED.credit_cost`, p.slice(0, 4));
+      ON CONFLICT (id) DO NOTHING`, p.slice(0, 4));
   }
 
   await runMigrations();
@@ -179,9 +179,35 @@ export async function ensureSchema() {
       VALUES($1::uuid,'BOOTSTRAP_SUPER_ADMIN','USER',$2::text,$3::jsonb)`, [promoted.rows[0].id, promoted.rows[0].id, JSON.stringify({ email: promoted.rows[0].email, source: 'production_bootstrap' })]);
   }
 
+  if (env.ADMIN_BOOTSTRAP_EMAIL && env.ADMIN_BOOTSTRAP_PASSWORD) {
+    // Cria o primeiro administrador se ainda NÃO existir nenhum SUPER_ADMIN ativo (nunca sobrescreve por acidente).
+    // Com ADMIN_BOOTSTRAP_FORCE_RESET=true, redefine a senha deste e-mail, desbloqueia a conta e zera o 2FA (recuperação de acesso).
+    const email = env.ADMIN_BOOTSTRAP_EMAIL.trim().toLowerCase();
+    const password = env.ADMIN_BOOTSTRAP_PASSWORD.trim();
+    const force = env.ADMIN_BOOTSTRAP_FORCE_RESET === true;
+    const existing = await pool.query(`SELECT email FROM users WHERE role='SUPER_ADMIN' AND active=true AND deleted_at IS NULL ORDER BY created_at LIMIT 5`);
+    if (!existing.rowCount || force) {
+      const hash = await bcrypt.hash(password, 12);
+      const created = await pool.query(`INSERT INTO users(email,password_hash,name,role,active) VALUES($1,$2,$3,'SUPER_ADMIN',true)
+        ON CONFLICT(email) DO UPDATE SET password_hash=EXCLUDED.password_hash,role='SUPER_ADMIN',active=true,password_enabled=true,failed_login_attempts=0,locked_until=NULL,deleted_at=NULL RETURNING id`, [email, hash, (env.ADMIN_BOOTSTRAP_NAME ?? 'Administrador').trim() || 'Administrador']);
+      const id = created.rows[0].id;
+      await pool.query('INSERT INTO wallets(user_id,balance,balance_cents) VALUES($1,0,0) ON CONFLICT(user_id) DO NOTHING', [id]);
+      if (force) {
+        await pool.query('DELETE FROM team_totp_recovery_codes WHERE user_id=$1', [id]);
+        await pool.query('DELETE FROM team_totp WHERE user_id=$1', [id]);
+        await pool.query('UPDATE user_sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL', [id]);
+      }
+      await pool.query(`INSERT INTO audit_logs(user_id,action,entity,entity_id,metadata) VALUES(NULL,$3,'USER',$1,$2::jsonb)`, [String(id), JSON.stringify({ email, source: 'env', force }), force ? 'ENV_ADMIN_FORCE_RESET' : 'ENV_ADMIN_BOOTSTRAP']);
+      console.info(JSON.stringify({ level: 'info', event: force ? 'admin_bootstrap_forced_reset' : 'admin_bootstrap_created', email, passwordLength: password.length, next: 'Entre no painel e cadastre o 2FA. Depois REMOVA ADMIN_BOOTSTRAP_PASSWORD' + (force ? ' e ADMIN_BOOTSTRAP_FORCE_RESET' : '') + ' do ambiente.' }));
+    } else {
+      const mask = (e: string) => e.replace(/^(.).*(@.*)$/, '$1***$2');
+      console.warn(JSON.stringify({ level: 'warn', event: 'admin_bootstrap_skipped', reason: 'SUPER_ADMIN_ALREADY_EXISTS', requestedEmail: mask(email), existingSuperAdmins: existing.rows.map((r) => mask(String(r.email))), hint: 'A senha das variáveis NÃO foi aplicada. Para redefinir, defina ADMIN_BOOTSTRAP_FORCE_RESET=true e faça redeploy.' }));
+    }
+  }
+
   for (const p of products) {
     await pool.query(`INSERT INTO query_products(id,name,description,credit_cost,price_cents) VALUES($1,$2,$3,$4,$5)
-      ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, description=EXCLUDED.description, credit_cost=EXCLUDED.credit_cost, price_cents=EXCLUDED.price_cents`, p);
+      ON CONFLICT (id) DO NOTHING`, p);
   }
 
   if (!env.SANDBOX_SEED_ENABLED) return;
@@ -217,7 +243,7 @@ function vehicle(plate:string, brand:string, model:string, fabr:string, modelYea
   const money=(c:number)=>(c/100).toFixed(2).replace('.',',');
   const r={
     CAPACIDADECARGA:'450', CAPACIDADEPASSAG:'5', CARROCERIA:'NAO APLICAVEL', CCOMUNICACAOVENDA:'NAO CONSTA COMUNICACAO DE VENDAS',
-    CHASSI:'9ZZSANDBOX'+plate.replace(/[^A-Z0-9]/g,'').padEnd(7,'0'), CILINDRADA:'1598', CMT:'0', COMBUSTIVEL:fuel, COR:color,
+    CHASSI:'9ZZSANDBXX'+plate.replace(/[^A-Z0-9]/g,'').replace(/[IOQ]/g,'0').padEnd(7,'0'), CILINDRADA:'1598', CMT:'0', COMBUSTIVEL:fuel, COR:color,
     CPF_CNPJ_PROPRIETARIO:'***.***.000-**', DATAEMISSAOCRV:'15/03/2023', DEBCETESB:'0,00', DEBDER: money(fineCents), DEBDERSA:'0,00', DEBDETRAN:'0,00', DEBIPVA:money(ipvaCents), DEBMUNICIPAIS:'0,00', DEBPOLRODFED:'0,00', DEBRENAINF:'0,00', DPVAT:'0,00',
     EIXOS:'2', ESPECIE:'PASSAGEIRO', EXISTEDEBITODEDPVAT:'NAO EXISTE DEBITO DE DPVAT', EXISTEDEBITODEIPVA:'NAO EXISTE DEBITO DE IPVA',
     EXISTEDEBITODELICENCIAMENTO: licCents>0?'EXISTE DEBITO DE LICENCIAMENTO':'NAO EXISTE DEBITO DE LICENCIAMENTO', EXISTEDEBITODELICENCIAMENTOVL: money(licCents),

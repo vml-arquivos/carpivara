@@ -5,7 +5,10 @@ import { readFile } from 'node:fs/promises';
 const server = await readFile(new URL('../src/server.ts', import.meta.url), 'utf8');
 const auth = await readFile(new URL('../src/auth.ts', import.meta.url), 'utf8');
 const config = await readFile(new URL('../src/config.ts', import.meta.url), 'utf8');
-const frontend = await readFile(new URL('../../web/src/main.tsx', import.meta.url), 'utf8');
+const webApi = await readFile(new URL('../../web/src/shared/api.ts', import.meta.url), 'utf8');
+const adminAccount = await readFile(new URL('../../web/src/admin/pages/Account.tsx', import.meta.url), 'utf8');
+const adminSession = await readFile(new URL('../../web/src/admin/session.tsx', import.meta.url), 'utf8');
+const adminApi = await readFile(new URL('../../web/src/admin/api.ts', import.meta.url), 'utf8');
 
 test('hardening fixa CSP e origem CORS sem reflexão ampla', () => {
   assert.match(server, /contentSecurityPolicy:\s*\{/);
@@ -24,41 +27,54 @@ test('retenção exige prévia por padrão e só permite execução administrati
   assert.match(server, /INSERT INTO audit_retention_runs/);
 });
 
-test('middleware não aceita token sem sessão persistida para equipe', () => {
-  assert.match(auth, /\['OPERADOR', 'ADMIN', 'SUPER_ADMIN'\]\.includes\(String\(claims\.role\)\) && !claims\.sid/);
-  assert.match(auth, /metadata\.totpVerified !== true/);
+test('middleware admin exige sessão persistida, audiência admin e TOTP verificado', () => {
+  assert.match(auth, /audience === 'admin' && \(!claims\.sid \|\| !isTeamRole\(String\(claims\.role\)\)\)/);
+  assert.match(auth, /metadata\?\.totpVerified !== true/);
+  assert.match(auth, /has_totp/);
 });
 
-test('rotas de contato não expõem conteúdo sem permissão de auditoria', () => {
-  assert.match(server, /api\.get\('\/admin\/contact-messages', auth, requirePermission\('VIEW_AUDIT'\)/);
-  assert.match(server, /api\.patch\('\/admin\/contact-messages\/:id', auth, requirePermission\('MANAGE_USERS'\)/);
+test('rotas de contato não expõem conteúdo sem permissão de suporte', () => {
+  assert.match(server, /api\.get\('\/admin\/contact-messages', adminAuth, requirePermission\('MANAGE_SUPPORT'\)/);
+  assert.match(server, /api\.patch\('\/admin\/contact-messages\/:id', adminAuth, requirePermission\('MANAGE_SUPPORT'\)/);
   assert.match(server, /api\.post\('\/contact', contactRateLimit/);
   assert.match(server, /api\.post\('\/account\/contact', auth, contactRateLimit/);
 });
 
-test('TOTP da equipe fica desligado por padrão e só é exigido quando explicitamente habilitado', () => {
+test('TOTP da equipe é opcional por padrão (TEAM_TOTP_REQUIRED=true torna obrigatório)', () => {
   assert.match(config, /TEAM_TOTP_REQUIRED: booleanFromEnv\.default\(false\)/);
-  assert.match(auth, /env\.TEAM_TOTP_REQUIRED && \['OPERADOR', 'ADMIN', 'SUPER_ADMIN'\]\.includes\(String\(claims\.role\)\)/);
-  assert.match(server, /!isTeamRole\(user\.role\) \|\| !env\.TEAM_TOTP_REQUIRED/);
-  assert.match(server, /totpRequired: isTeamRole\(user\.role\) && env\.TEAM_TOTP_REQUIRED/);
+  assert.doesNotMatch(config, /ADMIN_TOTP_CANNOT_BE_DISABLED/);
+  assert.match(server, /if \(isTeamRole\(user\.role\)\) throw appError\('INVALID_CREDENTIALS'/);
 });
 
 test('API impede cache condicional e o dashboard não transforma falha parcial em logout', () => {
   assert.match(server, /api\.use\(\(_req, res, next\) =>/);
   assert.match(server, /res\.setHeader\('Cache-Control', 'no-store'\)/);
-  assert.match(frontend, /cache: 'no-store'/);
-  assert.match(frontend, /Promise\.allSettled/);
-  assert.match(frontend, /isAuthenticationFailure\(profileResult\.reason\)/);
-  assert.match(frontend, /adminLoadErrors/);
-  assert.match(frontend, /Tentar novamente/);
+  assert.match(webApi, /cache: 'no-store'/);
+  // sessão expirada (401) limpa o token do painel; erro parcial de uma tela não derruba a sessão
+  assert.match(adminSession, /\$\{BRAND\.prefix\}:admin-unauthorized/);
+  assert.match(webApi, /res\.status === 401 && t && opts\.onUnauthorized/);
+  assert.match(adminApi, /store: 'session'/);
+});
+
+test('documentos FIPE exigem proprietário e consultas pagas bloqueiam estorno ativo', () => {
+  assert.match(server, /report_kind=\\'FIPE_FREE\\' AND user_id=\$2/);
+  assert.match(server, /QUERY_PAYMENT_REFUND_PENDING/);
+  assert.match(server, /payment_refunds pr WHERE pr\.order_id=o\.id AND pr\.status IN \('REQUESTED','CONFIRMED'\)/);
+});
+
+test('consulta valida a autenticação do provedor antes de debitar', () => {
+  const preflight = server.indexOf('if (provider.validateForQuery)');
+  const charge = server.indexOf("INSERT INTO vehicle_queries(user_id,plate,product_id,status", preflight);
+  assert.ok(preflight >= 0, 'preflight de autenticação ausente');
+  assert.ok(charge > preflight, 'a cobrança precisa ocorrer depois da autenticação');
+  assert.match(server, /query_provider_auth_validated/);
+  assert.match(server, /QUERY_AUTHENTICATION_FAILED/);
 });
 
 test('painel administrativo expõe alteração segura da senha da sessão atual', () => {
-  assert.match(frontend, /function AdminPasswordCard\(/);
-  assert.match(frontend, /onChangePassword=\{changePassword\}/);
-  assert.match(frontend, /Atualizar senha/);
-  assert.match(frontend, /auth\/change-password/);
-  assert.match(frontend, /As outras sessões serão encerradas após a alteração/);
+  assert.match(adminAccount, /Atualizar senha/);
+  assert.match(adminAccount, /admin\/auth\/change-password/);
+  assert.match(adminAccount, /As outras sessões serão encerradas após a alteração/);
 });
 
 test('visão administrativa calcula receita de consulta pela ordem de pagamento', () => {
@@ -66,8 +82,9 @@ test('visão administrativa calcula receita de consulta pela ordem de pagamento'
   assert.doesNotMatch(server, /FROM payments WHERE status='PAID' AND purchase_type='QUERY'/);
 });
 
-test('resposta bruta do provider fica desligada por padrão e credenciais de provider são documentadas', async () => {
-  assert.match(config, /STORE_RAW_PROVIDER_RESPONSE: booleanFromEnv\.default\(false\)/);
+test('resposta bruta do provider é guardada criptografada por padrão e credenciais de provider são documentadas', async () => {
+  assert.match(config, /STORE_RAW_PROVIDER_RESPONSE: booleanFromEnv\.default\(true\)/);
+  assert.match(server, /encryptRaw\(output\.raw\)/);
   const envExample = await readFile(new URL('../../../.env.example', import.meta.url), 'utf8');
   for (const variable of ['APIBRASIL_BEARER_TOKEN', 'APIBRASIL_DEVICE_TOKEN', 'VEHICLE_API_DEVICE_TOKEN', 'VEHICLE_API_QUERY_METHOD', 'SUPER_ADMIN_BOOTSTRAP_ENABLED']) {
     assert.match(envExample, new RegExp(`^${variable}=`, 'm'));

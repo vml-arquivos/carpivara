@@ -6,9 +6,9 @@ from urllib.parse import urlencode
 
 import requests
 
-BASE = "https://carpivara.casadf.com.br"
+BASE = "https://buscarr.com.br"
 s = requests.Session()
-s.headers.update({"User-Agent": "carpivara-post-deploy-smoke/1.1"})
+s.headers.update({"User-Agent": "blbuscar-post-deploy-smoke/1.1"})
 
 
 def get(path: str, **kwargs):

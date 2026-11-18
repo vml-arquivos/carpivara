@@ -1,3 +1,4 @@
+import { sourcesForProduct } from './lib/dataSources.js';
 import { executeVehicleLookup } from './vehicleLookup.js';
 import type { NormalizedVehicle, VehicleDataProvider } from './types.js';
 
@@ -18,10 +19,12 @@ export type AdminLookupResult = {
   providerQueryId?: string;
   consultedAt: string;
   result: NormalizedVehicle;
+  /** Resposta bruta da fonte: só para guardar cifrada junto da consulta; nunca vai para a resposta da API. */
+  raw?: unknown;
 };
 
 export async function performAdminLookup({ provider, plate, productId, productName, timeoutMs, normalize }: AdminLookupInput): Promise<AdminLookupResult> {
-  const output = await executeVehicleLookup({ provider, plate, timeoutMs, normalize });
+  const output = await executeVehicleLookup({ provider, plate, productId, sources: sourcesForProduct(productId), timeoutMs, normalize });
   return {
     plate,
     productId,
@@ -29,6 +32,7 @@ export async function performAdminLookup({ provider, plate, productId, productNa
     provider: provider.name,
     providerQueryId: output.providerQueryId,
     consultedAt: new Date().toISOString(),
-    result: output.normalized
+    result: output.normalized,
+    raw: output.raw
   };
 }

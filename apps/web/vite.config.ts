@@ -1,7 +1,10 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
+import { resolve } from 'node:path';
 
+// Duas entradas: `index.html` (site + área do cliente, PWA) e `admin.html` (painel da equipe, sem PWA).
+// O servidor só entrega admin.html e assets/admin-* no host do painel.
 export default defineConfig({
   plugins: [
     react(),
@@ -9,23 +12,34 @@ export default defineConfig({
       registerType: 'autoUpdate',
       injectRegister: false,
       manifest: false,
-      includeAssets: ['favicon.svg', 'brand/*.svg', 'brand/*.png'],
+      includeAssets: ['favicon.svg', 'brand/logo-*.svg', 'brand/icon-*.png', 'brand/apple-touch-icon.png'],
       workbox: {
         navigateFallback: '/index.html',
+        // robots.txt, sitemap.xml e qualquer arquivo com extensão vêm do servidor, nunca da cópia do index.html.
+        navigateFallbackDenylist: [/^\/api\//, /^\/painel/, /^\/admin/, /^\/health/, /^\/robots\.txt$/, /^\/sitemap\.xml$/, /\/[^/?]+\.[a-z0-9]+$/i],
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
-        globIgnores: ['**/brand/carpivara-premium-mark.png', '**/brand/carpivara-crest-final.png'],
-        runtimeCaching: [
-          {
-            urlPattern: /^https:\/\/fonts\.(googleapis|gstatic)\.com\/.*$/i,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'google-fonts',
-              expiration: { maxEntries: 12, maxAgeSeconds: 60 * 60 * 24 * 365 },
-              cacheableResponse: { statuses: [0, 200] },
-            },
-          },
-        ],
-      },
-    }),
+        globIgnores: ['**/admin.html', '**/assets/admin-*', '**/brand/og-image.png', '**/brand/shot-*.png']
+      }
+    })
   ],
+  build: {
+    rollupOptions: {
+      input: { main: resolve(__dirname, 'index.html'), admin: resolve(__dirname, 'admin.html') },
+      output: {
+        entryFileNames: (chunk) => (chunk.name === 'admin' ? 'assets/admin-[hash].js' : 'assets/[name]-[hash].js'),
+        chunkFileNames: (chunk) => (chunk.name.startsWith('admin') ? 'assets/admin-[name]-[hash].js' : 'assets/[name]-[hash].js'),
+        assetFileNames: (asset) => (asset.names?.some((n) => n.startsWith('admin')) ? 'assets/admin-[name]-[hash][extname]' : 'assets/[name]-[hash][extname]'),
+        manualChunks(id) {
+          // Código compartilhado fica num chunk público: o chunk do painel (admin-*) só é servido no host do painel.
+          if (id.includes('/src/shared/')) return 'shared';
+          if (id.includes('/src/admin/')) return 'admin-app';
+          // QR code é usado no painel e no app do cliente: chunk próprio e público, para o app do cliente nunca importar o chunk do painel.
+          if (/node_modules\/(qrcode|pngjs|dijkstrajs|encode-utf8)\//.test(id)) return 'qrcode';
+          if (id.includes('node_modules/react') || id.includes('node_modules/scheduler') || id.includes('node_modules/react-router') || id.includes('node_modules/@remix-run')) return 'vendor';
+          return undefined;
+        }
+      }
+    }
+  },
+  server: { proxy: { '/api': 'http://localhost:8080', '/health': 'http://localhost:8080' } }
 });

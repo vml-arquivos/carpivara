@@ -2,17 +2,17 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-vehicle_sandbox}
-      POSTGRES_USER: ${POSTGRES_USER:-vehicle}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vehicle_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-blbuscar}
+      POSTGRES_USER: ${POSTGRES_USER:-blbuscar}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-blbuscar_dev_password}
     ports:
       - "5432:5432"
     volumes:
-      - vehicle_pgdata:/var/lib/postgresql/data
+      - blbuscar_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vehicle} -d ${POSTGRES_DB:-vehicle_sandbox}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-blbuscar} -d ${POSTGRES_DB:-blbuscar}"]
       interval: 5s
       timeout: 5s
       retries: 10
 volumes:
-  vehicle_pgdata:
+  blbuscar_pgdata:

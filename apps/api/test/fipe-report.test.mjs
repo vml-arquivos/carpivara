@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { fipePdf, fipePrintHtml } from '../dist/fipeReport.js';
+
+/** Texto do PDF (as fontes vão embutidas, então não dá para ler o texto direto do arquivo). */
+function pdfText(buf) {
+  const f = path.join(os.tmpdir(), `fipe-${process.pid}-${Math.random().toString(36).slice(2)}.pdf`);
+  fs.writeFileSync(f, buf);
+  try { return execFileSync('pdftotext', ['-layout', f, '-'], { encoding: 'utf8' }); } catch { return null; } finally { fs.rmSync(f, { force: true }); }
+}
 
 const quote = {
   provider: 'fipe',
@@ -31,11 +42,16 @@ const branding = {
   logoUrl: 'https://example.com/frota-norte.svg'
 };
 
-test('renderiza PDF FIPE com o nome da organização', () => {
-  const pdf = fipePdf(quote, branding).toString('latin1');
-  assert.match(pdf, /Frota Norte/);
-  assert.match(pdf, /CONSULTA ZERO/);
-  assert.doesNotMatch(pdf, /BUSCARR/);
+test('renderiza PDF FIPE com o nome da organização, no padrão visual da plataforma', async () => {
+  const buf = await fipePdf(quote, branding);
+  assert.equal(buf.subarray(0, 5).toString(), '%PDF-');
+  const text = pdfText(buf);
+  if (text === null) return;
+  assert.match(text, /Frota Norte/);
+  assert.match(text, /Consulta Zero/);
+  assert.match(text, /Valor FIPE vigente/i);
+  assert.match(text, /Valida..o do relat.rio/);
+  assert.doesNotMatch(text, /BL Buscar/);
 });
 
 test('renderiza impressão FIPE com nome, cores e logo da organização', () => {
@@ -47,11 +63,13 @@ test('renderiza impressão FIPE com nome, cores e logo da organização', () => 
   assert.match(html, /alt=""/);
 });
 
-test('mantém fallback BUSCARR quando a organização não fornece marca', () => {
+test('mantém fallback BL Buscar quando a organização não fornece marca, com as cores da marca', async () => {
   const html = fipePrintHtml(quote, {});
-  const pdf = fipePdf(quote, {}).toString('latin1');
-  assert.match(html, /BUSCARR/);
-  assert.match(pdf, /BUSCARR/);
+  const text = pdfText(await fipePdf(quote, {}));
+  assert.match(html, /BL Buscar/);
+  assert.match(html, /#0B7A43/);
+  assert.doesNotMatch(html, /#168579|#C99A3D/);
+  if (text !== null) assert.match(text, /BL Buscar/);
 });
 
 assert.equal(typeof fipePdf, 'function');

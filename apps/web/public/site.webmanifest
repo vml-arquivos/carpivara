@@ -1,33 +1,35 @@
 {
-  "name": "BUSCARR | Consulta e inteligência veicular",
-  "short_name": "BUSCARR",
-  "description": "FIPE grátis e consultas veiculares com cobertura explícita, carteira e histórico protegido.",
+  "name": "BL Buscar | Consulta veicular por placa",
+  "short_name": "BL Buscar",
+  "description": "Consulte a placa e receba o relatório veicular completo em segundos.",
   "lang": "pt-BR",
-  "start_url": "/",
+  "id": "/",
+  "start_url": "/?origem=app",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#fff9ef",
-  "theme_color": "#0b2d3a",
+  "background_color": "#04140D",
+  "theme_color": "#04140D",
   "icons": [
     {
-      "src": "/brand/buscarr-icon-192.png",
+      "src": "/brand/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/brand/buscarr-icon-512.png",
+      "src": "/brand/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/brand/buscarr-icon-maskable-192.png",
+      "src": "/brand/icon-maskable-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "maskable"
     },
     {
-      "src": "/brand/buscarr-icon-maskable-512.png",
+      "src": "/brand/icon-maskable-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
@@ -37,6 +39,97 @@
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Consultar placa",
+      "short_name": "Consultar",
+      "url": "/consultar?origem=app",
+      "icons": [
+        {
+          "src": "/brand/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Simular financiamento",
+      "short_name": "Simulador",
+      "url": "/simulador?origem=app",
+      "icons": [
+        {
+          "src": "/brand/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Guia de veículos",
+      "short_name": "Guia",
+      "url": "/veiculos?origem=app",
+      "icons": [
+        {
+          "src": "/brand/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Valor FIPE",
+      "short_name": "FIPE",
+      "url": "/fipe?origem=app",
+      "icons": [
+        {
+          "src": "/brand/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Meu histórico",
+      "short_name": "Histórico",
+      "url": "/app/historico?origem=app",
+      "icons": [
+        {
+          "src": "/brand/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
+  ],
+  "orientation": "any",
+  "categories": [
+    "automotive",
+    "utilities",
+    "finance"
+  ],
+  "display_override": [
+    "standalone",
+    "minimal-ui"
+  ],
+  "prefer_related_applications": false,
+  "screenshots": [
+    {
+      "src": "/brand/shot-narrow-1.png",
+      "sizes": "540x960",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Simulador de financiamento"
+    },
+    {
+      "src": "/brand/shot-narrow-2.png",
+      "sizes": "540x960",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Guia de veículos"
+    },
+    {
+      "src": "/brand/shot-wide-1.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Simulador de financiamento"
     }
   ]
 }

@@ -1,8 +1,10 @@
 import { createCipheriv, createDecipheriv, createHmac, createHash, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto';
+import { adminJwtSecret } from './lib/secrets.js';
 import { env } from './config.js';
 
+import { BRAND } from './lib/brand.js';
 const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-const KEY = Buffer.from(hkdfSync('sha256', Buffer.from(env.JWT_SECRET, 'utf8'), Buffer.from('BUSCARR-TOTP-SALT', 'utf8'), Buffer.from('BUSCARR team TOTP encryption v1', 'utf8'), 32));
+const KEY = Buffer.from(hkdfSync('sha256', Buffer.from(adminJwtSecret(), 'utf8'), Buffer.from(`${BRAND.slug.toUpperCase()}-TOTP-SALT`, 'utf8'), Buffer.from(`${BRAND.name} team TOTP encryption v1`, 'utf8'), 32));
 
 function base32Encode(input: Buffer): string {
   let bits = 0;
@@ -55,9 +57,14 @@ function hotp(secret: Buffer, counter: number): string {
 
 export function generateTotpSetup(email: string): { secret: string; otpauthUrl: string } {
   const secret = base32Encode(randomBytes(20));
-  const label = encodeURIComponent(`BUSCARR:${email}`);
-  const issuer = encodeURIComponent('BUSCARR');
+  const label = encodeURIComponent(`${BRAND.compact}:${email}`);
+  const issuer = encodeURIComponent(BRAND.name);
   return { secret, otpauthUrl: `otpauth://totp/${label}?secret=${secret}&issuer=${issuer}&algorithm=SHA1&digits=6&period=30` };
+}
+
+/** Código TOTP vigente (RFC 6238, SHA-1, 6 dígitos, 30s) — usado por testes e ferramentas internas. */
+export function totpCodeAt(secret: string, nowMs = Date.now()): string {
+  return hotp(base32Decode(secret), Math.floor(nowMs / 1000 / 30));
 }
 
 export function verifyTotpCode(secret: string, code: string, nowMs = Date.now()): boolean {

@@ -1,11 +1,15 @@
 import type { PoolClient } from 'pg';
 import { pool, tx } from './db.js';
 import { env } from './config.js';
+import { placaMigrations } from './migrations.produto.js';
+import { brandMigrations } from './migrations.marca.js';
 
 export type Migration = {
   id: string;
   name: string;
   up: (client: PoolClient) => Promise<void>;
+  /** Reversão segura (027+). Migrações antigas não têm `down` e não podem ser revertidas por aqui. */
+  down?: (client: PoolClient) => Promise<void>;
 };
 
 const rolePermissions: Record<string, string[]> = {
@@ -15,7 +19,7 @@ const rolePermissions: Record<string, string[]> = {
   SUPER_ADMIN: ['QUERY_VEHICLE', 'VIEW_HISTORY', 'BUY_CREDITS', 'VIEW_SENSITIVE_DATA', 'MANAGE_USERS', 'MANAGE_PRICING', 'MANAGE_PROVIDERS', 'MANAGE_BILLING', 'MANAGE_SUPPORT', 'VIEW_AUDIT', 'ADMIN_SYSTEM']
 };
 
-export const migrations: Migration[] = [
+const baseMigrations: Migration[] = [
   {
     id: '001_security_and_product_hardening',
     name: 'Security controls, idempotency and configurable products',
@@ -499,7 +503,7 @@ export const migrations: Migration[] = [
         INSERT INTO report_templates(product_id,version,name,status,config)
         SELECT p.id,1,p.name || ' — relatório padrão','PUBLISHED',jsonb_build_object(
           'title',p.name,
-          'subtitle','Relatório veicular BUSCARR',
+          'subtitle','Relatório veicular Placa na Mão',
           'sections',jsonb_build_array(
             jsonb_build_object('key','identification','label','Identificação do veículo','order',10,'visible',true,'fields',jsonb_build_array(
               jsonb_build_object('key','identification.plate','label','Placa','visible',true),
@@ -729,6 +733,8 @@ export const migrations: Migration[] = [
   }
 ];
 
+export const migrations: Migration[] = [...baseMigrations, ...placaMigrations, ...brandMigrations];
+
 export async function runMigrations(): Promise<void> {
   await pool.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
     id text PRIMARY KEY,
@@ -755,4 +761,25 @@ export async function runMigrations(): Promise<void> {
       await new Promise((resolve) => setTimeout(resolve, Math.min(1000 * attempt, 3000)));
     }
   }
+}
+
+/**
+ * Reverte as últimas `steps` migrações aplicadas, da mais nova para a mais antiga.
+ * Recusa (sem alterar nada) se alguma delas não tiver `down`. Tudo roda em uma única transação.
+ */
+export async function rollbackMigrations(steps = 1): Promise<string[]> {
+  if (!Number.isInteger(steps) || steps < 1 || steps > 100) throw new Error('ROLLBACK_STEPS_INVALID');
+  const reverted: string[] = [];
+  await tx(async (client) => {
+    await client.query('SELECT pg_advisory_xact_lock(8432026)');
+    const applied = await client.query<{ id: string }>('SELECT id FROM schema_migrations ORDER BY id DESC LIMIT $1', [steps]);
+    for (const row of applied.rows) {
+      const migration = migrations.find((m) => m.id === row.id);
+      if (!migration?.down) throw new Error(`ROLLBACK_NOT_SUPPORTED:${row.id}`);
+      await migration.down(client);
+      await client.query('DELETE FROM schema_migrations WHERE id=$1', [row.id]);
+      reverted.push(row.id);
+    }
+  });
+  return reverted;
 }

@@ -1,0 +1,31 @@
+// Espelha o contrato `blbuscar.vehicle.report.v2` (apps/api/src/report/normalizeV2.ts), já filtrado por audiência/plano.
+export type ItemState = 'NOT_PROVIDED' | 'CLEAR' | 'ALERT' | 'INFO';
+export type Verdict = 'CLEAR' | 'ATTENTION' | 'HIGH_RISK' | 'INCONCLUSIVE';
+export interface ReportItem { key: string; label: string; kind: string; state: ItemState; value: string | null; display?: string | null; amountCents?: number; masked?: boolean; sensitivity: string; tier: number; component?: boolean; high?: boolean; table?: { columns: string[]; rows: string[][] } }
+export interface ReportSection { key: string; label: string; description: string; status: ItemState; items: ReportItem[]; providedCount: number; notProvidedCount: number }
+/** Ficha gratuita do veículo (espelha apps/api/src/enrichment/sheet.ts). */
+export interface SheetRow { label: string; value: string }
+export interface VehicleSheet {
+  decoder: SheetRow[];
+  fipe?: { code: string; model?: string; currentCents: number; referenceLabel?: string; annual: Array<{ year: number; cents: number; pct: number | null }>; monthly: Array<{ label: string; cents: number; pctMonth: number | null; pctPeriod: number | null }> };
+  financing?: { vehicleCents: number; downPaymentCents: number; months: number; installmentCents: number };
+  specs?: { title: string; rows: SheetRow[] };
+}
+export interface ReportV2 {
+  schema: string; normalizerVersion: number; plate: string;
+  headline: { brand?: string; model?: string; fullModel?: string; manufactureYear?: string; modelYear?: string; color?: string; fuel?: string; city?: string; state?: string; status?: string };
+  verdict: { level: Verdict; title: string; reason: string; alerts: Array<{ key: string; label: string; value: string; high: boolean }> };
+  debts: { totalCents: number; hasDebt: boolean; items: Array<{ key: string; label: string; amountCents: number }>; fineBreakdown: Array<{ key: string; label: string; amountCents: number }>; note: string };
+  sections: ReportSection[];
+  coverage: { provided: number; total: number; notProvidedKeys: string[]; restrictionsProvided: boolean; debtsProvided: boolean };
+  unknownFieldCount: number;
+  lockedAlertCount?: number;
+  debtsHidden?: boolean;
+  scope?: { mode: 'TEMPLATE' | 'SECTIONS' | 'TIER'; templateVersion?: number; notIncluded: Array<{ key: string; label: string }> };
+  advice?: ReportAdvice;
+  sheet?: VehicleSheet;
+}
+export type CheckStatus = 'OK' | 'ATTENTION' | 'ALERT' | 'NOT_CHECKED';
+export interface AdviceCheck { key: string; label: string; status: CheckStatus; detail: string }
+export interface ReportAdvice { resale?: { level: 'LOW' | 'MODERATE' | 'HIGH'; title: string; reasons: string[]; note: string }; checks: AdviceCheck[]; toDo: string[] }
+export interface ReportEnvelope { report: ReportV2; verificationCode: string; verificationUrl: string; consultedAt: string; productName: string }
