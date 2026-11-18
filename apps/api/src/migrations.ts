@@ -3,6 +3,7 @@ import { pool, tx } from './db.js';
 import { env } from './config.js';
 import { placaMigrations } from './migrations.produto.js';
 import { brandMigrations } from './migrations.marca.js';
+import { costMigrations } from './migrations.custo.js';
 
 export type Migration = {
   id: string;
@@ -783,3 +784,4 @@ export async function rollbackMigrations(steps = 1): Promise<string[]> {
   });
   return reverted;
 }
+export const migrations: Migration[] = [...baseMigrations, ...placaMigrations, ...brandMigrations, ...costMigrations];

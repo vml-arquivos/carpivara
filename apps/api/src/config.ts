@@ -256,6 +256,12 @@ const envSchema = z.object({
     if (typeof v !== 'string' || !v.trim()) return undefined;
     try { return JSON.parse(v); } catch { return undefined; }
   }, z.record(z.string().regex(/^\/[a-z0-9]+$/i), z.number().int().min(0).max(1000000)).optional()),
+  /** Registra em `vehicle_query_costs` quanto cada etapa paga de cada consulta custou. Só observa: não muda nenhuma chamada. */
+  QUERY_COST_LOG_ENABLED: booleanFromEnv.default(true),
+  /** Teto de custo por consulta em centavos, valendo para qualquer fonte (inclusive as chamadas essenciais). Vazio = sem teto, como hoje. */
+  QUERY_COST_CAP_CENTS: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.coerce.number().int().min(0).max(100000000).optional()),
+  /** Teto de chamadas pagas por hora/dia pelo contador do banco (sobrevive a reinício e a segunda réplica). Desligado por padrão: manda a memória do processo, como hoje. */
+  PROVIDER_GUARD_PERSISTED: booleanFromEnv.default(false),
   // AnyCar: consulta simples de histórico de leilão (POST /api/consultar, chave no cabeçalho x-api-key). Sem a chave, a fonte "Leilão simples" fica indisponível.
   ANYCAR_API_KEY: optionalString,
   ANYCAR_BASE_URL: optionalUrl,
