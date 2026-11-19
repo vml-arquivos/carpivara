@@ -9,7 +9,7 @@ Consulta paga "Veículo Completo": histórico veicular, restrições, multas, d�
 
 ## Onde estamos
 
-| Item | BL Buscar |
+| Item | BL Buscarr |
 |---|---|
 | Cadastro, chassi, Renavam, situação | tem |
 | Débitos (IPVA, licenciamento, multas, DPVAT) | tem |

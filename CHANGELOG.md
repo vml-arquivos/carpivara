@@ -1,4 +1,16 @@
 # Changelog
+
+## 1.0.10 — Identidade BL aplicada por inteiro, nos temas claro e escuro
+- Cores do site, da área do cliente e do painel seguem o Manual de Marca BL: Azul Principal `#2563EB` nos botões e ações, Azul Claro `#60A5FA` em destaques, Azul Escuro `#1E40AF` em profundidade, Cinza Neutro `#E5E7EB` em linhas. Gradiente oficial nos ícones e nos elementos de destaque.
+- Abertura da página inicial em gradiente azul (claro: Azul Principal para Azul Escuro; escuro: Azul Escuro para preto azulado), com consulta de placa em botão azul.
+- Tema escuro com superfícies derivadas do Azul Escuro e do preto (`#0B1220`, `#111C30`, `#16233A`), no lugar do cinza neutro. Botões com fundo azul e texto branco nos dois temas; links claros no escuro.
+- Títulos em Inter SemiBold, subtítulos em Medium, texto em Regular e botões em SemiBold. Espaçamento dos títulos da home e das páginas internas menos apertado.
+- Estrelas de avaliação e cores de gráficos do simulador saíram do amarelo/laranja e passaram a usar os azuis da marca. Aviso interno do suporte deixou de ser amarelo.
+- Ícone do app, favicon e monograma com o gradiente oficial; novos `logo-monograma.svg`, `logo-horizontal-mono.svg` e `logo-horizontal-mono-white.svg` (preto e branco, para documentos).
+- Capas das páginas, imagens das consultas, imagem de compartilhamento, ilustração da abertura e capturas do app regeneradas sem verde, rosa ou amarelo.
+- O verde segue só como cor de estado do relatório ("sem registro" e farol verde), porque significa o resultado da fonte. Corrigido o tom do estado "ok" no tema escuro, que tinha virado azul por engano.
+- Nome padronizado como "BL Buscarr" em textos, testes e migração da marca. Página `/demonstracao` ganhou texto de SEO (estava no mapa do site sem cadastro).
+
  
 ## 1.0.9 — Reabrir relatório deixou de cobrar, e o relatório voltou a ser honesto sobre o que não sabe
 - Estado de cada base passou a ser um vocabulário único: ocorrência, nada consta confirmado pela fonte, sem retorno, fora da cobertura do pacote e consulta indisponível. "NÃO INFORMADO", "NÃO DISPONÍVEL" e "NÃO LOCALIZADO" deixaram de ser lidos como ausência confirmada, e marcadores de indisponibilidade não compram nem inibem a consulta complementar.

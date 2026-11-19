@@ -136,7 +136,7 @@ assert_contains "$TMP_DIR/robots.txt" 'Sitemap:'
 curl -fsS "$BASE_URL/sitemap.xml" >"$TMP_DIR/sitemap.xml"
 assert_contains "$TMP_DIR/sitemap.xml" '/consulta-placa'
 curl -fsS "$BASE_URL/planos" >"$TMP_DIR/planos.html"
-assert_contains "$TMP_DIR/planos.html" '<title>Preços e consultas veiculares | BL Buscar</title>'
+assert_contains "$TMP_DIR/planos.html" '<title>Preços e consultas veiculares | BL Buscarr</title>'
 echo '✓ SEO servido pelo servidor (robots, sitemap, título por rota)'
 
 echo 'VALIDAÇÃO INTEGRADA: APROVADA'

@@ -95,6 +95,21 @@ const EXTRA_SECTIONS: Record<string, SeoSection[]> = {
 
 const SEO_SEED_BASE: SeoSeed[] = [
   {
+    path: '/demonstracao', h1: 'Exemplo de relatório', keyword: 'exemplo de relatório',
+    title: `Exemplo de relatório veicular por placa | ${BRAND.name}`,
+    description: 'Veja um exemplo de relatório de consulta veicular por placa, com dados fictícios, e baixe um modelo em PDF para conhecer o conteúdo antes de comprar.',
+    sections: [
+      { h: 'O que você vê nos exemplos', p: 'São relatórios de três placas fictícias, montados como os de uma consulta real: resumo em semáforo, dados do veículo, débitos, restrições, gravame e leilão, conforme a cobertura de cada pacote.' },
+      { h: 'Como usar o exemplo para escolher a consulta', p: 'Use o exemplo de relatório para comparar o que cada pacote traz e ver como cada informação aparece na tela e no PDF. Assim fica mais fácil decidir qual consulta faz sentido para a sua negociação.' },
+      { h: 'Os dados são fictícios', p: 'As placas, os nomes e os valores dos exemplos não pertencem a nenhum veículo ou pessoa real. Eles servem só para mostrar o formato do relatório e não entram no histórico de consultas.' }
+    ],
+    faq: [
+      { q: 'Os exemplos usam dados reais?', a: 'Não. Todas as placas e informações dos exemplos são fictícias e servem apenas para mostrar o formato do relatório.' },
+      { q: 'Posso baixar um exemplo em PDF?', a: 'Sim. Cada exemplo tem um botão para baixar o modelo em PDF, igual ao relatório de uma consulta real.' },
+      { q: 'O exemplo consome saldo ou entra no meu histórico?', a: 'Não. A demonstração é pública, não cobra nada e fica separada das suas consultas.' }
+    ]
+  },
+  {
     path: '/fipe', h1: 'Tabela FIPE grátis', keyword: 'tabela fipe',
     title: `Tabela FIPE grátis: preço de carro e moto | ${BRAND.name}`,
     description: 'Consulte a Tabela FIPE grátis: valor médio de carros, motos e caminhões por marca, modelo e ano, com histórico de preços e variação. Sem cadastro.',

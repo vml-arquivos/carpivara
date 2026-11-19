@@ -38,7 +38,7 @@ describe('Pix / À vista', () => {
     const expected = ((pix.suggestedPriceCents - 50000) / 50000) * 10000;
     assert.ok(Math.abs(pix.markupOnCostBps - expected) <= 1);
   });
-  it('taxa percentual e fixa do Pix entram no preço (extensão BL Buscar)', () => {
+  it('taxa percentual e fixa do Pix entram no preço (extensão BL Buscarr)', () => {
     const r = calc({ ...base, pix: { feeBps: 99, fixedFeeCents: 0 } });
     const pix = pick(r, 'PIX');
     assert.ok(pix.suggestedPriceCents > 63830);

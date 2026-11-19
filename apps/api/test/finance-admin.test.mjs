@@ -24,7 +24,7 @@ describe('painel financeiro: configurações, trava de margem, referências, rep
   };
 
   it('configurações: leitura, edição e dados de recebimento mascarados para ADMIN e abertos para SUPER_ADMIN', async () => {
-    const put = await sa.call('/api/admin/finance/settings', { method: 'PUT', body: { receiverName: 'BL Buscar Ltda', receiverPixKey: 'chave-pix-secreta-1234', receiverDocument: '12345678000199' } });
+    const put = await sa.call('/api/admin/finance/settings', { method: 'PUT', body: { receiverName: 'BL Buscarr Ltda', receiverPixKey: 'chave-pix-secreta-1234', receiverDocument: '12345678000199' } });
     assert.equal(put.status, 200);
     assert.equal(put.json.settings.receiverPixKey, 'chave-pix-secreta-1234');
     const read = await adm.call('/api/admin/finance/settings');

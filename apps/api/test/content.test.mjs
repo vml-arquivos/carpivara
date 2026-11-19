@@ -114,7 +114,7 @@ describe('catálogo, FAQ e artigos editáveis no painel', integration, () => {
     const html = await fetch(`${server.base}/blog/${slug}`);
     if (html.status === 200) { // quando o frontend está compilado, o servidor injeta SEO do artigo
       const text = await html.text();
-      assert.match(text, /Artigo de teste do painel \| BL Buscar/);
+      assert.match(text, /Artigo de teste do painel \| BL Buscarr/);
       assert.match(text, /"@type":"Article"/);
     }
     await sa.call(`/api/admin/content/articles/${created.json.id}`, { method: 'DELETE' });

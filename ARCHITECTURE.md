@@ -1,7 +1,7 @@
-# BL Buscar — arquitetura
+# BL Buscarr — arquitetura
 
 ```text
-Navegador → TLS / reverse proxy → BL Buscar (Express: API + front estático) → PostgreSQL
+Navegador → TLS / reverse proxy → BL Buscarr (Express: API + front estático) → PostgreSQL
                                           │
                                           ├─ provedor veicular (adapter) → normalizador → relatório v2
                                           ├─ gateway de pagamento (Asaas | Mercado Pago) + webhooks idempotentes

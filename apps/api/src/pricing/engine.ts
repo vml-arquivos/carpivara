@@ -1,5 +1,5 @@
 /**
- * BL Buscar — Motor de precificação (centavos inteiros + basis points).
+ * BL Buscarr — Motor de precificação (centavos inteiros + basis points).
  *
  * Porte do motor do PermuPay Vendas (cálculo reverso de margem por forma de pagamento,
  * juros compostos, diagnóstico financeiro) para aritmética inteira: toda entrada e saída

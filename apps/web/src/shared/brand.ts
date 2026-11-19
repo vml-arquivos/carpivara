@@ -57,7 +57,7 @@ export const BRAND = {
     primaryInk: '#1e40af',
     accent: '#60a5fa',
     gold: '#93C5FD',
-    night: '#111827',
+    night: '#0B1220',
     ink: '#1f2937',
     text: '#1f2937',
     muted: '#4b5563',

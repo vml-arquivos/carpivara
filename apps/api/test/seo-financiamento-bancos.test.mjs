@@ -35,7 +35,7 @@ describe('páginas "Financiamento de carro {banco}" e páginas criadas no painel
   it('banco com taxa ganha página própria, com título, taxa real, exemplo e perguntas no HTML', async () => {
     const r = await get('/financiamento/bradesco'); assert.equal(r.status, 200);
     const h = await r.text();
-    assert.match(h, /<title>Financiamento de carro Bradesco: taxa e simulação \| BL Buscar<\/title>/);
+    assert.match(h, /<title>Financiamento de carro Bradesco: taxa e simulação \| BL Buscarr<\/title>/);
     assert.match(h, /<meta name="description" content="Financiamento de carro Bradesco: /);
     assert.match(h, /<link rel="canonical" href="[^"]*\/financiamento\/bradesco"/);
     if (!h.includes('<div id="root">')) return;
@@ -46,7 +46,7 @@ describe('páginas "Financiamento de carro {banco}" e páginas criadas no painel
 
   it('o índice /financiamento lista os bancos; endereço que não existe dá 404', async () => {
     const hub = await get('/financiamento'); assert.equal(hub.status, 200);
-    assert.match(await hub.text(), /<title>Financiamento de carro por banco: compare taxas \| BL Buscar<\/title>/);
+    assert.match(await hub.text(), /<title>Financiamento de carro por banco: compare taxas \| BL Buscarr<\/title>/);
     assert.equal((await get('/financiamento/banco-que-nao-existe')).status, 404);
   });
 
@@ -67,21 +67,21 @@ describe('páginas "Financiamento de carro {banco}" e páginas criadas no painel
   });
 
   it('título e descrição do banco podem ser trocados no painel e valem no HTML', async () => {
-    const put = await adm.call('/api/admin/content/seo/pages', { method: 'PUT', body: { path: '/financiamento/bradesco', h1: 'Financiamento Bradesco carro', title: 'Financiamento de carro Bradesco 2026: taxa hoje | BL Buscar', description: 'Veja a taxa atual do Bradesco para financiar carro novo ou usado, simule a parcela e compare o custo total com outros bancos.', keyword: 'financiamento de carro bradesco', sections: [{ h: 'Dica do Bradesco', p: 'Compare sempre o CET antes de assinar.' }], faq: [], noindex: false } });
+    const put = await adm.call('/api/admin/content/seo/pages', { method: 'PUT', body: { path: '/financiamento/bradesco', h1: 'Financiamento Bradesco carro', title: 'Financiamento de carro Bradesco 2026: taxa hoje | BL Buscarr', description: 'Veja a taxa atual do Bradesco para financiar carro novo ou usado, simule a parcela e compare o custo total com outros bancos.', keyword: 'financiamento de carro bradesco', sections: [{ h: 'Dica do Bradesco', p: 'Compare sempre o CET antes de assinar.' }], faq: [], noindex: false } });
     assert.equal(put.status, 200, put.text);
     const h = await (await get('/financiamento/bradesco')).text();
-    assert.match(h, /<title>Financiamento de carro Bradesco 2026: taxa hoje \| BL Buscar<\/title>/);
+    assert.match(h, /<title>Financiamento de carro Bradesco 2026: taxa hoje \| BL Buscarr<\/title>/);
     if (h.includes('<div id="root">')) { assert.match(h, /Dica do Bradesco/); assert.match(h, /Financiamento Bradesco carro/); }
   });
 
   it('página criada no painel: cria, aparece no site, não duplica, bloqueia restaurar e exclui', async () => {
-    const body = { slug: 'financiamento-carro-usado-caixa', h1: 'Financiamento de carro usado Caixa', title: 'Financiamento de carro usado Caixa: taxa e simulação | BL Buscar', description: 'Simule o financiamento de carro usado da Caixa, veja parcela, CET e custo total e compare com outros bancos antes de decidir.', keyword: 'financiamento de carro usado caixa' };
+    const body = { slug: 'financiamento-carro-usado-caixa', h1: 'Financiamento de carro usado Caixa', title: 'Financiamento de carro usado Caixa: taxa e simulação | BL Buscarr', description: 'Simule o financiamento de carro usado da Caixa, veja parcela, CET e custo total e compare com outros bancos antes de decidir.', keyword: 'financiamento de carro usado caixa' };
     const c = await adm.call('/api/admin/content/seo/pages/custom', { method: 'POST', body });
     assert.equal(c.status, 201, c.text); assert.equal(c.json.path, '/financiamento/financiamento-carro-usado-caixa');
     assert.equal((await adm.call('/api/admin/content/seo/pages/custom', { method: 'POST', body })).status, 409);
     assert.equal((await adm.call('/api/admin/content/seo/pages/custom', { method: 'POST', body: { ...body, slug: 'Nome Inválido!' } })).status, 400);
     const r = await get(c.json.path); assert.equal(r.status, 200);
-    assert.match(await r.text(), /<title>Financiamento de carro usado Caixa: taxa e simulação \| BL Buscar<\/title>/);
+    assert.match(await r.text(), /<title>Financiamento de carro usado Caixa: taxa e simulação \| BL Buscarr<\/title>/);
     assert.match(await (await fetch(`${server.base}/sitemap.xml`)).text(), /financiamento-carro-usado-caixa<\/loc>/);
     assert.equal((await adm.call('/api/admin/content/seo/pages/reset', { method: 'POST', body: { path: c.json.path } })).status, 422);
     assert.equal((await adm.call(`/api/admin/content/seo/pages/custom?path=${encodeURIComponent('/financiamento/bradesco')}`, { method: 'DELETE' })).status, 422, 'página de banco não se exclui');

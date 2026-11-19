@@ -34,7 +34,7 @@ const font = (name: string) => readFileSync(new URL(name, FONT_DIR));
 export const W = 595.28; export const H = 841.89; export const M = 40; export const CW = W - M * 2;
 export const C = {
   ink: brandRgb(BC.night), text: brandRgb(BC.text), muted: brandRgb(BC.muted), line: brandRgb(BC.line), soft: brandRgb(BC.soft),
-  violet: brandRgb(BC.primary), lilac: brandRgb('#5F82D2'), blue: brandRgb(BC.accent), white: rgb(1, 1, 1),
+  violet: brandRgb(BC.primary), lilac: brandRgb('#60A5FA'), blue: brandRgb(BC.accent), white: rgb(1, 1, 1),
   green: rgb(0.055, 0.624, 0.431), greenBg: rgb(0.89, 0.973, 0.937), amber: rgb(0.706, 0.325, 0.035), amberBg: rgb(0.996, 0.953, 0.78), red: rgb(0.863, 0.149, 0.149), redBg: rgb(0.996, 0.91, 0.91), grayBg: brandRgb('#EFF6FF')
 };
 
@@ -98,9 +98,9 @@ export function drawLogo(d: Doc, x: number, y: number, size: number, dark: boole
   void dark;
 }
 
-/* ---------- Layout do relatório de consulta (identidade da plataforma: verde-escuro, verde, dourado e fundos claros; verde, âmbar e vermelho só no estado) ---------- */
+/* ---------- Layout do relatório de consulta (identidade da plataforma: azuis do Manual de Marca BL e fundos claros; verde, âmbar e vermelho só no estado) ---------- */
 export const N = {
-  ink: brandRgb(BC.night), text: brandRgb(BC.text), muted: brandRgb(BC.muted), line: brandRgb('#C9CFDD'), hair: brandRgb(BC.line),
+  ink: brandRgb(BC.night), text: brandRgb(BC.text), muted: brandRgb(BC.muted), line: brandRgb('#BFDBFE'), hair: brandRgb(BC.line),
   band: brandRgb(BC.primarySoft), soft: brandRgb(BC.soft), dark: brandRgb(BC.night), white: rgb(1, 1, 1),
   blue: brandRgb(BC.primary), blueInk: brandRgb(BC.primaryInk), accent: brandRgb(BC.gold), pale: brandRgb('#E2E2E2'),
   ok: rgb(0.055, 0.624, 0.431), okSoft: rgb(0.89, 0.973, 0.937), okInk: rgb(0.016, 0.424, 0.306),
@@ -122,12 +122,12 @@ export interface HeaderInfo {
   vehicle: { name: string; plate?: string; sub?: string };
 }
 
-/** Cabeçalho único dos documentos de consulta: faixa verde-escura com filete dourado, logo, QR e faixa verde com o veículo. */
+/** Cabeçalho único dos documentos de consulta: faixa azul-escura com filete claro, logo, QR e faixa azul com o veículo. */
 export function docHeader(d: Doc, page: PDFPage, idx: number, total: number, h: HeaderInfo) {
   d.page = page;
   if (idx > 0) { compactHeader(d, page, idx, total, h); return; }
   const top = H - 22;
-  // faixa superior verde-escura com filete de destaque
+  // faixa superior azul-escura com filete de destaque
   page.drawRectangle({ x: 0, y: H - 88, width: W, height: 88, color: N.dark });
   page.drawRectangle({ x: 0, y: H - 90.5, width: W, height: 2.5, color: N.accent });
   drawLogo(d, M, top - 34, 34, true);
@@ -158,7 +158,7 @@ export function docHeader(d: Doc, page: PDFPage, idx: number, total: number, h: 
   if (h.vehicle.sub) { const sw = Math.min(d.dm500.widthOfTextAtSize(clean(h.vehicle.sub), 7.5), CW); d.text(h.vehicle.sub, W / 2 - sw / 2, by + 6, 7.5, d.dm500, N.pale, { maxWidth: CW }); }
 }
 
-/** Cabeçalho das páginas seguintes: faixa verde-escura com logo, título, código/página e a faixa verde com veículo e placa (mesmas cores e fontes, menos altura). */
+/** Cabeçalho das páginas seguintes: faixa azul-escura com logo, título, código/página e a faixa azul com veículo e placa (mesmas cores e fontes, menos altura). */
 function compactHeader(d: Doc, page: PDFPage, idx: number, total: number, h: HeaderInfo) {
   page.drawRectangle({ x: 0, y: H - 40, width: W, height: 40, color: N.dark });
   page.drawRectangle({ x: 0, y: H - 42.5, width: W, height: 2.5, color: N.accent });

@@ -1,5 +1,5 @@
 /**
- * Análises do BL Buscar sobre leilão: nível de risco de leilão, possível desvalorização, CSV do Inmetro e aceitação em seguro.
+ * Análises do BL Buscarr sobre leilão: nível de risco de leilão, possível desvalorização, CSV do Inmetro e aceitação em seguro.
  * Calculadas só a partir do que a consulta trouxe (registros de leilão e indício de sinistro). Sem leilão consultado, nada é calculado.
  * Não usam percentuais nem notas de terceiros: o nível é uma classificação própria, descrita no próprio relatório.
  */

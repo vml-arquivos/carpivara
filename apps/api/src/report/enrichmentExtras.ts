@@ -34,9 +34,9 @@ export function enrichmentExtras(upper: Record<string, unknown>, raw: unknown, n
 
   const chassis = decodeChassis(String(upper.CHASSI ?? ''), years);
   // Nunca parece dado do documento: é decodificação do chassi feita pelo sistema (item 11 da auditoria).
-  /** Tudo que sai daqui é cálculo do BL Buscar: entra marcado para a tela e o PDF nunca apresentarem como dado da fonte (item 11 da auditoria). */
+  /** Tudo que sai daqui é cálculo do BL Buscarr: entra marcado para a tela e o PDF nunca apresentarem como dado da fonte (item 11 da auditoria). */
   const derived = (v: string) => ({ ...info(v), derived: true });
-  const decoded = (v: string) => `${v} — decodificação do chassi pelo BL Buscar, não informação do documento`;
+  const decoded = (v: string) => `${v} — decodificação do chassi pelo BL Buscarr, não informação do documento`;
   out.set('EN_CHASSI_FABRICANTE', chassis.valid && chassis.manufacturer ? derived(decoded(chassis.manufacturer)) : NONE);
   out.set('EN_CHASSI_ORIGEM', chassis.valid && chassis.country ? derived(decoded(chassis.country)) : NONE);
   if (chassis.valid && chassis.modelYear) {

@@ -1,6 +1,6 @@
 # O que traz cada consulta
 
-Fonte: Credify. O que a fonte não retornar é omitido do relatório. "Estimativa" = cálculo do BL Buscar, sempre rotulado.
+Fonte: Credify. O que a fonte não retornar é omitido do relatório. "Estimativa" = cálculo do BL Buscarr, sempre rotulado.
 
 | Bloco | Cadastral | Básica | Gravame | Completa |
 |---|:-:|:-:|:-:|:-:|

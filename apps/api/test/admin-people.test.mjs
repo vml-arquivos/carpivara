@@ -293,7 +293,7 @@ describe('painel: equipe, clientes, empresas, cobranças e notas fiscais', integ
   it('notas fiscais: configurar emissor, criar, avisar dados faltando, emitir, bloquear número repetido, cancelar e exportar', async () => {
     assert.equal((await fin.call('/api/admin/fiscal/settings', { method: 'PUT', body: { taxRegime: 'SIMPLES', environment: 'HOMOLOGACAO', series: '1', cnpj: '11.111.111/1111-11' } })).status, 400);
     const settings = await fin.call('/api/admin/fiscal/settings', { method: 'PUT', body: {
-      legalName: 'BL Buscar Serviços Ltda', cnpj: CNPJ, municipalRegistration: '12345', taxRegime: 'SIMPLES', serviceCode: '1.07', city: 'São Paulo', state: 'SP', cityIbgeCode: '3550308',
+      legalName: 'BL Buscarr Serviços Ltda', cnpj: CNPJ, municipalRegistration: '12345', taxRegime: 'SIMPLES', serviceCode: '1.07', city: 'São Paulo', state: 'SP', cityIbgeCode: '3550308',
       issRateBps: 200, environment: 'HOMOLOGACAO', series: '1', accountantEmail: 'contador@exemplo.com.br'
     } });
     assert.equal(settings.status, 200, settings.text);

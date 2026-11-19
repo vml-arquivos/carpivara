@@ -1,18 +1,18 @@
-/* Painel administrativo — BL Buscar */
+/* Painel administrativo — BL Buscarr */
 .adm { display: grid; grid-template-columns: 248px minmax(0, 1fr); min-height: 100vh; background: var(--bg); }
 .adm-side { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: 6px; padding: 18px 14px; background: var(--night); color: #DBEAFE; border-right: 1px solid rgba(255, 255, 255, .06); overflow-y: auto; }
 .adm-side .logo img { height: 34px; }
 .adm-badge { margin: 4px 6px 10px; font: 500 11px var(--font-display); letter-spacing: .14em; text-transform: uppercase; color: var(--lilac); }
 .adm-nav { display: grid; gap: 2px; }
-.adm-nav .group { margin: 18px 12px 4px; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, .06); font: 500 10.5px var(--font-display); letter-spacing: .14em; text-transform: uppercase; color: #7e8595; }
-.adm-nav a { display: flex; align-items: center; gap: 11px; padding: 8px 12px; border-radius: 10px; color: #D1D6E2; font: 400 14px var(--font-display); text-decoration: none; }
+.adm-nav .group { margin: 18px 12px 4px; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, .06); font: 500 10.5px var(--font-display); letter-spacing: .14em; text-transform: uppercase; color: #9CA3AF; }
+.adm-nav a { display: flex; align-items: center; gap: 11px; padding: 8px 12px; border-radius: 10px; color: #BFDBFE; font: 400 14px var(--font-display); text-decoration: none; }
 .adm-nav a:hover { background: rgba(255, 255, 255, .06); color: #fff; }
-.adm-nav a.active { background: rgba(70, 110, 205, .22); color: #fff; box-shadow: inset 3px 0 0 var(--violet); }
+.adm-nav a.active { background: rgba(37, 99, 235, .22); color: #fff; box-shadow: inset 3px 0 0 var(--violet); }
 .adm-side-foot { margin-top: auto; padding: 12px 8px 4px; display: grid; gap: 10px; border-top: 1px solid rgba(255, 255, 255, .08); }
 .adm-me { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .adm-me .av { flex: none; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: linear-gradient(135deg, var(--violet), var(--blue)); color: #fff; font: 500 13px var(--font-display); }
 .adm-me b { display: block; color: #fff; font: 500 13.5px var(--font-display); }
-.adm-me span { display: block; font-size: 12px; color: #9ca3b4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.adm-me span { display: block; font-size: 12px; color: #9CA3AF; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .adm-side-foot .btn { --b-fg: #fff; justify-content: flex-start; }
 .adm-main { min-width: 0; padding: 26px clamp(16px, 3vw, 40px) 60px; }
 .adm-top { display: none; }
@@ -51,7 +51,7 @@
 .margin-bar { height: 8px; border-radius: 99px; background: var(--bg-soft); overflow: hidden; min-width: 90px; }
 .margin-bar > i { display: block; height: 100%; border-radius: 99px; background: var(--ok); }
 .margin-bar.low > i { background: var(--danger); } .margin-bar.mid > i { background: var(--warn); }
-.login-wrap { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: radial-gradient(900px 500px at 15% -10%, rgba(70, 110, 205, .28), transparent 60%), radial-gradient(700px 420px at 100% 100%, rgba(82, 124, 223, .2), transparent 60%), var(--night); }
+.login-wrap { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: radial-gradient(900px 500px at 15% -10%, rgba(37, 99, 235, .28), transparent 60%), radial-gradient(700px 420px at 100% 100%, rgba(82, 124, 223, .2), transparent 60%), var(--night); }
 .login-card { width: min(440px, 100%); display: grid; gap: 18px; padding: 30px; border-radius: var(--radius-xl); background: var(--surface); box-shadow: var(--shadow-lg); border: 1px solid var(--border); }
 .login-card .logo img { height: 40px; }
 .qr-box { display: grid; place-items: center; padding: 14px; border-radius: var(--radius); background: #fff; border: 1px solid var(--border); }
@@ -120,7 +120,7 @@
 .qcards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
 .qcard { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); padding: 16px; display: grid; gap: 8px; align-content: start; }
 .qcard header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.qcard h3 { font-size: 15px; font-weight: 500; }
+.qcard h3 { font-size: 15px; font-weight: 600; }
 .qcard p { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
 .qcard-meta { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--muted); }
 .qcard footer { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
@@ -151,16 +151,16 @@
 .adm-mod-h:hover { background: rgba(255, 255, 255, .06); color: #fff; }
 .adm-mod-h:focus-visible { outline: 2px solid #60a5fa; outline-offset: 1px; }
 .adm-mod-h > span { flex: 1; }
-.adm-mod-h .chev { transition: transform .18s ease; color: #9199ac; }
+.adm-mod-h .chev { transition: transform .18s ease; color: #9CA3AF; }
 .adm-mod.open > .adm-mod-h .chev { transform: rotate(180deg); }
 .adm-mod.has-active > .adm-mod-h { color: #fff; }
 .adm-mod-b { display: grid; gap: 2px; margin: 2px 0 6px 20px; padding-left: 8px; border-left: 1px solid rgba(255, 255, 255, .08); }
 .adm-mod-b[hidden] { display: none; }
 
 /* Navegação administrativa e superfícies de trabalho. */
-.adm-side { background: #222222; border-right: 0; box-shadow: inset -1px 0 #30394d; }
-.adm-side .adm-badge { color: #BBC2D2; padding-bottom: 14px; border-bottom: 1px solid #4c5569; }
-.adm-nav a.active { background: #2d3850; box-shadow: inset 3px 0 #93C5FD; }
+.adm-side { background: #222222; border-right: 0; box-shadow: inset -1px 0 #111C30; }
+.adm-side .adm-badge { color: #D1D5DB; padding-bottom: 14px; border-bottom: 1px solid #6B7280; }
+.adm-nav a.active { background: #111C30; box-shadow: inset 3px 0 #93C5FD; }
 .adm-mod.has-active > .adm-mod-h { color: #D3D3D3; }
 .adm-main { padding-block-start: clamp(22px, 4vw, 46px); }
 .adm-card > header { background: var(--bg-soft); border-radius: var(--radius-lg) var(--radius-lg) 0 0; }

@@ -10,7 +10,7 @@ import { enqueueEmail } from './emailOutbox.js';
 import { consumeSecureLink, createSecureLink, peekSecureLink, revokeSecureLinks } from './secureLinks.js';
 
 /**
- * Contratos do BL Buscar: modelos versionados (aprovação jurídica registrada), contratos com dados congelados,
+ * Contratos do BL Buscarr: modelos versionados (aprovação jurídica registrada), contratos com dados congelados,
  * aprovação por segunda pessoa, assinatura eletrônica simples pelo próprio sistema (evidências registradas)
  * e trilha imutável. Nada aqui libera consulta ou cobra: aplicar condições é uma ação separada, autorizada.
  */

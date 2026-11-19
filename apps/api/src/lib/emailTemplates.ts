@@ -14,7 +14,7 @@ const when = (iso?: string) => (iso ? new Date(iso).toLocaleString('pt-BR', { ti
 
 function shell(title: string, bodyHtml: string, cta?: { href: string; label: string }): string {
   const app = esc(env.APP_NAME || `${BRAND.name}`);
-  return `<div style="font-family:Arial,sans-serif;line-height:1.6;color:${BRAND.colors.ink};max-width:600px;margin:auto"><h1 style="color:${BRAND.colors.primary};font-size:20px">${esc(title)}</h1>${bodyHtml}${cta ? `<p><a href="${esc(cta.href)}" style="display:inline-block;background:${BRAND.colors.primary};color:#fff;padding:12px 18px;text-decoration:none;border-radius:6px">${esc(cta.label)}</a></p>` : ''}<p style="color:#6b7280;font-size:12px">${app} · ${esc(BRAND.group.name)}. Se você não esperava esta mensagem, ignore-a: o link só funciona para quem o recebeu e expira.</p></div>`;
+  return `<div style="font-family:Inter,Arial,sans-serif;line-height:1.6;color:${BRAND.colors.ink};max-width:600px;margin:auto"><h1 style="color:${BRAND.colors.primary};font-size:20px">${esc(title)}</h1>${bodyHtml}${cta ? `<p><a href="${esc(cta.href)}" style="display:inline-block;background:${BRAND.colors.primary};color:#fff;padding:12px 18px;text-decoration:none;border-radius:6px">${esc(cta.label)}</a></p>` : ''}<p style="color:#6b7280;font-size:12px">${app} · ${esc(BRAND.group.name)}. Se você não esperava esta mensagem, ignore-a: o link só funciona para quem o recebeu e expira.</p></div>`;
 }
 
 export function renderEmail(template: EmailTemplateName, d: TemplateData): RenderedEmail {

@@ -13,9 +13,9 @@ const adminDashboard = await readFile(new URL('../../web/src/admin/pages/Dashboa
 test('HTML entregue pelo servidor possui SEO específico por rota', () => {
   const template = '<html><head><title>Antigo</title><meta name="description" content="antiga" /><link rel="canonical" href="https://example.com/" /><meta property="og:title" content="antigo" /><meta property="og:description" content="antiga" /><meta property="og:url" content="https://example.com/" /><meta name="twitter:title" content="antigo" /><meta name="twitter:description" content="antiga" /></head><body></body></html>';
   const output = renderSeoHtml(template, '/consultar-gravame', 'https://buscarr.com.br/');
-  assert.match(output, /<title>Consultar gravame de veículo \| BL Buscar<\/title>/);
+  assert.match(output, /<title>Consultar gravame de veículo \| BL Buscarr<\/title>/);
   assert.match(output, /rel="canonical" href="https:\/\/buscarr\.com\.br\/consultar-gravame"/);
-  assert.match(output, /property="og:title" content="Consultar gravame de veículo \| BL Buscar"/);
+  assert.match(output, /property="og:title" content="Consultar gravame de veículo \| BL Buscarr"/);
   assert.match(output, /name="twitter:description"/);
   assert.match(output, /id="blb-route-schema"/);
   assert.match(output, /application\/ld\+json/);

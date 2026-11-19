@@ -1,4 +1,4 @@
-// Gera os PNG/WebP/JPG da marca BL Buscar a partir dos SVGs de apps/web/public/brand:
+// Gera os PNG/WebP/JPG da marca BL Buscarr a partir dos SVGs de apps/web/public/brand:
 // ícones do app (PWA e apple-touch), imagem de compartilhamento (og-image), capas das páginas e imagens das consultas.
 // Antes, rode `python3 scripts/brand/build-logos.py` se mudar o logo ou a paleta.
 // Requer Playwright e um Chrome/Chromium: PLAYWRIGHT_MODULE (caminho do módulo, se não estiver instalado) e CHROME_PATH (opcional).
@@ -138,7 +138,7 @@ for (const slug of ['consulta-cadastral', 'consulta-completa', 'consulta-gravame
 }
 
 // ---- imagem de compartilhamento 1200x630 ----
-await shot(wide({ title: `Conheça a história do carro <span style="color:#4C72CB">antes de decidir.</span>`, sub: 'Consulte pela placa. Relatório claro, com PDF.', big: 60 }), 1200, 630, path.join(brand, 'og-image.png'));
+await shot(wide({ title: `Conheça a história do carro <span style="color:#93C5FD">antes de decidir.</span>`, sub: 'Consulte pela placa. Relatório claro, com PDF.', big: 60 }), 1200, 630, path.join(brand, 'og-image.png'));
 await browser.close();
 rmSync(tmp, { recursive: true, force: true });
 console.log('ok');

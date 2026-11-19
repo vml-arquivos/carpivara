@@ -24,6 +24,14 @@ corrido em `#000000` puro cansa em tela), `#0B1220`/`#030712` (superfícies escu
 
 **Gradiente oficial:** topo `#60A5FA` → meio `#2563EB` → base `#1E40AF` (token `--grad-brand`).
 
+## Tema escuro
+
+O manual não define tema escuro. As superfícies escuras são derivadas do Azul Escuro e do preto, na mesma família de cor:
+fundo `#0B1220`, faixa `#0F1829`, cartão `#111C30`, cartão elevado `#16233A`, linha `#223049` e `#31415E`, texto `#F9FAFB`,
+texto secundário `#D1D5DB`, apoio `#9CA3AF`. Link e destaque usam Azul Claro (`#60A5FA`, hover `#93C5FD`). Botão primário
+mantém Azul Principal com texto branco (`--action`, hover `#3B82F6`). Tudo isso mora em `apps/web/src/shared/tokens.css`
+(e `landing.css` para a página inicial); trocar os valores ali muda os dois temas.
+
 ## A exceção que não é estética: cor de estado
 
 O verde continua existindo no produto **só como estado do dado**, nunca como marca: `--ok #0E9F6E` (com a tinta
@@ -48,7 +56,8 @@ placa Mercosur (`--font-plate`), que imita o formato real do objeto, não a marc
 | Cabeçalho escuro | `logo-horizontal-dark.svg` |
 | Composição vertical | `logo-vertical.svg` e `logo-vertical-dark.svg` |
 | Monograma isolado | `logo-mark.svg` e `logo-mark-dark.svg` |
-| Impressão monocromática | `logo-mono.svg` e `logo-mono-white.svg` |
+| Impressão monocromática | `logo-mono.svg`, `logo-mono-white.svg`, `logo-horizontal-mono.svg` e `logo-horizontal-mono-white.svg` |
+| Monograma principal (capa, posts) | `logo-monograma.svg` |
 | Aplicativo e avatar | `logo-app-icon.svg`, `icon-192.png`, `icon-512.png`, `icon-maskable-192.png`, `icon-maskable-512.png`, `apple-touch-icon.png` |
 | Compartilhamento | `og-image.png` |
 

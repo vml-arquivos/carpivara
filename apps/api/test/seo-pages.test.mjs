@@ -27,7 +27,7 @@ describe('SEO por página', () => {
   it('lista de verificação aponta o que ajustar', () => {
     const bad = seoChecks({ h1: 'Um título de página muito mais longo que o limite', needsFaq: true, title: 'Curto', description: 'x', keyword: null, sections: [], faq: [], noindex: true, hasContent: false });
     assert.ok(bad.filter((c) => !c.ok).length >= 4);
-    const good = seoChecks({ h1: 'Tabela FIPE grátis', needsFaq: true, title: 'Tabela FIPE grátis: preço de carro e moto | BL Buscar', description: 'Consulte a Tabela FIPE grátis: valor médio de carros, motos e caminhões por marca, modelo e ano, com histórico de preços.', keyword: 'tabela fipe', sections: [{ h: 'O que é a Tabela FIPE', p: 'texto' }], faq: [{ q: 'a', a: 'b' }, { q: 'c', a: 'd' }, { q: 'e', a: 'f' }], noindex: false, hasContent: true });
+    const good = seoChecks({ h1: 'Tabela FIPE grátis', needsFaq: true, title: 'Tabela FIPE grátis: preço de carro e moto | BL Buscarr', description: 'Consulte a Tabela FIPE grátis: valor médio de carros, motos e caminhões por marca, modelo e ano, com histórico de preços.', keyword: 'tabela fipe', sections: [{ h: 'O que é a Tabela FIPE', p: 'texto' }], faq: [{ q: 'a', a: 'b' }, { q: 'c', a: 'd' }, { q: 'e', a: 'f' }], noindex: false, hasContent: true });
     assert.ok(good.every((c) => c.ok), JSON.stringify(good.filter((c) => !c.ok)));
   });
 });
@@ -48,7 +48,7 @@ describe('SEO por página (integração)', integration, () => {
   it('o HTML inicial já traz título, descrição, texto, perguntas e dados estruturados', async () => {
     const h = await html('/fipe');
     if (!h.includes('<div id="root">')) return; // build do front ausente neste ambiente
-    assert.match(h, /<title>Tabela FIPE grátis: preço de carro e moto \| BL Buscar<\/title>/); assert.match(h, /<h1 data-seo="1">Tabela FIPE grátis<\/h1>/);
+    assert.match(h, /<title>Tabela FIPE grátis: preço de carro e moto \| BL Buscarr<\/title>/); assert.match(h, /<h1 data-seo="1">Tabela FIPE grátis<\/h1>/);
     assert.match(h, /<h2>O que é a Tabela FIPE<\/h2>/); assert.match(h, /"@type":"FAQPage"/); assert.match(h, /"@type":"WebApplication"/); assert.match(h, /A consulta da Tabela FIPE é grátis\?/);
     const g = await html('/consultar-gravame'); assert.match(g, /O que é gravame de veículo\?/); assert.match(g, /"@type":"FAQPage"/);
   });
@@ -65,7 +65,7 @@ describe('SEO por página (integração)', integration, () => {
     const fipe = list.json.items.find((i) => i.path === '/fipe'); assert.ok(fipe.score >= fipe.total - 1, 'FIPE pronta de fábrica');
     for (const it of list.json.items) assert.equal(it.score, it.total, `${it.path} deveria vir 100% de fábrica: ${it.checks.filter((c) => !c.ok).map((c) => c.label).join('; ')}`);
     assert.equal(fipe.h1, 'Tabela FIPE grátis');
-    const body = { path: '/fipe', h1: 'FIPE de teste', title: 'Tabela FIPE de teste hoje | BL Buscar', description: fipe.description, keyword: 'tabela fipe', sections: [{ h: 'Seção nova', p: 'Texto novo da seção.' }], faq: fipe.faq, noindex: false };
+    const body = { path: '/fipe', h1: 'FIPE de teste', title: 'Tabela FIPE de teste hoje | BL Buscarr', description: fipe.description, keyword: 'tabela fipe', sections: [{ h: 'Seção nova', p: 'Texto novo da seção.' }], faq: fipe.faq, noindex: false };
     assert.equal((await call('/admin/content/seo/pages', { method: 'PUT', body })).status, 200);
     const h = await html('/fipe');
     if (h.includes('<div id="root">')) { assert.match(h, /Tabela FIPE de teste hoje/); assert.match(h, /<h1 data-seo="1">FIPE de teste<\/h1>/); assert.match(h, /<h2>Seção nova<\/h2>/); }

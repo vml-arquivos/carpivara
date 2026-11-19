@@ -15,7 +15,7 @@ const vehicle = {
 test('constrói relatório em ordem determinística e omite campos pessoais mesmo se solicitados', () => {
   const report = buildGenericReport({
     id: 'tpl-test', productId: 'COMPLETE', version: 3, name: 'Teste', status: 'PUBLISHED',
-    title: 'Consulta completa', subtitle: 'BL Buscar',
+    title: 'Consulta completa', subtitle: 'BL Buscarr',
     sections: [
       { key: 'private', label: 'Privado', order: 99, visible: true, fields: [
         { key: 'owner.name', label: 'Proprietário', visible: true },
@@ -55,9 +55,9 @@ test('gera PDF válido com conteúdo do relatório e mensagem de privacidade', (
     id: 'tpl-pdf', productId: 'RESTRICTIONS', version: 2, name: 'PDF', status: 'PUBLISHED',
     sections: [{ key: 'vehicle', label: 'Veículo', order: 1, fields: [{ key: 'identification.model', label: 'Modelo' }] }]
   }, vehicle, '2026-08-22T00:00:00.000Z');
-  const pdf = reportPdf(report, { name: 'BL Buscar White Label' });
+  const pdf = reportPdf(report, { name: 'BL Buscarr White Label' });
   assert.equal(pdf.subarray(0, 8).toString('latin1'), '%PDF-1.4');
-  assert.match(pdf.toString('latin1'), /BL Buscar White Label/);
+  assert.match(pdf.toString('latin1'), /BL Buscarr White Label/);
   assert.match(pdf.toString('latin1'), /Dados pessoais do proprietario sao omitidos/);
   assert.doesNotMatch(pdf.toString('latin1'), /Pessoa Proprietaria|00000000000|Rua reservada/);
 });

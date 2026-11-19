@@ -1,4 +1,4 @@
-# Pendências do BL Buscar antes de entrar no ar
+# Pendências do BL Buscarr antes de entrar no ar
 
 Itens que dependem de informação, conta ou acesso fora do código.
 
@@ -9,14 +9,14 @@ Itens que dependem de informação, conta ou acesso fora do código.
 
 ## Identidade visual
 - Logotipo, cores e capas atuais são provisórios. Quando houver o definitivo: `scripts/brand/build-logos.py`, `scripts/brand/rasterize.mjs`, cores em `brand.ts` e `tokens.css`.
-- Registro da marca BL Buscar (INPI).
+- Registro da marca BL Buscarr (INPI).
 
 ## Infraestrutura
 - Aplicação nova no Coolify, com banco, segredos e usuários próprios (nada compartilhado com outro sistema).
 - DNS no Cloudflare: `buscarr.com.br` e `admin.buscarr.com.br`.
 - E-mail: autenticar o domínio no provedor de envio (SPF, DKIM) para `no-reply@buscarr.com.br`; caixa `contato@buscarr.com.br`.
 - Login com Google/Microsoft/Apple: novos redirecionamentos em `OAUTH-SETUP.md`.
-- Pagamento: chaves e webhook do BL Buscar no gateway.
-- Credify: credenciais do BL Buscar nas variáveis do Coolify.
+- Pagamento: chaves e webhook do BL Buscarr no gateway.
+- Credify: credenciais do BL Buscarr nas variáveis do Coolify.
 - Google: Search Console, IndexNow e, se quiser, Analytics (`GA_MEASUREMENT_ID` vem vazio; nada é carregado sem ele).
 - Depois do primeiro deploy: seguir `docs/TESTE-PRODUCAO.md`.

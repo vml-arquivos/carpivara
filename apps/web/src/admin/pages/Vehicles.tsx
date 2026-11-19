@@ -398,7 +398,7 @@ function OpinionsTab({ onChanged }: { onChanged: () => void }) {
                 <div><b>{o.model.label}</b>{o.versionName && <span className="muted"> · {o.versionName}</span>} <Badge tone={o.status === 'APPROVED' ? 'ok' : o.status === 'REJECTED' ? 'danger' : 'warn'} dot>{o.status === 'APPROVED' ? 'Publicada' : o.status === 'REJECTED' ? 'Recusada' : 'Para revisar'}</Badge></div>
                 <span className="muted" style={{ fontSize: 12.5 }}>{dateTime(o.createdAt)}</span>
               </div>
-              <div style={{ color: '#F5A524', letterSpacing: 2, fontSize: 18 }} aria-label={`Nota ${o.rating} de 5`}>{stars(o.rating)}</div>
+              <div style={{ color: '#2563EB', letterSpacing: 2, fontSize: 18 }} aria-label={`Nota ${o.rating} de 5`}>{stars(o.rating)}</div>
               {o.title && <b>{o.title}</b>}
               {o.liked && <p><b>Gostou:</b> {o.liked}</p>}
               {o.disliked && <p><b>Não gostou:</b> {o.disliked}</p>}

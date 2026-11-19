@@ -9,7 +9,7 @@ export function isEmailConfigured(): boolean {
   return isEmailConfigurationComplete({ provider: env.EMAIL_PROVIDER, host: env.SMTP_HOST, user: env.SMTP_USER, password: env.SMTP_PASSWORD, apiKey: env.BREVO_API_KEY });
 }
 
-/** Remetente com nome ("BL Buscar <no-reply@...>"): o endereço continua sendo o EMAIL_FROM verificado no Brevo. */
+/** Remetente com nome ("BL Buscarr <no-reply@...>"): o endereço continua sendo o EMAIL_FROM verificado no Brevo. */
 function fromHeader(): { name: string; address: string } {
   return { name: (env.APP_NAME || `${BRAND.name}`).replace(/["\r\n]/g, ''), address: env.EMAIL_FROM };
 }

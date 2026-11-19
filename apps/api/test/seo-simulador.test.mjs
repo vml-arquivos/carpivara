@@ -9,7 +9,7 @@ const { renderSeoHtml } = await import('../dist/seo.js');
 const { SEO_SEED } = await import('../dist/seoSeed.js');
 const { placaMigrations } = await import('../dist/migrations.produto.js');
 const tpl = readFileSync(new URL('../../web/index.html', import.meta.url), 'utf8');
-const TITULO = 'Simulador de financiamento de veículos grátis | BL Buscar';
+const TITULO = 'Simulador de financiamento de veículos grátis | BL Buscarr';
 // a migração 082 é antiga e só reconhece o texto gravado na época; o teste monta esse texto antigo em pedaços
 const MARCA_ANTIGA = ['Placa', ' na ', 'Mão'].join('');
 const PERGUNTAS = ['O simulador é gratuito?', 'Posso usar a taxa da proposta do meu banco?', 'A simulação consulta ofertas de todos os bancos?'];
@@ -40,7 +40,7 @@ describe('migração 082 (simulador)', integration, () => {
     await pool.query(`UPDATE seo_pages SET title='Simulador de financiamento de veículo | ${MARCA_ANTIGA}', description='Descrição escrita pela equipe.', faq='[]'::jsonb WHERE path='/simulador'`);
     await rodar();
     let r = await row();
-    assert.equal(r.title, TITULO.replace('BL Buscar', MARCA_ANTIGA));
+    assert.equal(r.title, TITULO.replace('BL Buscarr', MARCA_ANTIGA));
     assert.equal(r.description, 'Descrição escrita pela equipe.');
     assert.equal(r.faq.length, 3);
     await rodar();

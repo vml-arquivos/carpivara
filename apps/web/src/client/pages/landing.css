@@ -1,14 +1,16 @@
 .buscar-home {
+  /* Manual de Marca BL: Azul Principal #2563EB, Azul Claro #60A5FA, Azul Escuro #1E40AF, Cinza Neutro #E5E7EB.
+     Escuro derivado do Azul Escuro e do preto. */
   --home-canvas: light-dark(#FFFFFF, #0B1220);
-  --home-alternate: light-dark(#F3F4F6, #111827);
-  --home-card: light-dark(#FFFFFF, #272727);
-  --home-line: light-dark(#AEB1B9, #535863);
+  --home-alternate: light-dark(#F3F4F6, #0F1829);
+  --home-card: light-dark(#FFFFFF, #111C30);
+  --home-line: light-dark(#D1D5DB, #223049);
   --home-text: light-dark(#111827, #F9FAFB);
-  --home-secondary: light-dark(#414755, #CDD1DB);
-  --home-link: light-dark(#182951, #BCC8E4);
-  --home-action: light-dark(#17264a, #A5B4D8);
-  --home-action-hover: light-dark(#101c39, #C1CDE9);
-  --home-action-text: light-dark(#FFFFFF, #141926);
+  --home-secondary: light-dark(#374151, #D1D5DB);
+  --home-link: light-dark(#1E40AF, #93C5FD);
+  --home-action: #2563EB;
+  --home-action-hover: light-dark(#1E40AF, #3B82F6);
+  --home-action-text: #FFFFFF;
   --home-gold: #60A5FA;
   --bg: var(--home-canvas);
   --bg-soft: var(--home-alternate);
@@ -19,10 +21,9 @@
   --text: var(--home-text);
   --text-2: var(--home-secondary);
   --muted: var(--home-secondary);
-  --primary: var(--home-action);
-  --primary-hover: var(--home-action-hover);
+  --primary: light-dark(#2563EB, #60A5FA);
+  --primary-hover: light-dark(#1E40AF, #93C5FD);
   --primary-ink: var(--home-link);
-  --on-primary: var(--home-action-text);
   --radius: 10px;
   --radius-lg: 14px;
   --radius-xl: 16px;
@@ -31,19 +32,16 @@
 }
 
 .buscar-home .section { padding-block: clamp(42px, 6vw, 86px); }
-.buscar-home h2 { font-size: clamp(1.55rem, 3vw, 2.45rem); letter-spacing: -.04em; }
+.buscar-home h2 { font-size: clamp(1.55rem, 3vw, 2.45rem); letter-spacing: -.02em; }
 .buscar-home .section-head p { max-width: 58ch; color: var(--home-secondary); }
-.buscar-home .btn-primary {
-  background: var(--home-action);
-  color: var(--home-action-text);
-  border-color: var(--home-action);
-}
+.buscar-home .btn-primary { background: var(--home-action); color: var(--home-action-text); border-color: var(--home-action); }
 .buscar-home .btn-primary:hover { background: var(--home-action-hover); color: var(--home-action-text); }
 .buscar-home :is(a, button, input):focus-visible { outline: 2px solid var(--home-link); outline-offset: 4px; }
 
+/* abertura: gradiente de marca (claro: Azul Principal > Azul Escuro; escuro: Azul Escuro > preto azulado) */
 .buscar-entry {
-  --home-link: #D0D8EC;
-  background: #171717;
+  --home-link: #FFFFFF;
+  background: var(--hero-bg);
   color: #FFFFFF;
   padding-block: clamp(36px, 6vw, 88px);
 }
@@ -58,38 +56,38 @@
   color: #FFFFFF;
   font-size: clamp(2.4rem, 4.55vw, 4.15rem);
   line-height: 1.03;
-  letter-spacing: -.06em;
+  letter-spacing: -.025em;
   overflow-wrap: break-word;
 }
-.buscar-intro { color: #D0D4DD; margin-top: 20px; max-width: 46ch; font-size: clamp(1rem, 1.5vw, 1.16rem); line-height: 1.65; }
+.buscar-intro { color: #FFFFFF; margin-top: 20px; max-width: 46ch; font-size: clamp(1rem, 1.5vw, 1.16rem); line-height: 1.65; }
 .buscar-search-panel {
   margin-top: 26px;
   padding: 16px;
-  border: 1px solid #676d7a;
+  border: 1px solid rgba(255, 255, 255, .28);
   border-radius: 14px;
-  background: #272727;
+  background: rgba(11, 18, 32, .28);
 }
 .buscar-search-panel strong { display: block; font-size: .95rem; color: #FFFFFF; }
 .buscar-search-panel .plate-search {
   max-width: none;
   margin-top: 10px;
   background: #FFFFFF;
-  border: 1px solid #A5AAB5;
+  border: 1px solid #FFFFFF;
   border-radius: 9px;
   box-shadow: none;
 }
 .buscar-search-panel .plate-search label,
 .buscar-search-panel .plate-search input,
-.buscar-search-panel .plate-search input::placeholder { color: #353b49; opacity: 1; }
+.buscar-search-panel .plate-search input::placeholder { color: #374151; opacity: 1; }
 .buscar-search-panel .plate-search input:focus-visible { outline: none; }
-.buscar-search-panel .plate-search:focus-within { outline: 2px solid var(--home-gold); outline-offset: 3px; }
-.buscar-search-panel .plate-search .btn { background: var(--home-gold); color: #0B1220; border-color: var(--home-gold); font-weight: 700; }
-.buscar-search-panel .plate-search .btn:hover { background: #93C5FD; color: #0B1220; }
-.buscar-search-panel .plate-search-err { color: #FFB5A9; min-height: 0; }
+.buscar-search-panel .plate-search:focus-within { outline: 2px solid #FFFFFF; outline-offset: 3px; }
+.buscar-search-panel .plate-search .btn { background: #2563EB; color: #FFFFFF; border-color: #2563EB; font-weight: 600; }
+.buscar-search-panel .plate-search .btn:hover { background: #1E40AF; border-color: #1E40AF; color: #FFFFFF; }
+.buscar-search-panel .plate-search-err { color: #FECACA; min-height: 0; }
 .buscar-search-panel .plate-search-err:empty { margin: 0; }
 .buscar-entry-actions { display: flex; align-items: center; gap: 6px 22px; flex-wrap: wrap; margin-top: 12px; }
-.buscar-entry-actions .linkbtn { color: #D0D8EC; min-height: 42px; text-decoration: underline; text-underline-offset: 4px; }
-.buscar-hero-photo { display: block; width: 100%; height: auto; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 16px; border: 1px solid #676d7a; }
+.buscar-entry-actions .linkbtn { color: #FFFFFF; min-height: 42px; text-decoration: underline; text-underline-offset: 4px; }
+.buscar-hero-photo { display: block; width: 100%; height: auto; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 16px; border: 1px solid rgba(255, 255, 255, .28); }
 
 .buscar-tools-section { padding-block: 28px; background: var(--home-alternate); border-bottom: 1px solid var(--home-line); }
 .buscar-tools { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; scroll-margin-top: calc(var(--nav-h) + 18px); }
@@ -105,7 +103,7 @@
 .buscar-home #consultas .prod-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .buscar-home #consultas .pcard { background: var(--home-card); border-color: var(--home-line); padding: clamp(20px, 3vw, 30px); gap: 8px; box-shadow: none; }
 .buscar-home #consultas .pcard:hover { transform: none; border-color: var(--home-link); }
-.buscar-home #consultas .pcard.featured { border-top: 3px solid #1E40AF; }
+.buscar-home #consultas .pcard.featured { border-top: 3px solid var(--primary); }
 .buscar-home #consultas .pcard.soon { opacity: 1; }
 .buscar-home #consultas .pcard .pbadge { position: static; justify-self: start; align-self: start; background: #60A5FA; color: #0B1220; box-shadow: none; }
 .buscar-home #consultas .pcard .tag { min-height: 0; margin-bottom: 5px; }
@@ -113,14 +111,14 @@
 .buscar-home #consultas .pcard .pactions { margin-top: auto; }
 .buscar-home #consultas .pcard .linkbtn { color: var(--home-link); }
 
-.buscar-reading { background: #18223a; color: #FFFFFF; }
+.buscar-reading { --home-gold: #BFDBFE; background: light-dark(#1E40AF, #111C30); color: #FFFFFF; }
 .buscar-reading-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: clamp(24px, 6vw, 84px); }
 .buscar-reading-intro > svg { color: var(--home-gold); }
 .buscar-reading h2 { color: inherit; margin-top: 14px; }
 .buscar-reading p { margin-block: 8px 14px; color: #E5E7EB; }
-.buscar-reading .btn { color: #FFFFFF; border-color: #B9C0D1; }
+.buscar-reading .btn { color: #FFFFFF; border-color: rgba(255, 255, 255, .55); }
 .buscar-timeline { margin: 0; padding: 0; list-style: none; counter-reset: consultation-step; }
-.buscar-timeline li { counter-increment: consultation-step; position: relative; padding: 12px 0 12px 44px; border-top: 1px solid #787f91; }
+.buscar-timeline li { counter-increment: consultation-step; position: relative; padding: 12px 0 12px 44px; border-top: 1px solid rgba(255, 255, 255, .3); }
 .buscar-timeline li::before { content: counter(consultation-step); position: absolute; inset: 12px auto auto 0; color: var(--home-gold); font-size: 1.1rem; font-weight: 700; }
 .buscar-timeline h3 { color: inherit; }
 
@@ -128,7 +126,7 @@
 .buscar-home .home-guide { background: var(--home-alternate); border-block: 1px solid var(--home-line); }
 .buscar-home .pack-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); }
 .buscar-home .custom-pack { padding-block-start: 0; }
-.buscar-home .custom-card { background: #18223a; color: #FFFFFF; border-radius: 14px; }
+.buscar-home .custom-card { background: light-dark(#1E40AF, #111C30); color: #FFFFFF; border-radius: 14px; }
 .buscar-home .custom-card :is(h2, p, .linkbtn) { color: #FFFFFF; }
 
 .buscar-editorial { background: var(--home-alternate); }

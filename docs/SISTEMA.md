@@ -1,4 +1,4 @@
-# BL Buscar — o sistema por inteiro
+# BL Buscarr — o sistema por inteiro
 
 Documento de referência da versão 1.29.1. Explica a missão, tudo o que o sistema faz, como cada parte funciona e quais regras não podem ser quebradas. Foi escrito a partir das telas e rotas que existem no código. Onde algo depende de configuração ou de confirmação em produção, isso está dito.
 
@@ -49,7 +49,7 @@ Papéis da equipe: Super admin, Administrador, Operador, Financeiro, Suporte e C
 | `/planos` | Produtos, pacotes de saldo e o comparador inteligente de consultas |
 | `/blog`, `/perguntas-frequentes`, `/sobre`, `/contato`, `/instalar` | Conteúdo, dúvidas, institucional, contato e instalação como aplicativo (PWA) |
 | `/termos`, `/privacidade` | Textos legais |
-| `/validar` e `/validar/:code` | Confere se um relatório foi emitido pelo BL Buscar (código impresso no PDF) |
+| `/validar` e `/validar/:code` | Confere se um relatório foi emitido pelo BL Buscarr (código impresso no PDF) |
 | `/loja/:slug` | Vitrine pública de uma loja com estoque e selo de consulta verificada |
 | `/r/:token` | Relatório enviado por um cliente a um comprador (ver seção 7). Não é indexado |
 | `/contrato/...`, `/documento-fiscal/...` | Links seguros para assinar contrato, ver cópia e baixar nota |

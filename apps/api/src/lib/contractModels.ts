@@ -2,7 +2,7 @@ import { pool } from '../db.js';
 
 import { BRAND } from './brand.js';
 /**
- * Modelos iniciais de contrato do BL Buscar. SÃO MINUTAS: entram como RASCUNHO e só podem ser publicados
+ * Modelos iniciais de contrato do BL Buscarr. SÃO MINUTAS: entram como RASCUNHO e só podem ser publicados
  * depois de revisão jurídica registrada (referência do parecer). Nenhuma cláusula aqui foi validada por advogado.
  */
 export const CONTRACT_VARIABLE_DOCS: Array<{ key: string; label: string; example: string; group: 'Partes' | 'Valores e cálculos' | 'Prazos' | 'Comissão' | 'Geral' }> = [

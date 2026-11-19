@@ -51,7 +51,7 @@ test('renderiza PDF FIPE com o nome da organização, no padrão visual da plata
   assert.match(text, /Consulta Zero/);
   assert.match(text, /Valor FIPE vigente/i);
   assert.match(text, /Valida..o do relat.rio/);
-  assert.doesNotMatch(text, /BL Buscar/);
+  assert.doesNotMatch(text, /BL Buscarr/);
 });
 
 test('renderiza impressão FIPE com nome, cores e logo da organização', () => {
@@ -63,13 +63,13 @@ test('renderiza impressão FIPE com nome, cores e logo da organização', () => 
   assert.match(html, /alt=""/);
 });
 
-test('mantém fallback BL Buscar quando a organização não fornece marca, com as cores da marca', async () => {
+test('mantém fallback BL Buscarr quando a organização não fornece marca, com as cores da marca', async () => {
   const html = fipePrintHtml(quote, {});
   const text = pdfText(await fipePdf(quote, {}));
-  assert.match(html, /BL Buscar/);
-  assert.match(html, /#0B7A43/);
-  assert.doesNotMatch(html, /#168579|#C99A3D/);
-  if (text !== null) assert.match(text, /BL Buscar/);
+  assert.match(html, /BL Buscarr/);
+  assert.match(html, /#2563EB/i);
+  assert.doesNotMatch(html, /#0B7A43|#168579|#C99A3D/i);
+  if (text !== null) assert.match(text, /BL Buscarr/);
 });
 
 assert.equal(typeof fipePdf, 'function');

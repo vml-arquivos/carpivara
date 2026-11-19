@@ -26,7 +26,7 @@ export interface ReportTable { columns: string[]; rows: string[][] }
  * `sourceState` é o estado semântico do vocabulário de `layers.ts` (E1..E5) que explica o porquê — é ele que impede
  * "sem retorno", "fora da cobertura" e "indisponível" de serem lidos como "nada consta".
  */
-export interface VtValue { state: 'NOT_PROVIDED' | 'CLEAR' | 'ALERT' | 'INFO'; value: string | null; display?: string | null; masked?: boolean; table?: ReportTable; sourceState?: SourceState; farolOnly?: boolean; /** valor calculado pelo BL Buscar (estimativa, classificação ou decodificação), nunca dado bruto da fonte */ derived?: boolean }
+export interface VtValue { state: 'NOT_PROVIDED' | 'CLEAR' | 'ALERT' | 'INFO'; value: string | null; display?: string | null; masked?: boolean; table?: ReportTable; sourceState?: SourceState; farolOnly?: boolean; /** valor calculado pelo BL Buscarr (estimativa, classificação ou decodificação), nunca dado bruto da fonte */ derived?: boolean }
 
 const isRec = (v: unknown): v is Rec => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 const fold = (v: string) => v.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/\s+/g, ' ').trim();

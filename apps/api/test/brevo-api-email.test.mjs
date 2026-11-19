@@ -45,7 +45,7 @@ describe('e-mail pela API do Brevo (porta 443, sem SMTP)', integration, () => {
     const m = api.sent.find((x) => x.to?.some((t) => t.email === email));
     assert.ok(m, 'a API do Brevo não recebeu o e-mail');
     assert.equal(m.sender.email, 'no-reply@blbuscar.test');
-    assert.match(m.sender.name, /BL Buscar/);
+    assert.match(m.sender.name, /BL Buscarr/);
     assert.equal(m.replyTo.email, 'blbuscar@gmail.com');
     assert.match(m.subject, /senha/i);
     assert.match(m.htmlContent, /reset_token=/);

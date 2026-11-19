@@ -1,12 +1,12 @@
 import type { Migration } from './migrations.js';
 
 /**
- * Migrações da marca BL Buscar. As migrações antigas (001–090) ficam como foram escritas; este ajuste, rodado por último,
+ * Migrações da marca BL Buscarr. As migrações antigas (001–090) ficam como foram escritas; este ajuste, rodado por último,
  * troca o nome da marca anterior nos textos que elas gravaram no banco (modelos de relatório, autor dos artigos e
  * respostas prontas do suporte). Só mexe em linhas que ainda têm o nome antigo e é seguro rodar de novo.
  */
 const OLD = 'Placa na Mão';
-const NEW_NAME = 'BL Buscar';
+const NEW_NAME = 'BL Buscarr';
 
 /** Expressão SQL que troca "da/na/à/pela/a/A Placa na Mão" pelo texto com o artigo certo e, depois, o nome puro. */
 function replaceExpr(col: string): string {
@@ -24,7 +24,7 @@ function replaceExpr(col: string): string {
 export const brandMigrations: Migration[] = [
   {
     id: '091_marca_bl_buscar',
-    name: 'Marca BL Buscar: troca o nome da marca anterior nos textos gravados pelas migrações antigas (modelos de relatório, autor dos artigos, respostas prontas do suporte)',
+    name: 'Marca BL Buscarr: troca o nome da marca anterior nos textos gravados pelas migrações antigas (modelos de relatório, autor dos artigos, respostas prontas do suporte)',
     up: async (client) => {
       await client.query(`UPDATE report_templates SET config = (${replaceExpr('config::text')})::jsonb WHERE config::text LIKE '%${OLD}%'`);
       await client.query(`UPDATE articles SET author = ${replaceExpr('author')} WHERE author LIKE '%${OLD}%'`);
